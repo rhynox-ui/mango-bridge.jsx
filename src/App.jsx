@@ -281,4 +281,71 @@ function HistoryTab({ history, onReset }) {
       </button>
     </div>
   );
-}
+}export default function MangoBridge() {
+  const [from, setFrom] = useState("base");
+  const [to, setTo] = useState("ethereum");
+  const [amount, setAmount] = useState("");
+  const [assetIdx, setAssetIdx] = useState(0);
+  const [tab, setTab] = useState("bridge");
+  const [connected, setConnected] = useState(false);
+  const [address] = useState("0x71C9…4aF2");
+  const [balances, setBalances] = useState(DEFAULT_BALANCES);
+  const [history, setHistory] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [sendToOther, setSendToOther] = useState(false);
+  const [destAddress, setDestAddress] = useState("");
+
+  const asset = ASSETS[assetIdx];
+
+  useEffect(() => {
+    setBalances(loadJSON("mango:balances", DEFAULT_BALANCES));
+    setHistory(loadJSON("mango:history", []));
+  }, []);
+
+  function swap() { setFrom(to); setTo(from); }
+  function handleFromChange(id) { setFrom(id); if (id === to) setTo(CHAIN_ORDER.find((c) => c !== id)); }
+  function handleToChange(id) { setTo(id); if (id === from) setFrom(CHAIN_ORDER.find((c) => c !== id)); }
+
+  const amtNum = Math.max(0, parseFloat(amount) || 0);
+  const fee = CHAINS[from].baseFee + CHAINS[to].baseFee;
+  const seconds = Math.max(CHAINS[from].baseSeconds, CHAINS[to].baseSeconds);
+  const etaLabel = seconds < 60 ? `~${seconds}s` : `~${Math.round(seconds / 60)} min`;
+  const received = Math.max(amtNum - fee / (asset.price || 1), 0);
+  const availableBalance = balances?.[from]?.[asset.symbol] ?? 0;
+  const insufficient = amtNum > availableBalance;
+  const canBridge = amtNum > 0 && from !== to && !insufficient && (!sendToOther || destAddress.trim().length > 4);
+
+  function persist(newBalances, newHistory) {
+    saveJSON("mango:balances", newBalances);
+    saveJSON("mango:history", newHistory);
+  }
+  function handleComplete(hash) {
+    const newBalances = {
+      ...balances,
+      [from]: { ...balances[from], [asset.symbol]: Math.max(0, (balances[from][asset.symbol] || 0) - amtNum) },
+      [to]: { ...balances[to], [asset.symbol]: (balances[to][asset.symbol] || 0) + received },
+    };
+    const entry = { id: Date.now(), from, to, amount: amtNum, symbol: asset.symbol, hash, timestamp: Date.now(), status: "complete" };
+    const newHistory = [entry, ...history];
+    setBalances(newBalances);
+    setHistory(newHistory);
+    persist(newBalances, newHistory);
+  }
+  function resetHistory() {
+    setHistory([]);
+    removeKey("mango:history");
+  }
+  function setMax() { setAmount(String(availableBalance)); }
+
+  return (
+    <div className="min-h-screen w-full" style={{ background: "#0A0C10", fontFamily: "'Inter', sans-serif" }}>
+      <style>{`
+        .font-display { font-family: 'Space Grotesk', sans-serif; }
+        .font-mono { font-family: 'IBM Plex Mono', monospace; }
+        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+        input:focus { outline: none; }
+      `}</style>
+
+      <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: "1px solid #15181E" }}>
+        <div className="flex items-center gap-2.5">
