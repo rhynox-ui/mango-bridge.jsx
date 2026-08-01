@@ -170,3 +170,115 @@ function StatusPill({ status }) {
     </span>
   );
 }
+function BridgeModal({ from, to, amount, asset, fee, etaLabel, received, destination, onClose, onComplete }) {
+  const [phase, setPhase] = useState("review");
+  const [stepIndex, setStepIndex] = useState(0);
+  const [hash] = useState(shortHash());
+  const a = CHAINS[from], b = CHAINS[to];
+
+  useEffect(() => {
+    if (phase !== "progress") return;
+    if (stepIndex >= STEPS.length) { setPhase("done"); onComplete(hash); return; }
+    const t = setTimeout(() => setStepIndex((i) => i + 1), 900 + Math.random() * 600);
+    return () => clearTimeout(t);
+  }, [phase, stepIndex]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.75)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: "#14171D", border: "1px solid #262C36" }}>
+        <div className="flex items-center justify-between mb-4">
+          <span className="font-mono text-[11px] tracking-wide" style={{ color: "#5B6472" }}>{hash}</span>
+          {phase !== "progress" ? <button onClick={onClose}><X size={16} color="#5B6472" /></button> : <span className="text-[11px] uppercase tracking-wider" style={{ color: LIME }}>In progress</span>}
+        </div>
+
+        <div className="flex items-center justify-center gap-3 mb-5">
+          <ChainBadge id={from} size={22} />
+          <ArrowUpRight size={13} color="#4A515D" />
+          <ChainBadge id={to} size={22} />
+        </div>
+
+        <div className="text-center mb-5 py-3 rounded-xl" style={{ background: "#0E1116", border: "1px solid #1E232B" }}>
+          <div className="font-display text-2xl font-semibold" style={{ color: "#F2F4F7" }}>{amount || "0"} {asset}</div>
+          <div className="text-[12px] mt-0.5" style={{ color: "#5B6472" }}>{a.name} → {b.name}</div>
+          {destination && <div className="text-[11px] mt-1 font-mono" style={{ color: "#4A515D" }}>to {destination}</div>}
+        </div>
+
+        {phase === "review" && (
+          <>
+            <div className="flex flex-col gap-2.5 mb-5">
+              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Network fee</span><span className="font-mono" style={{ color: "#D7DBE2" }}>${fmt(fee, 2)}</span></div>
+              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Estimated time</span><span style={{ color: "#D7DBE2" }}>{etaLabel}</span></div>
+              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>You receive</span><span className="font-mono font-medium" style={{ color: "#F2F4F7" }}>{fmt(received, 4)} {asset}</span></div>
+            </div>
+            <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: "#1C212A", border: "1px solid #262C36", color: "#8B95A1" }}>
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" color="#F0B84D" />
+              Simulated route for prototyping. No real assets move.
+            </div>
+            <button onClick={() => setPhase("progress")} className="w-full py-3 rounded-xl font-display font-semibold text-[14.5px]" style={{ background: `linear-gradient(135deg, ${LIME}, ${LIME_DEEP})`, color: "#10130A" }}>
+              Confirm bridge
+            </button>
+          </>
+        )}
+
+        {phase !== "review" && (
+          <div className="flex flex-col gap-3">
+            {STEPS.map((s, i) => {
+              const state = i < stepIndex ? "done" : i === stepIndex && phase === "progress" ? "active" : phase === "done" ? "done" : "pending";
+              return (
+                <div key={s.key} className="flex items-center gap-3">
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0" style={{ background: state === "done" ? `${LIME}22` : state === "active" ? `${LIME}22` : "#181C24", border: state === "done" ? `1px solid ${LIME}` : state === "active" ? `1px solid ${LIME}` : "1px solid #262C36" }}>
+                    {state === "done" && <Check size={11} color={LIME} />}
+                    {state === "active" && <Loader2 size={11} color={LIME} className="animate-spin" />}
+                  </div>
+                  <span className="text-[13.5px]" style={{ color: state === "pending" ? "#4A515D" : "#D7DBE2" }}>{s.label}</span>
+                </div>
+              );
+            })}
+            {phase === "done" && (
+              <div className="mt-2 flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-[13px] px-3 py-2.5 rounded-lg" style={{ background: `${LIME}14`, border: `1px solid ${LIME}40`, color: LIME }}>
+                  <Check size={14} /> Bridge complete
+                </div>
+                <button onClick={onClose} className="w-full py-2.5 rounded-lg text-[13.5px] font-medium flex items-center justify-center gap-1.5" style={{ background: "#1C212A", color: "#B6BEC9", border: "1px solid #262C36" }}>
+                  View on explorer <ExternalLink size={13} />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HistoryTab({ history, onReset }) {
+  if (history.length === 0) {
+    return (
+      <div className="rounded-2xl p-8 flex flex-col items-center text-center gap-2" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
+        <HistoryIcon size={22} color="#333A44" />
+        <div className="text-[13.5px]" style={{ color: "#8B95A1" }}>No bridges yet</div>
+        <div className="text-[12px]" style={{ color: "#4A515D" }}>Your completed transfers will show up here.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
+      {history.map((tx, i) => (
+        <div key={tx.id} className="flex items-center gap-3 px-4 py-3.5" style={{ borderTop: i === 0 ? "none" : "1px solid #1A1E26" }}>
+          <div className="flex items-center -space-x-1.5">
+            <ChainBadge id={tx.from} size={22} />
+            <ChainBadge id={tx.to} size={22} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 text-[13.5px] font-medium" style={{ color: "#F2F4F7" }}>{fmt(tx.amount, 2)} {tx.symbol}<ArrowUpRight size={11} color="#4A515D" /></div>
+            <div className="text-[11.5px] font-mono" style={{ color: "#4A515D" }}>{tx.hash} · {timeAgo(tx.timestamp)}</div>
+          </div>
+          <StatusPill status={tx.status} />
+        </div>
+      ))}
+      <button onClick={onReset} className="w-full flex items-center justify-center gap-1.5 py-2.5 text-[12px]" style={{ color: "#4A515D", borderTop: "1px solid #1A1E26" }}>
+        <RotateCcw size={12} /> Clear history
+      </button>
+    </div>
+  );
+}
