@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
+  useAccount,
+  useConnect,
+  useDisconnect,
+  useSwitchChain,
+  useBalance,
+} from "wagmi";
+import {
   ChevronDown,
   ArrowUpDown,
   RefreshCw,
@@ -15,16 +22,17 @@ import {
   AlertTriangle,
   Link2,
 } from "lucide-react";
+import { CHAIN_KEY_TO_WAGMI } from "./wagmi.js";
 
 // ---------------------------------------------------------------------------
 // Data
 // ---------------------------------------------------------------------------
 
 const CHAINS = {
-  ethereum: { id: "ethereum", name: "Ethereum", short: "ETH", color: "#8C9BAE", mark: "◆", baseSeconds: 780, baseFee: 4.85 },
-  base: { id: "base", name: "Base", short: "BASE", color: "#3D6BFF", mark: "▲", baseSeconds: 45, baseFee: 0.06 },
-  bnb: { id: "bnb", name: "BNB Chain", short: "BNB", color: "#F0B90B", mark: "◆", baseSeconds: 25, baseFee: 0.18 },
-  robinhood: { id: "robinhood", name: "Robinhood Chain", short: "RBH", color: "#00C805", mark: "●", baseSeconds: 20, baseFee: 0.04 },
+  ethereum: { id: "ethereum", name: "Ethereum Sepolia", short: "ETH", color: "#8C9BAE", mark: "◆", baseSeconds: 780, baseFee: 4.85 },
+  base: { id: "base", name: "Base Sepolia", short: "BASE", color: "#3D6BFF", mark: "▲", baseSeconds: 45, baseFee: 0.06 },
+  bnb: { id: "bnb", name: "BNB Testnet", short: "BNB", color: "#F0B90B", mark: "◆", baseSeconds: 25, baseFee: 0.18 },
+  robinhood: { id: "robinhood", name: "Robinhood Chain Testnet", short: "RBH", color: "#00C805", mark: "●", baseSeconds: 20, baseFee: 0.04 },
 };
 const CHAIN_ORDER = ["ethereum", "base", "bnb", "robinhood"];
 
@@ -313,8 +321,6 @@ export default function MangoBridge() {
   const [amount, setAmount] = useState("");
   const [assetIdx, setAssetIdx] = useState(0);
   const [tab, setTab] = useState("bridge");
-  const [connected, setConnected] = useState(false);
-  const [address] = useState("0x71C9…4aF2");
   const [balances, setBalances] = useState(DEFAULT_BALANCES);
   const [history, setHistory] = useState([]);
   const [showModal, setShowModal] = useState(false);
@@ -322,7 +328,23 @@ export default function MangoBridge() {
   const [sendToOther, setSendToOther] = useState(false);
   const [destAddress, setDestAddress] = useState("");
 
+  const { address, isConnected, chainId: connectedChainId } = useAccount();
+  const { connect, connectors, isPending: isConnecting } = useConnect();
+  const { disconnect } = useDisconnect();
+  const { switchChain } = useSwitchChain();
+  const connected = isConnected;
+
+  const fromWagmiChain = CHAIN_KEY_TO_WAGMI[from];
+  const onWrongNetwork = connected && connectedChainId !== fromWagmiChain.id;
+
+  const { data: liveBalance, isLoading: balanceLoading } = useBalance({
+    address,
+    chainId: fromWagmiChain.id,
+    query: { enabled: connected },
+  });
+
   const asset = ASSETS[assetIdx];
+  const isNativeAsset = asset.symbol === "ETH" || (asset.symbol === "BNB" && from === "bnb");
 
   useEffect(() => {
     setBalances(loadJSON("mango:balances", DEFAULT_BALANCES));
@@ -332,15 +354,20 @@ export default function MangoBridge() {
   function swap() { setFrom(to); setTo(from); }
   function handleFromChange(id) { setFrom(id); if (id === to) setTo(CHAIN_ORDER.find((c) => c !== id)); }
   function handleToChange(id) { setTo(id); if (id === from) setFrom(CHAIN_ORDER.find((c) => c !== id)); }
+  function handleConnect() {
+    const injectedConnector = connectors.find((c) => c.id === "injected") || connectors[0];
+    if (injectedConnector) connect({ connector: injectedConnector });
+  }
 
   const amtNum = Math.max(0, parseFloat(amount) || 0);
   const fee = CHAINS[from].baseFee + CHAINS[to].baseFee;
   const seconds = Math.max(CHAINS[from].baseSeconds, CHAINS[to].baseSeconds);
   const etaLabel = seconds < 60 ? `~${seconds}s` : `~${Math.round(seconds / 60)} min`;
   const received = Math.max(amtNum - fee / (asset.price || 1), 0);
-  const availableBalance = balances?.[from]?.[asset.symbol] ?? 0;
+  const simulatedBalance = balances?.[from]?.[asset.symbol] ?? 0;
+  const availableBalance = isNativeAsset && connected && liveBalance ? Number(liveBalance.formatted) : simulatedBalance;
   const insufficient = amtNum > availableBalance;
-  const canBridge = amtNum > 0 && from !== to && !insufficient && (!sendToOther || destAddress.trim().length > 4);
+  const canBridge = amtNum > 0 && from !== to && !insufficient && !onWrongNetwork && (!sendToOther || destAddress.trim().length > 4);
 
   function persist(newBalances, newHistory) {
     saveJSON("mango:balances", newBalances);
@@ -379,19 +406,33 @@ export default function MangoBridge() {
           <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${LIME}, ${LIME_DEEP})` }}>
             <Citrus size={15} color="#10130A" />
           </div>
-          <span className="font-display text-[16px] font-semibold" style={{ color: "#F2F4F7" }}>Mango Bridge</span>
+          <div className="flex flex-col leading-tight">
+            <span className="font-display text-[16px] font-semibold" style={{ color: "#F2F4F7" }}>Mango Bridge</span>
+            <span className="text-[10px] font-medium tracking-wide uppercase" style={{ color: "#F0B84D" }}>Testnet</span>
+          </div>
         </div>
         {connected ? (
-          <button onClick={() => setConnected(false)} className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-[13px] font-semibold" style={{ background: `${LIME}1A`, border: `1px solid ${LIME}40`, color: LIME }}>
+          <button onClick={() => disconnect()} className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-[13px] font-semibold" style={{ background: `${LIME}1A`, border: `1px solid ${LIME}40`, color: LIME }}>
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: LIME }} />
-            {address}
+            {address ? `${address.slice(0, 6)}…${address.slice(-4)}` : ""}
           </button>
         ) : (
-          <button onClick={() => setConnected(true)} className="flex items-center gap-2 px-4 py-2 rounded-lg text-[13.5px] font-semibold" style={{ background: LIME, color: "#10130A" }}>
-            <Link2 size={14} /> Connect wallet
+          <button onClick={handleConnect} disabled={isConnecting} className="flex items-center gap-2 px-4 py-2 rounded-lg text-[13.5px] font-semibold" style={{ background: LIME, color: "#10130A", opacity: isConnecting ? 0.7 : 1 }}>
+            <Link2 size={14} /> {isConnecting ? "Connecting…" : "Connect wallet"}
           </button>
         )}
       </div>
+
+      {onWrongNetwork && (
+        <div className="flex items-center justify-between gap-3 px-6 py-2.5" style={{ background: "#241C0F", borderBottom: "1px solid #3A2E15" }}>
+          <span className="flex items-center gap-2 text-[12.5px]" style={{ color: "#F0B84D" }}>
+            <AlertTriangle size={13} /> Wallet is on the wrong network for {CHAINS[from].name}
+          </span>
+          <button onClick={() => switchChain({ chainId: fromWagmiChain.id })} className="text-[12px] font-semibold px-3 py-1.5 rounded-lg" style={{ background: "#F0B84D", color: "#241C0F" }}>
+            Switch
+          </button>
+        </div>
+      )}
 
       {/* Body */}
       <div className="flex justify-center px-4 py-10">
@@ -425,7 +466,11 @@ export default function MangoBridge() {
               <div className="rounded-2xl p-4" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
                 <div className="flex items-center justify-between mb-2.5">
                   <span className="text-[12.5px] font-medium" style={{ color: "#8B95A1" }}>You send</span>
-                  <span className="text-[11.5px]" style={{ color: "#4A515D" }}>Balance: {fmt(availableBalance, asset.decimals)} {asset.symbol}</span>
+                  <span className="text-[11.5px]" style={{ color: "#4A515D" }}>
+                    {isNativeAsset && connected && balanceLoading
+                      ? "Loading balance…"
+                      : `Balance: ${fmt(availableBalance, asset.decimals)} ${asset.symbol}${isNativeAsset && connected ? "" : " (simulated)"}`}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between mb-3">
                   <ChainDropdown value={from} exclude={to} onChange={handleFromChange} />
@@ -515,11 +560,11 @@ export default function MangoBridge() {
                   cursor: connected && canBridge ? "pointer" : "not-allowed",
                 }}
               >
-                {!connected ? "Connect wallet" : from === to ? "Choose different chains" : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : sendToOther && destAddress.trim().length <= 4 ? "Enter destination address" : "Bridge assets"}
+                {!connected ? "Connect wallet" : onWrongNetwork ? "Switch network to continue" : from === to ? "Choose different chains" : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : sendToOther && destAddress.trim().length <= 4 ? "Enter destination address" : "Bridge assets"}
               </button>
 
               <div className="text-center mt-4 text-[11.5px]" style={{ color: "#3A414C" }}>
-                Prototype UI — wallet and balances are simulated for this session.
+                Testnet only. Wallet connection and native balances are real; the bridge transfer itself is still simulated.
               </div>
             </>
           )}
