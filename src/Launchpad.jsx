@@ -356,9 +356,9 @@ function ExplorePage({ onSelectToken, P }) {
         <div className="text-[12px]" style={{ color: P.textMuted }}>Tokens still climbing toward graduation.</div>
       </div>
 
-      <div className="flex gap-1.5 mt-3 mb-2 overflow-x-auto w-full" style={{ scrollbarWidth: "none" }}>
+      <div className="flex gap-1 mt-3 mb-2 overflow-x-auto w-full pr-4" style={{ scrollbarWidth: "none" }}>
         {["Recent buys", "Newest", "Market cap", "Volume"].map((c) => (
-          <button key={c} onClick={() => setSortChip(c)} className="px-3 py-1.5 rounded-full text-[11.5px] font-medium whitespace-nowrap shrink-0" style={chipStyle(sortChip === c)}>{c}</button>
+          <button key={c} onClick={() => setSortChip(c)} className="px-2.5 py-1.5 rounded-full text-[11px] font-medium whitespace-nowrap shrink-0" style={chipStyle(sortChip === c)}>{c}</button>
         ))}
       </div>
       <div className="flex gap-1.5 mb-4">
