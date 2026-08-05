@@ -1,4 +1,4 @@
-# Mango Protocol
+  # Mango Protocol
 
 Mango Protocol is a permissionless infrastructure suite for moving assets across chains and launching new tokens. Anyone can bridge, anyone can launch a token, anyone can trade — there's no gatekeeping, no approval process, no account to register. You connect a wallet and use it.
 
@@ -56,13 +56,17 @@ Every token launches directly into a live Uniswap v4 pool, trading on real, audi
 
 **Creator tools:** the Profile page tracks your launches, holdings, unrealized PnL, and total creator fees earned over time, all in one place.
 
-Contracts (`MangoLaunchHook.sol`, `MangoLaunchRegistry.sol`) are deployed and verified on Robinhood Chain mainnet — see `contracts/` for source and `contracts/Deploy*.s.sol` for the deployment scripts. Real Uniswap v4 addresses, confirmed against actual `forge build` output, not assumed from documentation.
+Contracts (`MangoLaunchHook.sol`, `MangoLaunchRegistry.sol`, `MangoLaunchFactory.sol`, `MangoLaunchToken.sol`) are deployed and verified on Robinhood Chain mainnet — see `contracts/` for source and `contracts/Deploy*.s.sol` for the deployment scripts. Real Uniswap v4 addresses, confirmed against actual `forge build` output, not assumed from documentation.
+
+**Not yet fully operational** — the Factory is deployed but needs a separate access-control handoff (transferring `launchOperator`/`factory` roles from the deployer wallet to the Factory contract) before it can complete a real launch. That's a deliberate, currently-irreversible decision that hasn't been made yet — see the Factory contract's own comments for why.
 
 | Contract | Address |
 |---|---|
+| MangoLaunchFactory | [`0xA2103eb3aaB95A364c2D2f9f441396B2bC0632b1`](https://robinhoodchain.blockscout.com/address/0xA2103eb3aaB95A364c2D2f9f441396B2bC0632b1) |
 | MangoLaunchHook (v2, current) | [`0x01aC474F17E4d8b29f9f212757953C5E505ad040`](https://robinhoodchain.blockscout.com/address/0x01aC474F17E4d8b29f9f212757953C5E505ad040) |
+| MangoLaunchRegistry (v2, current) | [`0xC94D2b02Ce52224dE6A7C0153CE89AbE9a5f7f06`](https://robinhoodchain.blockscout.com/address/0xC94D2b02Ce52224dE6A7C0153CE89AbE9a5f7f06) |
 | MangoLaunchHook (v1, superseded) | [`0x86a8899A5836fBf68F722f260E5106Cb03739040`](https://robinhoodchain.blockscout.com/address/0x86a8899A5836fBf68F722f260E5106Cb03739040) |
-| MangoLaunchRegistry | [`0x3441E02E7e9C83EcA78d090Ef279faA7dd719023`](https://robinhoodchain.blockscout.com/address/0x3441E02E7e9C83EcA78d090Ef279faA7dd719023) |
+| MangoLaunchRegistry (v1, superseded) | [`0x3441E02E7e9C83EcA78d090Ef279faA7dd719023`](https://robinhoodchain.blockscout.com/address/0x3441E02E7e9C83EcA78d090Ef279faA7dd719023) |
 
 ## How Uniswap v4 Hooks Work
 
@@ -125,4 +129,3 @@ src/
 ## License
 
 No license has been chosen yet — all rights reserved by default until one is added.
-
