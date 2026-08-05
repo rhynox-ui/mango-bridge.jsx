@@ -1,4 +1,4 @@
-  # Mango Protocol
+# Mango Protocol
 
 Mango Protocol is a permissionless infrastructure suite for moving assets across chains and launching new tokens. Anyone can bridge, anyone can launch a token, anyone can trade — there's no gatekeeping, no approval process, no account to register. You connect a wallet and use it.
 
