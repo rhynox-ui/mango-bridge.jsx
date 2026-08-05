@@ -1,0 +1,424 @@
+import React, { useState } from "react";
+import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3 } from "lucide-react";
+import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
+
+const MOCK_TOKENS = [
+  { id: "1", name: "Orange Dog", symbol: "ODOG", creator: "0x7c4d...2a1b", createdAt: Date.now() - 3600_000 * 26, marketCapUsd: 31200, graduationThresholdUsd: 30000, holders: 542, priceChange24h: -3.1, hue: 24, x: "orangedog", tg: "orangedog" },
+  { id: "2", name: "Mango Cat", symbol: "MCAT", creator: "0x1a2b...9f3e", createdAt: Date.now() - 3600_000 * 4, marketCapUsd: 18400, graduationThresholdUsd: 30000, holders: 214, priceChange24h: 12.4, hue: 210, x: "mangocat", tg: "mangocat" },
+  { id: "3", name: "Splash Frog", symbol: "SPLSH", creator: "0x9e3f...b6c2", createdAt: Date.now() - 3600_000 * 1, marketCapUsd: 4100, graduationThresholdUsd: 30000, holders: 38, priceChange24h: 44.8, hue: 140, x: "splashfrog", tg: "" },
+];
+const MY_LAUNCHES = [
+  { name: "Mango Cat", symbol: "MCAT", earned: 812.30 },
+  { name: "Beach Ball", symbol: "BEACH", earned: 340.20 },
+  { name: "Nova Star", symbol: "NOVA", earned: 132.00 },
+];
+
+function GraduationBar({ current, threshold, P, size = "normal" }) {
+  const pct = Math.min(100, (current / threshold) * 100);
+  const graduated = current >= threshold;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className={size === "small" ? "text-[10px]" : "text-[11.5px]"} style={{ color: P.textMuted }}>
+          {graduated ? "Graduated 🎉" : `Graduate at $${fmt(threshold, 0)}`}
+        </span>
+        <span className={size === "small" ? "text-[10px]" : "text-[11.5px]"} style={{ color: P.textSecondary }}>
+          ${fmt(current, 0)}
+        </span>
+      </div>
+      <div className="w-full rounded-full overflow-hidden" style={{ height: size === "small" ? 4 : 6, background: P.panelBorder }}>
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: P.ctaBg }} />
+      </div>
+    </div>
+  );
+}
+
+function TokenAvatar({ name, hue, size = 38 }) {
+  return (
+    <div
+      className="rounded-full flex items-center justify-center font-display font-bold shrink-0"
+      style={{ width: size, height: size, background: `hsl(${hue}, 70%, 55%)`, color: "#fff", fontSize: size * 0.4 }}
+    >
+      {name[0]}
+    </div>
+  );
+}
+
+function TokenCard({ token, onClick, P }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-stretch rounded-2xl overflow-hidden text-left"
+      style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}
+    >
+      <div className="flex items-center gap-2.5 p-3" style={{ flex: 1.4, minWidth: 0 }}>
+        <TokenAvatar name={token.name} hue={token.hue} />
+        <div className="min-w-0">
+          <div className="text-[13px] font-semibold truncate" style={{ color: P.textPrimary }}>{token.name}</div>
+          <div className="text-[10px]" style={{ color: P.textMuted }}>${token.symbol} · {token.holders} holders</div>
+        </div>
+      </div>
+      <div className="flex flex-col justify-center items-end p-3" style={{ flex: 0.8, borderLeft: `1px solid ${P.panelBorder}` }}>
+        <span className="text-[12px] font-mono font-semibold" style={{ color: token.priceChange24h >= 0 ? LIME_DEEP : "#D92D20" }}>
+          {token.priceChange24h >= 0 ? "+" : ""}{fmt(token.priceChange24h, 1)}%
+        </span>
+        <span className="text-[9.5px]" style={{ color: P.textMuted }}>24h</span>
+      </div>
+      <div className="flex flex-col justify-center p-3" style={{ flex: 1.1, borderLeft: `1px solid ${P.panelBorder}` }}>
+        <GraduationBar current={token.marketCapUsd} threshold={token.graduationThresholdUsd} P={P} size="small" />
+      </div>
+    </button>
+  );
+}
+
+function CreateLaunchModal({ onClose, P }) {
+  const [name, setName] = useState("");
+  const [symbol, setSymbol] = useState("");
+  const [description, setDescription] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const fieldStyle = { background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ background: "rgba(4,5,7,0.75)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between mb-4">
+          <span className="font-display text-[16px] font-semibold" style={{ color: P.textPrimary }}>Launch token</span>
+          <button onClick={onClose}><X size={18} color={P.textMuted} /></button>
+        </div>
+
+        <div className="flex flex-col gap-3.5 mb-4">
+          <div>
+            <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Name</label>
+            <div className="text-[10.5px] mb-1.5" style={{ color: P.textMuted }}>Letters, numbers, and spaces. 32 characters max.</div>
+            <input value={name} onChange={(e) => setName(e.target.value.slice(0, 32))} placeholder="Mango Cat" className="w-full px-3 py-2.5 rounded-lg text-[13.5px]" style={fieldStyle} />
+          </div>
+          <div>
+            <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Ticker</label>
+            <div className="text-[10.5px] mb-1.5" style={{ color: P.textMuted }}>Letters and numbers. 10 characters max.</div>
+            <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase().slice(0, 10))} placeholder="MCAT" className="w-full px-3 py-2.5 rounded-lg text-[13.5px] font-mono" style={fieldStyle} />
+          </div>
+          <div>
+            <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Description</label>
+            <div className="text-[10.5px] mb-1.5" style={{ color: P.textMuted }}>No links. 256 characters max.</div>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value.slice(0, 256))} placeholder="What's this token about?" rows={3} className="w-full px-3 py-2.5 rounded-lg text-[13px] resize-none" style={fieldStyle} />
+          </div>
+          <div>
+            <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Token image</label>
+            <div className="rounded-xl p-6 text-center text-[12px]" style={{ ...fieldStyle, border: `1.5px dashed ${P.panelBorder}` }}>Tap to upload artwork</div>
+            <div className="flex items-start gap-2 mt-2 text-[11px]" style={{ color: P.textMuted }}>
+              <input type="checkbox" className="mt-0.5" />
+              <span>I understand that selected artwork will be moderated and uploaded to public IPFS.</span>
+            </div>
+          </div>
+          <div>
+            <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>X profile</label>
+            <div className="flex items-center rounded-lg overflow-hidden" style={fieldStyle}>
+              <span className="pl-3 text-[12.5px]" style={{ color: P.textMuted }}>x.com/</span>
+              <input placeholder="yourhandle" className="flex-1 px-1 py-2.5 text-[13px] bg-transparent" style={{ color: P.textPrimary }} />
+            </div>
+          </div>
+          <div>
+            <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Telegram</label>
+            <div className="flex items-center rounded-lg overflow-hidden" style={fieldStyle}>
+              <span className="pl-3 text-[12.5px]" style={{ color: P.textMuted }}>t.me/</span>
+              <input placeholder="yourgroup" className="flex-1 px-1 py-2.5 text-[13px] bg-transparent" style={{ color: P.textPrimary }} />
+            </div>
+          </div>
+          <div>
+            <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Developer buy</label>
+            <div className="text-[10.5px] mb-1.5" style={{ color: P.textMuted }}>Optionally buy some of your own token at launch.</div>
+            <input placeholder="0 ETH" className="w-full px-3 py-2.5 rounded-lg text-[13.5px]" style={fieldStyle} />
+          </div>
+
+          {!showAdvanced ? (
+            <button onClick={() => setShowAdvanced(true)} className="text-[12px] text-left" style={{ color: LIME_DEEP }}>▸ Advanced</button>
+          ) : (
+            <div>
+              <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Creator wallet</label>
+              <div className="text-[10.5px] mb-1.5" style={{ color: P.textMuted }}>Receives the 70% creator share of trading fees. Leave blank to use your connected wallet.</div>
+              <input placeholder="0x..." className="w-full px-3 py-2.5 rounded-lg text-[13.5px] font-mono" style={fieldStyle} />
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl p-3.5 mb-4" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <div className="flex justify-between text-[12px] py-1"><span style={{ color: P.textMuted }}>Launch fee</span><span className="font-mono" style={{ color: P.textPrimary }}>$5</span></div>
+          <div className="flex justify-between text-[12px] py-1"><span style={{ color: P.textMuted }}>Graduate at</span><span className="font-mono" style={{ color: P.textPrimary }}>$30,000</span></div>
+          <div className="flex justify-between text-[12px] py-1"><span style={{ color: P.textMuted }}>Creator fee share</span><span className="font-mono" style={{ color: LIME_DEEP }}>70%</span></div>
+          <div className="flex justify-between text-[12px] py-1"><span style={{ color: P.textMuted }}>Liquidity</span><span className="font-mono" style={{ color: P.textPrimary }}>Non-custodial, live on Uniswap</span></div>
+        </div>
+
+        <button
+          disabled={!name || !symbol}
+          className="w-full py-3.5 rounded-full font-display font-semibold text-[14.5px]"
+          style={{ background: name && symbol ? P.ctaBg : P.pillBg, color: name && symbol ? P.ctaText : P.textMuted, cursor: name && symbol ? "pointer" : "not-allowed" }}
+        >
+          Launch token
+        </button>
+        <div className="text-center mt-2 text-[10.5px]" style={{ color: P.textMuted }}>
+          Not yet live — contracts are deployed and verified, the launch flow is still in development.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TokenDetailView({ token, onBack, P }) {
+  const [amount, setAmount] = useState("");
+  const [side, setSide] = useState("buy");
+
+  return (
+    <div>
+      <button onClick={onBack} className="flex items-center gap-1.5 mb-4 text-[13px]" style={{ color: P.textSecondary }}>
+        <ArrowLeft size={15} /> Back
+      </button>
+
+      <div className="rounded-2xl p-4 mb-3 flex items-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+        <TokenAvatar name={token.name} hue={token.hue} size={52} />
+        <div>
+          <div className="text-[18px] font-display font-semibold" style={{ color: P.textPrimary }}>{token.name}</div>
+          <div className="text-[12.5px] font-mono" style={{ color: P.textMuted }}>${token.symbol} · by {token.creator}</div>
+          {(token.x || token.tg) && (
+            <div className="flex gap-1.5 mt-1.5">
+              {token.x && <span className="text-[10.5px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>𝕏 @{token.x}</span>}
+              {token.tg && <span className="text-[10.5px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>✈ {token.tg}</span>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+        <GraduationBar current={token.marketCapUsd} threshold={token.graduationThresholdUsd} P={P} />
+        <div className="flex items-center gap-4 mt-3 pt-3" style={{ borderTop: `1px solid ${P.panelBorder}` }}>
+          <div>
+            <div className="text-[10.5px]" style={{ color: P.textMuted }}>Market cap</div>
+            <div className="text-[13px] font-mono font-semibold" style={{ color: P.textPrimary }}>${fmt(token.marketCapUsd, 0)}</div>
+          </div>
+          <div>
+            <div className="text-[10.5px]" style={{ color: P.textMuted }}>Holders</div>
+            <div className="text-[13px] font-mono font-semibold" style={{ color: P.textPrimary }}>{token.holders}</div>
+          </div>
+          <div>
+            <div className="text-[10.5px]" style={{ color: P.textMuted }}>24h</div>
+            <div className="text-[13px] font-mono font-semibold" style={{ color: token.priceChange24h >= 0 ? LIME_DEEP : "#D92D20" }}>
+              {token.priceChange24h >= 0 ? "+" : ""}{fmt(token.priceChange24h, 1)}%
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+        <div className="flex rounded-xl p-1 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <button
+            onClick={() => setSide("buy")}
+            className="flex-1 py-2 rounded-lg text-[13px] font-semibold"
+            style={{ background: side === "buy" ? P.ctaBg : "transparent", color: side === "buy" ? P.ctaText : P.textSecondary }}
+          >
+            Buy
+          </button>
+          <button
+            onClick={() => setSide("sell")}
+            className="flex-1 py-2 rounded-lg text-[13px] font-semibold"
+            style={{ background: side === "sell" ? "#D92D20" : "transparent", color: side === "sell" ? "#fff" : P.textSecondary }}
+          >
+            Sell
+          </button>
+        </div>
+        <div className="rounded-lg px-3 py-2.5 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <div className="text-[10.5px] mb-0.5" style={{ color: P.textMuted }}>Amount</div>
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0"
+            inputMode="decimal"
+            className="w-full text-[22px] font-display bg-transparent outline-none"
+            style={{ color: P.textPrimary }}
+          />
+        </div>
+        <button
+          disabled={!amount}
+          className="w-full py-3 rounded-full font-display font-semibold text-[14px]"
+          style={{ background: amount ? (side === "buy" ? P.ctaBg : "#D92D20") : P.pillBg, color: amount ? (side === "buy" ? P.ctaText : "#fff") : P.textMuted }}
+        >
+          {side === "buy" ? "Buy" : "Sell"} {token.symbol}
+        </button>
+      </div>
+
+      <div className="flex items-start gap-2 text-[11.5px] px-1" style={{ color: P.textMuted }}>
+        <Users size={13} className="mt-0.5 shrink-0" />
+        70% of every trading fee goes directly to {token.creator} — automatically, every trade.
+      </div>
+    </div>
+  );
+}
+
+function ExplorePage({ onSelectToken, P }) {
+  const [sortChip, setSortChip] = useState("Recent buys");
+  const [rangeChip, setRangeChip] = useState("All");
+
+  const chipStyle = (active) => ({
+    background: active ? P.ctaBg : P.panel,
+    color: active ? P.ctaText : P.textSecondary,
+    border: active ? "none" : `1px solid ${P.panelBorder}`,
+    boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+  });
+
+  return (
+    <div>
+      <div className="mb-1 mt-1">
+        <div className="text-[18px] font-display font-semibold" style={{ color: P.textPrimary }}>Explore</div>
+        <div className="text-[12px]" style={{ color: P.textMuted }}>Tokens still climbing toward graduation.</div>
+      </div>
+
+      <div className="flex gap-1.5 mt-3 mb-2 overflow-x-auto">
+        {["Recent buys", "Newest", "Market cap", "Volume"].map((c) => (
+          <button key={c} onClick={() => setSortChip(c)} className="px-3 py-1.5 rounded-full text-[11.5px] font-medium whitespace-nowrap" style={chipStyle(sortChip === c)}>{c}</button>
+        ))}
+      </div>
+      <div className="flex gap-1.5 mb-4">
+        {["All", "24h", "7d"].map((c) => (
+          <button key={c} onClick={() => setRangeChip(c)} className="px-3 py-1.5 rounded-full text-[11.5px] font-medium" style={chipStyle(rangeChip === c)}>{c}</button>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-2.5">
+        {[...MOCK_TOKENS].sort((a, b) => b.marketCapUsd - a.marketCapUsd).map((t) => (
+          <TokenCard key={t.id} token={t} onClick={() => onSelectToken(t)} P={P} />
+        ))}
+      </div>
+
+      <div className="mt-8 pt-5 text-[11px] leading-relaxed" style={{ borderTop: `1px solid ${P.divider}`, color: P.textMuted }}>
+        <p className="mb-3">Launch and explore fixed-supply tokens on Robinhood Chain, trading live on Uniswap v4 from the first buy. Your wallet submits every transaction. Mango does not custody assets.</p>
+        <p className="mb-3">Transactions are submitted through your wallet and may be irreversible. Tokens can be volatile or lose all value. Mango Protocol does not provide custody, warranties, or financial advice.</p>
+        <p>© 2026 Mango Protocol.</p>
+      </div>
+    </div>
+  );
+}
+
+function ProfilePage({ P }) {
+  const [connected, setConnected] = useState(false);
+  const [tab, setTab] = useState("launches");
+
+  if (!connected) {
+    return (
+      <div className="flex flex-col items-center text-center gap-3 py-16">
+        <Users size={28} color={P.textMuted} />
+        <div className="text-[13px]" style={{ color: P.textSecondary, maxWidth: 220 }}>Connect a wallet to track your positions, PnL, and creator earnings.</div>
+        <button onClick={() => setConnected(true)} className="px-5 py-2.5 rounded-full font-semibold text-[13px]" style={{ background: P.ctaBg, color: P.ctaText }}>Connect wallet</button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="text-[18px] font-display font-semibold mt-1" style={{ color: P.textPrimary }}>Profile</div>
+      <div className="text-[12px] mb-4" style={{ color: P.textMuted }}>Track your launches, holdings, PnL, and creator fees.</div>
+
+      <div className="grid grid-cols-2 gap-2.5 mb-4">
+        {[
+          { label: "Total creator fees earned", value: "$1,284.50", lime: true },
+          { label: "Unrealized PnL", value: "+$412.10", lime: true },
+          { label: "Tokens launched", value: "3" },
+          { label: "Total holders", value: "794" },
+        ].map((s) => (
+          <div key={s.label} className="rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+            <div className="text-[10.5px] mb-1" style={{ color: P.textMuted }}>{s.label}</div>
+            <div className="text-[17px] font-mono font-semibold" style={{ color: s.lime ? LIME_DEEP : P.textPrimary }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex rounded-xl p-1 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+        <button onClick={() => setTab("launches")} className="flex-1 py-2 rounded-lg text-[12px] font-medium" style={{ background: tab === "launches" ? P.pillBg : "transparent", color: tab === "launches" ? P.textPrimary : P.textSecondary }}>Your launches</button>
+        <button onClick={() => setTab("holdings")} className="flex-1 py-2 rounded-lg text-[12px] font-medium" style={{ background: tab === "holdings" ? P.pillBg : "transparent", color: tab === "holdings" ? P.textPrimary : P.textSecondary }}>Holdings</button>
+      </div>
+
+      {tab === "launches" ? (
+        <div className="flex flex-col gap-2">
+          {MY_LAUNCHES.map((l) => (
+            <div key={l.symbol} className="flex items-center justify-between rounded-xl p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold text-white" style={{ background: P.textMuted }}>{l.name[0]}</div>
+                <div>
+                  <div className="text-[12.5px] font-semibold" style={{ color: P.textPrimary }}>{l.name}</div>
+                  <div className="text-[10.5px]" style={{ color: P.textMuted }}>${l.symbol}</div>
+                </div>
+              </div>
+              <div className="text-[13px] font-mono font-semibold" style={{ color: LIME_DEEP }}>${l.earned.toFixed(2)}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-10 text-[12.5px]" style={{ color: P.textMuted }}>No holdings yet.</div>
+      )}
+    </div>
+  );
+}
+
+function AnalyticsPage({ P }) {
+  const [range, setRange] = useState("24h");
+  const chipStyle = (active) => ({
+    background: active ? P.ctaBg : P.panel,
+    color: active ? P.ctaText : P.textSecondary,
+    border: active ? "none" : `1px solid ${P.panelBorder}`,
+    boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+  });
+  return (
+    <div>
+      <div className="text-[18px] font-display font-semibold mt-1" style={{ color: P.textPrimary }}>Protocol analytics</div>
+      <div className="text-[12px] mb-4" style={{ color: P.textMuted }}>Independent onchain reporting for Mango Launchpad.</div>
+      <div className="flex gap-1.5 mb-4">
+        {["24h", "All time"].map((c) => (
+          <button key={c} onClick={() => setRange(c)} className="px-3 py-1.5 rounded-full text-[11.5px] font-medium" style={chipStyle(range === c)}>{c}</button>
+        ))}
+      </div>
+      {[
+        { label: "Trading volume", value: "$284,910" },
+        { label: "Token launches", value: "47" },
+        { label: "Total creator fees paid out", value: "$8,547", lime: true },
+      ].map((s) => (
+        <div key={s.label} className="rounded-2xl p-4 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+          <div className="text-[12px] mb-1" style={{ color: P.textSecondary }}>{s.label}</div>
+          <div className="text-[26px] font-mono font-bold" style={{ color: s.lime ? LIME_DEEP : P.textPrimary }}>{s.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function LaunchpadTab({ P }) {
+  const [view, setView] = useState("explore");
+  const [selectedToken, setSelectedToken] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
+
+  return (
+    <div className="px-4 pb-24">
+      <div className="flex items-center justify-between mb-2 mt-2">
+        <div className="flex items-center gap-1">
+          <button onClick={() => setView("explore")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "explore" || view === "detail" ? P.pillBg : "transparent", color: view === "explore" || view === "detail" ? P.textPrimary : P.textMuted }}>Explore</button>
+          <button onClick={() => setView("profile")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "profile" ? P.pillBg : "transparent", color: view === "profile" ? P.textPrimary : P.textMuted }}>Profile</button>
+          <button onClick={() => setView("analytics")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "analytics" ? P.pillBg : "transparent", color: view === "analytics" ? P.textPrimary : P.textMuted }}>Stats</button>
+        </div>
+        {view !== "detail" && (
+          <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[12.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
+            <Plus size={14} /> Launch
+          </button>
+        )}
+      </div>
+
+      {view === "detail" && selectedToken ? (
+        <TokenDetailView token={selectedToken} onBack={() => setView("explore")} P={P} />
+      ) : view === "profile" ? (
+        <ProfilePage P={P} />
+      ) : view === "analytics" ? (
+        <AnalyticsPage P={P} />
+      ) : (
+        <ExplorePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} />
+      )}
+
+      {showCreate && <CreateLaunchModal onClose={() => setShowCreate(false)} P={P} />}
+    </div>
+  );
+}
