@@ -1,8 +1,28 @@
-import React, { useState, useEffect } from "react";
-import { useAccount } from "wagmi";
-import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3 } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { useAccount, useBalance, useSignMessage } from "wagmi";
+import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
-import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
+import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
+
+function CopyableAddress({ address, P, label }) {
+  const [copied, setCopied] = useState(false);
+  const short = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "";
+
+  function handleCopy(e) {
+    e.stopPropagation();
+    navigator.clipboard.writeText(address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <button onClick={handleCopy} className="inline-flex items-center gap-1 text-[11px] font-mono" style={{ color: P.textMuted }}>
+      {label && <span>{label}: </span>}
+      <span>{short}</span>
+      {copied ? <Check size={11} color={LIME_DEEP} /> : <Copy size={11} />}
+    </button>
+  );
+}
 
 function GraduationBar({ current, threshold, P, size = "normal" }) {
   const pct = Math.min(100, (current / threshold) * 100);
@@ -24,7 +44,34 @@ function GraduationBar({ current, threshold, P, size = "normal" }) {
   );
 }
 
-function TokenAvatar({ name, hue, size = 38 }) {
+// Temporary, frontend-only logo override, keyed by lowercased token
+// address — this is NOT the real on-chain logoURI system discussed and
+// deliberately deferred (that needs a contract redesign, planned for a
+// later, combined redeploy). This is just a quick, real way to show actual
+// artwork for specific tokens right now, easily replaceable once the real
+// system exists.
+const TOKEN_LOGOS = {
+  "0x67078594cf9c868a24abba47297ab7288011de2e": null, // $TEST — add a real image URL here once you have one
+};
+
+function TokenAvatar({ name, hue, address, logoUrl, size = 38 }) {
+  // Real, dynamic logo first (from the actual registry, fetched per
+  // token). Falls back to the temporary hardcoded table (kept for
+  // whatever was set before this real system existed), then the
+  // generated avatar if neither has anything.
+  const resolvedUrl = logoUrl || (address ? TOKEN_LOGOS[address.toLowerCase()] : null);
+
+  if (resolvedUrl) {
+    return (
+      <img
+        src={resolvedUrl}
+        alt={name}
+        className="rounded-full shrink-0 object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+
   return (
     <div
       className="rounded-full flex items-center justify-center font-display font-bold shrink-0"
@@ -43,7 +90,7 @@ function TokenCard({ token, onClick, P }) {
       style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}
     >
       <div className="flex items-center gap-2.5 p-3" style={{ flex: 1.4, minWidth: 0 }}>
-        <TokenAvatar name={token.name} hue={token.hue} />
+        <TokenAvatar name={token.name} hue={token.hue} address={token.tokenAddress} logoUrl={token.logoUrl} />
         <div className="min-w-0">
           <div className="text-[13px] font-semibold truncate" style={{ color: P.textPrimary }}>{token.name}</div>
           <div className="text-[10px]" style={{ color: P.textMuted }}>${token.symbol} · {token.holders} holders</div>
@@ -68,6 +115,9 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
   const [description, setDescription] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
+  const [uploadedLogoUrl, setUploadedLogoUrl] = useState(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
   const [devBuy, setDevBuy] = useState("");
   const { address, isConnected, chainId } = useAccount();
   const [launching, setLaunching] = useState(false);
@@ -81,6 +131,21 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
     try {
       const result = await launchToken({ name, symbol, creator: address, devBuyEth: devBuy });
       setLaunchResult(result);
+
+      // First-time save, right after launch — no signature needed yet,
+      // since there's no prior owner to protect against. Only runs if the
+      // user actually uploaded an image; a token launched without one
+      // just keeps using the generated avatar, same as always.
+      if (uploadedLogoUrl && result?.tokenAddress) {
+        try {
+          await saveTokenLogo({ tokenAddress: result.tokenAddress, logoUrl: uploadedLogoUrl, poolId: result.poolId });
+        } catch {
+          // Non-fatal — the launch itself already succeeded. A failed
+          // logo save just means it falls back to the generated avatar,
+          // not a broken launch.
+        }
+      }
+
       onLaunchSuccess?.(result, { name, symbol });
     } catch (err) {
       // The access-control handoff has happened, so a failure here now
@@ -94,13 +159,27 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
   }
   const fileInputRef = React.useRef(null);
 
-  function handleImageSelect(e) {
+  async function handleImageSelect(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) return; // silently ignore non-images
+
+    // Show a local preview immediately (feels instant), while the real
+    // upload happens in the background.
     const reader = new FileReader();
     reader.onload = () => setImagePreview(reader.result);
     reader.readAsDataURL(file);
+
+    setUploadError(null);
+    setUploadingImage(true);
+    try {
+      const realUrl = await uploadTokenLogo(file);
+      setUploadedLogoUrl(realUrl);
+    } catch (err) {
+      setUploadError(err?.message || String(err));
+    } finally {
+      setUploadingImage(false);
+    }
   }
 
   const fieldStyle = { background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" };
@@ -164,6 +243,15 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
               >
                 Tap to upload artwork
               </button>
+            )}
+            {uploadingImage && (
+              <div className="mt-1.5 text-[11px]" style={{ color: P.textMuted }}>Uploading real artwork…</div>
+            )}
+            {uploadedLogoUrl && !uploadingImage && (
+              <div className="mt-1.5 text-[11px]" style={{ color: LIME_DEEP }}>Uploaded — this real image will show once your token launches.</div>
+            )}
+            {uploadError && (
+              <div className="mt-1.5 text-[11px]" style={{ color: "#D92D20" }}>Upload failed: {uploadError}</div>
             )}
             <div className="flex items-start gap-2 mt-2 text-[11px]" style={{ color: P.textMuted }}>
               <input type="checkbox" className="mt-0.5" />
@@ -270,9 +358,75 @@ function TokenDetailView({ token, onBack, P }) {
   const [amount, setAmount] = useState("");
   const [side, setSide] = useState("buy");
   const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const [trading, setTrading] = useState(false);
   const [tradeError, setTradeError] = useState(null);
   const [tradeResult, setTradeResult] = useState(null);
+  const [tokenBalance, setTokenBalance] = useState(0n);
+
+  // Real update capability for the token's actual creator only —
+  // verified server-side against the on-chain registered creator, not
+  // just trusted from this check alone (this is just what shows the UI).
+  const isCreator = address && token.creator && address.toLowerCase() === token.creator.toLowerCase();
+  const [localLogoUrl, setLocalLogoUrl] = useState(null); // reflects a successful update immediately, without a full re-fetch
+  const [editingLogo, setEditingLogo] = useState(false);
+  const [logoUpdateError, setLogoUpdateError] = useState(null);
+  const editFileInputRef = useRef(null);
+
+  async function handleLogoUpdate(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoUpdateError(null);
+    setEditingLogo(true);
+    try {
+      const newUrl = await uploadTokenLogo(file);
+      const message = `I authorize updating the logo for token ${token.tokenAddress}`;
+      const signature = await signMessageAsync({ message });
+      await saveTokenLogo({
+        tokenAddress: token.tokenAddress,
+        logoUrl: newUrl,
+        poolId: token.poolId,
+        isUpdate: true,
+        signature,
+        signerAddress: address,
+      });
+      setLocalLogoUrl(newUrl);
+    } catch (err) {
+      setLogoUpdateError(err?.message || String(err));
+    } finally {
+      setEditingLogo(false);
+    }
+  }
+
+  // Real ETH balance, for the buy-side percentage buttons.
+  const { data: ethBalanceData } = useBalance({ address, chainId: ROBINHOOD_CHAIN_ID });
+
+  // Real token balance, for the sell-side percentage buttons. Refetches
+  // whenever the token or connected wallet changes, or after a trade
+  // completes (so the balance stays accurate after a buy/sell).
+  useEffect(() => {
+    if (!address || !token.tokenAddress) return;
+    let cancelled = false;
+    getTokenBalance({ tokenAddress: token.tokenAddress, ownerAddress: address })
+      .then((bal) => { if (!cancelled) setTokenBalance(bal); })
+      .catch(() => { if (!cancelled) setTokenBalance(0n); });
+    return () => { cancelled = true; };
+  }, [address, token.tokenAddress, tradeResult]);
+
+  // Small gas buffer reserved on 100% ETH buys, so the transaction doesn't
+  // fail from having nothing left to pay gas with.
+  const GAS_BUFFER_ETH = 0.0005;
+
+  function setPercentAmount(pct) {
+    if (side === "buy") {
+      const balEth = ethBalanceData ? parseFloat(ethBalanceData.formatted) : 0;
+      const usable = Math.max(0, balEth - GAS_BUFFER_ETH);
+      setAmount((usable * (pct / 100)).toFixed(6));
+    } else {
+      const balTokens = Number(tokenBalance) / 1e18;
+      setAmount((balTokens * (pct / 100)).toFixed(6));
+    }
+  }
 
   async function handleTrade() {
     setTradeError(null);
@@ -309,18 +463,49 @@ function TokenDetailView({ token, onBack, P }) {
         <ArrowLeft size={15} /> Back
       </button>
 
-      <div className="rounded-2xl p-4 mb-3 flex items-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-        <TokenAvatar name={token.name} hue={token.hue} size={52} />
-        <div>
-          <div className="text-[18px] font-display font-semibold" style={{ color: P.textPrimary }}>{token.name}</div>
-          <div className="text-[12.5px] font-mono" style={{ color: P.textMuted }}>${token.symbol} · by {token.creator}</div>
-          {(token.x || token.tg) && (
-            <div className="flex gap-1.5 mt-1.5">
-              {token.x && <span className="text-[10.5px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>𝕏 @{token.x}</span>}
-              {token.tg && <span className="text-[10.5px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>✈ {token.tg}</span>}
-            </div>
-          )}
+      <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+        <div className="flex items-center gap-3 mb-3">
+          <div className="relative">
+            <TokenAvatar name={token.name} hue={token.hue} address={token.tokenAddress} logoUrl={localLogoUrl || token.logoUrl} size={52} />
+            {isCreator && (
+              <button
+                onClick={() => editFileInputRef.current?.click()}
+                disabled={editingLogo}
+                className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center"
+                style={{ background: P.ctaBg, border: `2px solid ${P.panel}` }}
+                title="Update logo"
+              >
+                <Plus size={11} color={P.ctaText} />
+              </button>
+            )}
+            <input ref={editFileInputRef} type="file" accept="image/*" onChange={handleLogoUpdate} className="hidden" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[18px] font-display font-semibold" style={{ color: P.textPrimary }}>{token.name}</div>
+            <div className="text-[12.5px] font-mono" style={{ color: P.textMuted }}>${token.symbol}</div>
+          </div>
         </div>
+        {editingLogo && <div className="text-[11px] mb-2" style={{ color: P.textMuted }}>Uploading and signing…</div>}
+        {logoUpdateError && <div className="text-[11px] mb-2" style={{ color: "#D92D20" }}>{logoUpdateError}</div>}
+        <div className="flex flex-col gap-1 pt-2" style={{ borderTop: `1px solid ${P.panelBorder}` }}>
+          <CopyableAddress address={token.tokenAddress} P={P} label="Contract" />
+          <CopyableAddress address={token.creator} P={P} label="Creator" />
+        </div>
+        <a
+          href={`https://dexscreener.com/robinhood/${token.tokenAddress}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-1.5 mt-3 py-2 rounded-full text-[12px] font-medium"
+          style={{ background: P.pillBg, color: P.textPrimary, border: `1px solid ${P.panelBorder}` }}
+        >
+          View chart on DexScreener <ExternalLink size={12} />
+        </a>
+        {(token.x || token.tg) && (
+          <div className="flex gap-1.5 mt-2">
+            {token.x && <span className="text-[10.5px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>𝕏 @{token.x}</span>}
+            {token.tg && <span className="text-[10.5px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>✈ {token.tg}</span>}
+          </div>
+        )}
       </div>
 
       <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
@@ -371,6 +556,18 @@ function TokenDetailView({ token, onBack, P }) {
             style={{ color: P.textPrimary }}
           />
         </div>
+        <div className="flex gap-1.5 mb-3">
+          {[25, 50, 100].map((pct) => (
+            <button
+              key={pct}
+              onClick={() => setPercentAmount(pct)}
+              className="flex-1 py-1.5 rounded-lg text-[11.5px] font-medium"
+              style={{ background: P.pillBg, color: P.textSecondary, border: `1px solid ${P.panelBorder}` }}
+            >
+              {pct}%
+            </button>
+          ))}
+        </div>
         {amtNum > 0 && (
           <div className="rounded-lg px-3 py-2.5 mb-3 flex items-center justify-between" style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}>
             <span className="text-[11px]" style={{ color: P.textMuted }}>You'll receive (estimate)</span>
@@ -415,17 +612,14 @@ function TokenDetailView({ token, onBack, P }) {
           </div>
         )}
       </div>
-
-      <div className="flex items-start gap-2 text-[11.5px] px-1" style={{ color: P.textMuted }}>
-        <Users size={13} className="mt-0.5 shrink-0" />
-        70% of every trading fee goes directly to {token.creator} — automatically, every trade.
-      </div>
     </div>
   );
 }
 
 function ExplorePage({ onSelectToken, refreshKey, P }) {
-  const [sortChip, setSortChip] = useState("Recent buys");
+  // Defaults to a chip genuinely backed by real data — "Recent buys" has
+  // no real data source yet (see below), so it's not a good default.
+  const [sortChip, setSortChip] = useState("Market cap");
   const [rangeChip, setRangeChip] = useState("All");
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -448,6 +642,21 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
     boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
   });
 
+  // Real sorting/filtering against real fields (marketCapUsd, createdAt).
+  // "Volume" and "Recent buys" have no real data source — computing either
+  // needs either an indexer or event-log aggregation across every pool,
+  // neither of which exist yet. Rather than silently do nothing or fake a
+  // sort order, selecting them shows an honest message instead of a list.
+  const hasRealDataForSort = sortChip === "Market cap" || sortChip === "Newest";
+
+  const now = Date.now();
+  const rangeMs = rangeChip === "24h" ? 24 * 3600_000 : rangeChip === "7d" ? 7 * 24 * 3600_000 : Infinity;
+  const rangeFiltered = tokens.filter((t) => now - t.createdAt <= rangeMs);
+
+  const sorted = [...rangeFiltered].sort((a, b) =>
+    sortChip === "Newest" ? b.createdAt - a.createdAt : b.marketCapUsd - a.marketCapUsd
+  );
+
   return (
     <div>
       <div className="mb-1">
@@ -456,7 +665,7 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
       </div>
 
       <div className="flex gap-1 mt-3 mb-2 overflow-x-auto w-full pr-4" style={{ scrollbarWidth: "none" }}>
-        {["Recent buys", "Newest", "Market cap", "Volume"].map((c) => (
+        {["Market cap", "Newest", "Recent buys", "Volume"].map((c) => (
           <button key={c} onClick={() => setSortChip(c)} className="px-2.5 py-1.5 rounded-full text-[11px] font-medium whitespace-nowrap shrink-0" style={chipStyle(sortChip === c)}>{c}</button>
         ))}
       </div>
@@ -472,15 +681,20 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
         <div className="rounded-xl p-4 text-[12px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
           Couldn't reach the Registry: {fetchError}
         </div>
-      ) : tokens.length === 0 ? (
+      ) : !hasRealDataForSort ? (
+        <div className="flex flex-col items-center text-center gap-2 py-16">
+          <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{sortChip} isn't available yet</div>
+          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 240 }}>This needs trade-history data this app doesn't track yet. Try Market cap or Newest instead — both are real.</div>
+        </div>
+      ) : sorted.length === 0 ? (
         <div className="flex flex-col items-center text-center gap-2 py-16">
           <Rocket size={26} color={P.textMuted} />
-          <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>No tokens launched yet</div>
-          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 220 }}>This is real — reading directly from the Registry contract. Be the first to launch one.</div>
+          <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{tokens.length === 0 ? "No tokens launched yet" : "No tokens in this range"}</div>
+          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 220 }}>{tokens.length === 0 ? "This is real — reading directly from the Registry contract. Be the first to launch one." : "Try a wider time range."}</div>
         </div>
       ) : (
         <div className="flex flex-col gap-2.5">
-          {[...tokens].sort((a, b) => b.marketCapUsd - a.marketCapUsd).map((t) => (
+          {sorted.map((t) => (
             <TokenCard key={t.id} token={t} onClick={() => onSelectToken(t)} P={P} />
           ))}
         </div>

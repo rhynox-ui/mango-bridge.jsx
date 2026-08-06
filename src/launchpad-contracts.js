@@ -1,6 +1,51 @@
 import { readContract, writeContract, waitForTransactionReceipt } from "wagmi/actions";
 import { keccak256, encodeAbiParameters, parseAbiParameters, decodeEventLog } from "viem";
+import { upload } from "@vercel/blob/client";
 import { config } from "./wagmi.js";
+
+// ============================================================================
+// Token logos — real upload + registry, via Vercel Blob and a small API
+// layer (api/blob-upload.js, api/logo-registry.js). Images go to Blob
+// directly from the browser; only a small address->URL text mapping lives
+// in the registry JSON, not the images themselves.
+// ============================================================================
+
+// Uploads directly from the browser to Blob storage — the file's bytes
+// never pass through our own server, keeping this fast even on a mobile
+// connection. Returns the real, permanent URL once done.
+export async function uploadTokenLogo(file) {
+  const blob = await upload(file.name, file, {
+    access: "public",
+    handleUploadUrl: "/api/blob-upload",
+  });
+  return blob.url;
+}
+
+// Reads the full address->logoUrl mapping.
+export async function getLogoRegistry() {
+  const res = await fetch("/api/logo-registry");
+  if (!res.ok) return {};
+  return res.json();
+}
+
+// Saves a logo — either a first-time save (no signature needed, called
+// once right after a launch) or an update to an existing entry (requires
+// a real signature, verified server-side against the token's actual
+// on-chain registered creator). The signature itself is produced by the
+// calling component via wagmi's useSignMessage hook — kept out of this
+// file since hooks can't be called outside a React component.
+export async function saveTokenLogo({ tokenAddress, logoUrl, poolId, isUpdate, signature, signerAddress }) {
+  const res = await fetch("/api/logo-registry", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tokenAddress, logoUrl, poolId, isUpdate, signature, signerAddress }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Failed to save logo");
+  }
+  return res.json();
+}
 
 // ============================================================================
 // Real, deployed, verified addresses on Robinhood Chain mainnet — not
@@ -11,7 +56,7 @@ export const LAUNCHPAD_FACTORY_ADDRESS = "0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E
 export const LAUNCHPAD_HOOK_ADDRESS = "0x6df44617b8C13AB961dCe5097F9375AE6BE09044"; // v4, current
 export const LAUNCHPAD_REGISTRY_ADDRESS = "0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785"; // v3, current
 export const ROBINHOOD_CHAIN_ID = 4663;
-export const LAUNCHPAD_ROUTER_ADDRESS = "0xB8dEa275945355C86688e1dDC499453576B4b95E"; // points at Hook v4
+export const LAUNCHPAD_ROUTER_ADDRESS = "0xb347EEad23D4FC41338845E35Ee8Fc42D9789d70"; // sell() sync/transfer ordering fix
 // Confirmed real address, cross-verified against Uniswap's own official
 // PoolManager listing matching exactly — same rigor as every other address
 // used tonight. Source: Bags' own developer documentation for Robinhood
@@ -243,7 +288,21 @@ const REGISTRY_ABI = [
 const ERC20_METADATA_ABI = [
   { type: "function", name: "name", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
   { type: "function", name: "symbol", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
+  { type: "function", name: "balanceOf", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
 ];
+
+// Real on-chain read of a wallet's actual token balance — used to power
+// the 25/50/100% quick-select buttons on the sell side.
+export async function getTokenBalance({ tokenAddress, ownerAddress }) {
+  const balance = await readContract(config, {
+    address: tokenAddress,
+    abi: ERC20_METADATA_ABI,
+    functionName: "balanceOf",
+    args: [ownerAddress],
+    chainId: ROBINHOOD_CHAIN_ID,
+  });
+  return balance; // raw wei-denominated bigint
+}
 
 // ============================================================================
 // launchToken — calls the real Factory contract to deploy a token and seed
@@ -278,11 +337,13 @@ export async function launchToken({ name, symbol, creator, devBuyEth }) {
   // among the transaction's other emitted events (Transfer, Initialize,
   // ModifyLiquidity, etc.).
   let tokenAddress = null;
+  let poolId = null;
   for (const log of receipt.logs) {
     try {
       const decoded = decodeEventLog({ abi: FACTORY_ABI, data: log.data, topics: log.topics });
       if (decoded.eventName === "TokenLaunched") {
         tokenAddress = decoded.args.token;
+        poolId = decoded.args.poolId;
         break;
       }
     } catch {
@@ -290,7 +351,7 @@ export async function launchToken({ name, symbol, creator, devBuyEth }) {
     }
   }
 
-  return { hash, receipt, tokenAddress };
+  return { hash, receipt, tokenAddress, poolId };
 }
 
 // ============================================================================
@@ -316,10 +377,19 @@ export async function getRealLaunchCount() {
 // Not yet used by any UI component — wiring this into the Explore page is
 // the natural next step once real launches actually exist to display.
 // ============================================================================
+// Frontend-only filter, not a contract change — every other token launched
+// during tonight's debugging stays real and on-chain, just hidden from
+// this UI for now. Temporary, until the real logoURI system (discussed
+// but not yet built) makes this unnecessary.
+const VISIBLE_TOKENS = new Set([
+  "0x67078594cf9c868a24abba47297ab7288011de2e", // $TEST — confirmed working buy + sell
+]);
+
 export async function getRealLaunches() {
   const count = await getRealLaunchCount();
   if (count === 0) return [];
 
+  const logoRegistry = await getLogoRegistry().catch(() => ({}));
   const launches = [];
   for (let i = 0; i < count; i++) {
     const poolId = await readContract(config, {
@@ -346,6 +416,8 @@ export async function getRealLaunches() {
     // cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated,
     // launchedAt, graduatedAt).
     const [creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt] = launchRaw;
+
+    if (!VISIBLE_TOKENS.has(tokenAddress.toLowerCase())) continue;
 
     // Real name/symbol from the token contract itself — not stored in the
     // Registry, so this needs its own separate reads. If either fails for
@@ -378,6 +450,7 @@ export async function getRealLaunches() {
       symbol,
       creator,
       tokenAddress,
+      logoUrl: logoRegistry[tokenAddress.toLowerCase()] || null,
       // Registry tracks cumulative fees, not market cap directly — used
       // here as the closest real proxy available, same value the
       // graduation bar itself is based on.
