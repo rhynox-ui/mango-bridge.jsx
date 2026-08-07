@@ -2,6 +2,7 @@
 
 Mango Protocol is a permissionless infrastructure suite for moving assets across chains and launching new tokens. Anyone can bridge, anyone can launch a token, anyone can trade — there's no gatekeeping, no approval process, no account to register. You connect a wallet and use it.
 
+
 **Status:** Bridge is live on mainnet. Launchpad contracts are deployed and verified on Robinhood Chain mainnet; the launch and trading interface is still in development.
 
 ---
@@ -54,19 +55,27 @@ Every token launches directly into a live Uniswap v4 pool, trading on real, audi
 
 **Trading fees:** 1% per trade, split 70% to the token's creator and 30% to the Mango Protocol treasury — paid automatically inside the same transaction as the trade. Nothing to claim, ever.
 
-**Creator tools:** the Profile page tracks your launches, holdings, unrealized PnL, and total creator fees earned over time, all in one place.
+**Creator tools:** the Profile page tracks your real launches and real holdings, read directly from the Registry and each token's on-chain balance — no fake data, no placeholder numbers. Creator fees earned isn't tracked yet; see Security notes below.
 
-Contracts (`MangoLaunchHook.sol`, `MangoLaunchRegistry.sol`, `MangoLaunchFactory.sol`, `MangoLaunchToken.sol`) are deployed and verified on Robinhood Chain mainnet — see `contracts/` for source and `contracts/Deploy*.s.sol` for the deployment scripts. Real Uniswap v4 addresses, confirmed against actual `forge build` output, not assumed from documentation.
+Contracts (`MangoLaunchHook.sol`, `MangoLaunchRegistry.sol`, `MangoLaunchFactory.sol`, `MangoLaunchRouter.sol`, `MangoLaunchToken.sol`) are deployed and verified on Robinhood Chain mainnet — see `contracts/` for source and `contracts/Deploy*.s.sol` for the deployment scripts. Real addresses, confirmed against actual `forge build` output and real mainnet transactions, not assumed from documentation.
 
-**Not yet fully operational** — the Factory is deployed but needs a separate access-control handoff (transferring `launchOperator`/`factory` roles from the deployer wallet to the Factory contract) before it can complete a real launch. That's a deliberate, currently-irreversible decision that hasn't been made yet — see the Factory contract's own comments for why.
+**Current (live now):**
 
 | Contract | Address |
 |---|---|
-| MangoLaunchFactory | [`0xA2103eb3aaB95A364c2D2f9f441396B2bC0632b1`](https://robinhoodchain.blockscout.com/address/0xA2103eb3aaB95A364c2D2f9f441396B2bC0632b1) |
-| MangoLaunchHook (v2, current) | [`0x01aC474F17E4d8b29f9f212757953C5E505ad040`](https://robinhoodchain.blockscout.com/address/0x01aC474F17E4d8b29f9f212757953C5E505ad040) |
-| MangoLaunchRegistry (v2, current) | [`0xC94D2b02Ce52224dE6A7C0153CE89AbE9a5f7f06`](https://robinhoodchain.blockscout.com/address/0xC94D2b02Ce52224dE6A7C0153CE89AbE9a5f7f06) |
-| MangoLaunchHook (v1, superseded) | [`0x86a8899A5836fBf68F722f260E5106Cb03739040`](https://robinhoodchain.blockscout.com/address/0x86a8899A5836fBf68F722f260E5106Cb03739040) |
-| MangoLaunchRegistry (v1, superseded) | [`0x3441E02E7e9C83EcA78d090Ef279faA7dd719023`](https://robinhoodchain.blockscout.com/address/0x3441E02E7e9C83EcA78d090Ef279faA7dd719023) |
+| MangoLaunchFactory | [`0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E912A`](https://robinhoodchain.blockscout.com/address/0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E912A) |
+| MangoLaunchHook (v4) | [`0x6df44617b8C13AB961dCe5097F9375AE6BE09044`](https://robinhoodchain.blockscout.com/address/0x6df44617b8C13AB961dCe5097F9375AE6BE09044) |
+| MangoLaunchRegistry (v3) | [`0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785`](https://robinhoodchain.blockscout.com/address/0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785) |
+| MangoLaunchRouter (v4) | [`0xb347EEad23D4FC41338845E35Ee8Fc42D9789d70`](https://robinhoodchain.blockscout.com/address/0xb347EEad23D4FC41338845E35Ee8Fc42D9789d70) |
+
+**Version history — why each version exists, not just a changelog:**
+
+- **Hook v1 → v2:** redesigned the fee structure — flat 3% became 1% buy, 4% sell pre-graduation (real anti-dump protection), 1% both ways after graduation.
+- **Hook/Registry v2 → v3:** added a permanent, separate admin role. The original design let only the current operator reassign itself — once that role moved to a contract with no forwarding function, it got permanently stuck (`NotLaunchOperator()`, confirmed on real mainnet, not caught in testing).
+- **Hook v3 → v4:** fixed a missing permission bit (`AFTER_SWAP_RETURNS_DELTA_FLAG`). The hook computed trading fees correctly the whole time but was never granted permission to actually apply them — every real trade with a registered creator reverted until this was found and fixed.
+- **Factory v1 → v2:** fixed a real over-settlement bug. The original transferred a token's *entire* supply to seed liquidity; Uniswap's own tick-rounding math meant slightly less was actually owed, leaving an unclaimed credit that reverted every launch attempt with `CurrencyNotSettled()`. Root-caused and fixed via a local Foundry fork test reproducing the exact mainnet failure.
+- **Router v1 → v2 → v3:** updated to point at each new Hook version as it shipped.
+- **Router v3 → v4:** fixed a settlement-ordering bug in the sell path specifically — `sync()` was being called after the token transfer instead of before it. Buys worked correctly before this fix; sells didn't.
 
 ## How Uniswap v4 Hooks Work
 

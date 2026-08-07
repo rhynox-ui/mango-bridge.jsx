@@ -1,8 +1,6 @@
-import { readContract, writeContract, waitForTransactionReceipt, getPublicClient } from "wagmi/actions";
+import { readContract, writeContract, waitForTransactionReceipt } from "wagmi/actions";
 import { keccak256, encodeAbiParameters, parseAbiParameters, decodeEventLog } from "viem";
 import { config } from "./wagmi.js";
-
-const ROBINHOOD_POOL_MANAGER = "0x8366a39CC670B4001A1121B8F6A443A643e40951";
 
 // ============================================================================
 // Token logos — real upload + registry, via Vercel Blob and a small API
@@ -134,35 +132,6 @@ export const LAUNCHPAD_ROUTER_ADDRESS = "0xb347EEad23D4FC41338845E35Ee8Fc42D9789
 // used tonight. Source: Bags' own developer documentation for Robinhood
 // Chain, which lists the full protocol address book.
 export const STATE_VIEW_ADDRESS = "0xF3334192D15450CdD385c8B70e03f9A6bD9E673b";
-
-const SWAP_EVENT_ABI = [
-  {
-    type: "event",
-    name: "Swap",
-    inputs: [
-      { name: "id", type: "bytes32", indexed: true },
-      { name: "sender", type: "address", indexed: true },
-      { name: "amount0", type: "int128", indexed: false },
-      { name: "amount1", type: "int128", indexed: false },
-      { name: "sqrtPriceX96", type: "uint160", indexed: false },
-      { name: "liquidity", type: "uint128", indexed: false },
-      { name: "tick", type: "int24", indexed: false },
-      { name: "fee", type: "uint24", indexed: false },
-    ],
-  },
-];
-
-const TRANSFER_EVENT_ABI = [
-  {
-    type: "event",
-    name: "Transfer",
-    inputs: [
-      { name: "from", type: "address", indexed: true },
-      { name: "to", type: "address", indexed: true },
-      { name: "value", type: "uint256", indexed: false },
-    ],
-  },
-];
 
 const STATE_VIEW_ABI = [
   {
@@ -507,99 +476,24 @@ export async function getRealLaunchCount() {
 // the natural next step once real launches actually exist to display.
 // ============================================================================
 // ============================================================================
-// Recent Trades — real, direct from the Swap event PoolManager emits on
-// every trade, the same event visible in every trace tonight. No indexer
-// needed for this one; a direct log query is genuinely sufficient at
-// today's volume.
+// Recent Trades and Holders — now routed through a shared, server-side
+// cache (api/token-activity.js), not scanned directly from the browser.
+// Without this, every visitor triggers their own full blockchain scan;
+// with it, a 30-second-old answer is reused across everyone, and only the
+// first request in that window does the real work.
 // ============================================================================
-export async function getRecentTrades({ poolId, limit = 30 }) {
-  const client = getPublicClient(config, { chainId: ROBINHOOD_CHAIN_ID });
-
-  const logs = await client.getLogs({
-    address: ROBINHOOD_POOL_MANAGER,
-    event: SWAP_EVENT_ABI[0],
-    args: { id: poolId },
-    fromBlock: 0n,
-    toBlock: "latest",
-  });
-
-  const recent = logs.slice(-limit).reverse();
-
-  // The event's own "sender" field is the Router's address, not the real
-  // trader — every trade goes through our Router, so this always shows
-  // the same address regardless of who actually traded. The transaction's
-  // real "from" field is the actual trader, which needs a separate fetch
-  // per trade. Block timestamps also need a separate fetch, batched here
-  // rather than done one at a time.
-  const trades = await Promise.all(
-    recent.map(async (log) => {
-      const [tx, block] = await Promise.all([
-        client.getTransaction({ hash: log.transactionHash }),
-        client.getBlock({ blockNumber: log.blockNumber }),
-      ]);
-
-      const isBuy = log.args.amount0 < 0n; // ETH went in = buying the token
-      const tokenAmount = isBuy ? log.args.amount1 : -log.args.amount1;
-      const ethAmount = isBuy ? -log.args.amount0 : log.args.amount0;
-
-      return {
-        hash: log.transactionHash,
-        isBuy,
-        trader: tx.from,
-        tokenAmount: Number(tokenAmount) / 1e18,
-        ethAmount: Number(ethAmount) / 1e18,
-        timestamp: Number(block.timestamp) * 1000,
-      };
-    })
-  );
-
-  return trades;
+export async function getRecentTrades({ poolId }) {
+  const res = await fetch(`/api/token-activity?type=trades&poolId=${poolId}`);
+  if (!res.ok) throw new Error("Failed to load recent trades");
+  const { data } = await res.json();
+  return data;
 }
 
-// ============================================================================
-// Holders — reconstructed by replaying every Transfer event for the token
-// from its creation. Genuinely accurate at today's transaction volume, but
-// an honest limitation worth stating plainly: this scans the token's ENTIRE
-// transfer history on every call, which does not scale to a token with a
-// large trading history. A real production version needs an indexer
-// maintaining running balances, not a full replay each time.
-// ============================================================================
-export async function getTokenHolders({ tokenAddress, limit = 50 }) {
-  const client = getPublicClient(config, { chainId: ROBINHOOD_CHAIN_ID });
-
-  const logs = await client.getLogs({
-    address: tokenAddress,
-    event: TRANSFER_EVENT_ABI[0],
-    fromBlock: 0n,
-    toBlock: "latest",
-  });
-
-  const ZERO = "0x0000000000000000000000000000000000000000";
-  const balances = {};
-
-  for (const log of logs) {
-    const { from, to, value } = log.args;
-    if (from !== ZERO) {
-      balances[from] = (balances[from] || 0n) - value;
-    }
-    if (to !== ZERO) {
-      balances[to] = (balances[to] || 0n) + value;
-    }
-  }
-
-  const TOTAL_SUPPLY = 1_000_000_000n * 10n ** 18n;
-
-  const holders = Object.entries(balances)
-    .filter(([, bal]) => bal > 0n)
-    .map(([address, bal]) => ({
-      address,
-      balance: Number(bal) / 1e18,
-      percentOfSupply: Number((bal * 10000n) / TOTAL_SUPPLY) / 100,
-    }))
-    .sort((a, b) => b.balance - a.balance)
-    .slice(0, limit);
-
-  return holders;
+export async function getTokenHolders({ tokenAddress }) {
+  const res = await fetch(`/api/token-activity?type=holders&tokenAddress=${tokenAddress}`);
+  if (!res.ok) throw new Error("Failed to load holders");
+  const { data } = await res.json();
+  return data;
 }
 
 // ============================================================================

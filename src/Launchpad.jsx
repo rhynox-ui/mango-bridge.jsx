@@ -905,8 +905,8 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
       )}
 
       <div className="mt-8 pt-5 text-[11px] leading-relaxed" style={{ borderTop: `1px solid ${P.divider}`, color: P.textMuted }}>
-        <p className="mb-3">Launch and explore fixed-supply tokens on Robinhood Chain, trading live on Uniswap v4 from the first buy. Your wallet submits every transaction. Mango does not custody assets.</p>
-        <p className="mb-3">Transactions are submitted through your wallet and may be irreversible. Tokens can be volatile or lose all value. Mango Protocol does not provide custody, warranties, or financial advice.</p>
+        <p className="mb-3">Every token launched through Mango goes straight into its own Uniswap v4 pool, live from the first buy. Your wallet signs and sends every transaction directly on-chain.</p>
+        <p className="mb-3">A hook is code attached to the pool that runs automatically on every trade. Mango's handles the fee: 1% on buys, 4% on sells pre-graduation, flat 1% after — split 70/30 between creator and protocol, instantly, with no claiming step.</p>
         <p>© 2026 Mango Protocol.</p>
       </div>
     </div>

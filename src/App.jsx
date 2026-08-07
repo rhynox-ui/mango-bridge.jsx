@@ -1481,29 +1481,47 @@ function DocsModal({ onClose, P }) {
 
         <DocSection title="Contracts" P={P}>
           <p className="mb-2">Deployed and verified on Robinhood Chain mainnet — tap any to view on the block explorer.</p>
-          <div className="flex flex-col gap-2">
-            <a href="https://robinhoodchain.blockscout.com/address/0xA2103eb3aaB95A364c2D2f9f441396B2bC0632b1" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <p className="font-medium mb-1.5" style={{ color: P.textPrimary }}>Current (live now)</p>
+          <div className="flex flex-col gap-2 mb-3">
+            <a href="https://robinhoodchain.blockscout.com/address/0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E912A" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
               <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchFactory</div>
-              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0xA2103eb3aaB95A364c2D2f9f441396B2bC0632b1</div>
+              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E912A</div>
             </a>
-            <a href="https://robinhoodchain.blockscout.com/address/0x01aC474F17E4d8b29f9f212757953C5E505ad040" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchHook (v2, current)</div>
-              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0x01aC474F17E4d8b29f9f212757953C5E505ad040</div>
+            <a href="https://robinhoodchain.blockscout.com/address/0x6df44617b8C13AB961dCe5097F9375AE6BE09044" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchHook (v4)</div>
+              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0x6df44617b8C13AB961dCe5097F9375AE6BE09044</div>
             </a>
-            <a href="https://robinhoodchain.blockscout.com/address/0xC94D2b02Ce52224dE6A7C0153CE89AbE9a5f7f06" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchRegistry (v2, current)</div>
-              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0xC94D2b02Ce52224dE6A7C0153CE89AbE9a5f7f06</div>
+            <a href="https://robinhoodchain.blockscout.com/address/0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchRegistry (v3)</div>
+              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785</div>
             </a>
-            <a href="https://robinhoodchain.blockscout.com/address/0x86a8899A5836fBf68F722f260E5106Cb03739040" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchHook (v1, superseded)</div>
-              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0x86a8899A5836fBf68F722f260E5106Cb03739040</div>
-            </a>
-            <a href="https://robinhoodchain.blockscout.com/address/0x3441E02E7e9C83EcA78d090Ef279faA7dd719023" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchRegistry (v1, superseded)</div>
-              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0x3441E02E7e9C83EcA78d090Ef279faA7dd719023</div>
+            <a href="https://robinhoodchain.blockscout.com/address/0xb347EEad23D4FC41338845E35Ee8Fc42D9789d70" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchRouter (v4)</div>
+              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0xb347EEad23D4FC41338845E35Ee8Fc42D9789d70</div>
             </a>
           </div>
-          <p className="mt-2 text-[11px]" style={{ color: P.textMuted }}>The Factory is deployed but not yet fully operational — a separate access-control step is still pending before it can complete a real launch.</p>
+
+          <p className="font-medium mb-1.5" style={{ color: P.textPrimary }}>Version history</p>
+          <div className="flex flex-col gap-2 text-[11px]" style={{ color: P.textSecondary }}>
+            <div>
+              <span className="font-medium" style={{ color: P.textPrimary }}>Hook v1 → v2:</span> redesigned the fee structure — flat 3% became 1% buy, 4% sell pre-graduation (real anti-dump protection), 1% both ways after.
+            </div>
+            <div>
+              <span className="font-medium" style={{ color: P.textPrimary }}>Hook/Registry v2 → v3:</span> added a permanent, separate admin role. The old design let only the current operator reassign itself — once that became a contract with no forwarding function, it got permanently stuck. Confirmed on real mainnet, not caught in testing.
+            </div>
+            <div>
+              <span className="font-medium" style={{ color: P.textPrimary }}>Hook v3 → v4:</span> fixed a missing permission bit. The hook computed trading fees correctly but was never granted permission to actually apply them — every real trade reverted until this was found and fixed.
+            </div>
+            <div>
+              <span className="font-medium" style={{ color: P.textPrimary }}>Factory v1 → v2:</span> fixed an over-settlement bug — the original transferred a token's full supply to seed liquidity, when tick-rounding meant slightly less was actually owed, leaving an unclaimed credit that reverted every launch.
+            </div>
+            <div>
+              <span className="font-medium" style={{ color: P.textPrimary }}>Router v1 → v2 → v3:</span> updated to point at each new Hook version in turn.
+            </div>
+            <div>
+              <span className="font-medium" style={{ color: P.textPrimary }}>Router v3 → v4:</span> fixed a settlement ordering bug in the sell path — buys worked correctly before this fix, sells didn't.
+            </div>
+          </div>
         </DocSection>
 
         <DocSection title="Custody" P={P}>
