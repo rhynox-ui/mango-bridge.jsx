@@ -1,16 +1,25 @@
 // api/blob-upload.js
 //
-// Handles the client-upload handshake for Vercel Blob. The actual image
-// bytes never pass through this function — the browser uploads directly to
-// Blob storage using a short-lived token this endpoint issues. This avoids
-// routing potentially large files through a serverless function's payload
-// limits, and keeps uploads fast on a mobile connection.
+// Server-side upload — the file comes straight through this function and
+// gets stored via Blob's own put(), rather than the two-step client-upload
+// handshake (get a token, then upload directly to Blob from the browser).
 //
-// Requires @vercel/blob installed, and Blob storage enabled in the Vercel
-// project dashboard (Storage tab) — this is a one-time setup step outside
-// of code, not something deploying this file alone handles.
+// Switched from the client-upload pattern specifically because it exists
+// to bypass a 4.5MB function body limit for LARGE files — something we
+// don't need, since token logos are capped at 5MB and realistically much
+// smaller. The client pattern also has real, documented flakiness (hangs,
+// CORS quirks) that a direct server upload avoids entirely.
+//
+// Requires @vercel/blob installed and Blob storage connected, same as
+// before — no new setup needed beyond what's already configured.
 
-import { handleUpload } from "@vercel/blob/client";
+import { put } from "@vercel/blob";
+
+export const config = {
+  api: {
+    bodyParser: false, // reading the raw file stream directly
+  },
+};
 
 export default async function handler(request, response) {
   if (request.method !== "POST") {
@@ -18,29 +27,33 @@ export default async function handler(request, response) {
   }
 
   try {
-    const body = request.body;
+    const filename = request.headers["x-filename"] || `logo-${Date.now()}`;
+    const contentType = request.headers["content-type"] || "application/octet-stream";
 
-    const jsonResponse = await handleUpload({
-      body,
-      request,
-      onBeforeGenerateToken: async (pathname) => {
-        // Restrict uploads to image files, under a reasonable size — no
-        // reason a token logo needs to be more than a couple MB.
-        return {
-          allowedContentTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"],
-          maximumSizeInBytes: 5 * 1024 * 1024, // 5MB
-          addRandomSuffix: true, // avoids collisions if two tokens use the same filename
-        };
-      },
-      onUploadCompleted: async () => {
-        // Nothing needed here — the frontend receives the real URL
-        // directly from the upload call itself and handles saving the
-        // address->logo mapping as its own separate, explicit step.
-      },
+    if (!contentType.startsWith("image/")) {
+      return response.status(400).json({ error: "Only image uploads are allowed" });
+    }
+
+    // Collect the raw request body directly — small files (a few MB at
+    // most), so buffering in memory is genuinely fine here.
+    const chunks = [];
+    for await (const chunk of request) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+
+    if (buffer.length > 5 * 1024 * 1024) {
+      return response.status(400).json({ error: "File too large — 5MB max" });
+    }
+
+    const blob = await put(filename, buffer, {
+      access: "public",
+      contentType,
+      addRandomSuffix: true,
     });
 
-    return response.status(200).json(jsonResponse);
+    return response.status(200).json({ url: blob.url });
   } catch (error) {
-    return response.status(400).json({ error: error.message });
+    return response.status(500).json({ error: error.message });
   }
 }
