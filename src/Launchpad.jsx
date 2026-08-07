@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useAccount, useBalance, useSignMessage } from "wagmi";
 import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
-import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
+import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
 function CopyableAddress({ address, P, label }) {
   const [copied, setCopied] = useState(false);
@@ -354,6 +354,137 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
   );
 }
 
+function TradeRowSkeleton({ P }) {
+  return (
+    <div className="flex items-center justify-between py-2.5" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
+      <div className="flex flex-col gap-1.5">
+        <div className="w-24 h-4 rounded" style={{ background: P.pillBg }} />
+        <div className="w-16 h-3 rounded" style={{ background: P.pillBg }} />
+      </div>
+      <div className="flex flex-col items-end gap-1.5">
+        <div className="w-12 h-3 rounded" style={{ background: P.pillBg }} />
+        <div className="w-16 h-3 rounded" style={{ background: P.pillBg }} />
+      </div>
+    </div>
+  );
+}
+
+function TokenActivityPanel({ token, P }) {
+  const [tab, setTab] = useState("trades");
+  const [trades, setTrades] = useState(null);
+  const [holders, setHolders] = useState(null);
+  const [tradesError, setTradesError] = useState(null);
+  const [holdersError, setHoldersError] = useState(null);
+
+  // Keyed on the token's own address — automatically refetches whenever
+  // the user switches to a different token from Explore, and doesn't
+  // block the Buy/Sell widget above, since this loads independently after
+  // the rest of the page has already rendered.
+  useEffect(() => {
+    setTrades(null);
+    setTradesError(null);
+    let cancelled = false;
+    getRecentTrades({ poolId: token.poolId })
+      .then((real) => { if (!cancelled) setTrades(real); })
+      .catch((err) => { if (!cancelled) setTradesError(err?.message || String(err)); });
+    return () => { cancelled = true; };
+  }, [token.poolId]);
+
+  useEffect(() => {
+    setHolders(null);
+    setHoldersError(null);
+    let cancelled = false;
+    getTokenHolders({ tokenAddress: token.tokenAddress })
+      .then((real) => { if (!cancelled) setHolders(real); })
+      .catch((err) => { if (!cancelled) setHoldersError(err?.message || String(err)); });
+    return () => { cancelled = true; };
+  }, [token.tokenAddress]);
+
+  return (
+    <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+      <div className="flex rounded-xl p-1 mb-3" style={{ background: P.pillBg }}>
+        <button
+          onClick={() => setTab("trades")}
+          className="flex-1 py-2 rounded-lg text-[12.5px] font-semibold"
+          style={{ background: tab === "trades" ? P.panel : "transparent", color: tab === "trades" ? P.textPrimary : P.textSecondary }}
+        >
+          Recent Trades
+        </button>
+        <button
+          onClick={() => setTab("holders")}
+          className="flex-1 py-2 rounded-lg text-[12.5px] font-semibold"
+          style={{ background: tab === "holders" ? P.panel : "transparent", color: tab === "holders" ? P.textPrimary : P.textSecondary }}
+        >
+          Holders
+        </button>
+      </div>
+
+      {tab === "trades" ? (
+        trades === null ? (
+          <div>{[1, 2, 3, 4].map((i) => <TradeRowSkeleton key={i} P={P} />)}</div>
+        ) : tradesError ? (
+          <div className="text-center py-6 text-[12px]" style={{ color: "#D92D20" }}>Couldn't load trades: {tradesError}</div>
+        ) : trades.length === 0 ? (
+          <div className="text-center py-8 text-[12.5px]" style={{ color: P.textMuted }}>No trades yet — be the first.</div>
+        ) : (
+          <div className="max-h-[360px] overflow-y-auto flex flex-col">
+            {trades.map((t) => (
+              <a
+                key={t.hash}
+                href={`https://robinhoodchain.blockscout.com/tx/${t.hash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between py-2.5"
+                style={{ borderBottom: `1px solid ${P.panelBorder}` }}
+              >
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span style={{ color: t.isBuy ? LIME_DEEP : "#D92D20" }}>{t.isBuy ? "↗" : "↘"}</span>
+                    <span className="text-[14px] font-bold font-mono" style={{ color: P.textPrimary }}>{fmt(t.tokenAmount, 0)} {token.symbol}</span>
+                  </div>
+                  <div className="text-[11px] font-mono" style={{ color: P.textMuted }}>{t.trader.slice(0, 6)}...{t.trader.slice(-4)}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[11px]" style={{ color: P.textMuted }}>{timeAgo(t.timestamp)}</div>
+                  <div className="text-[12px] font-mono" style={{ color: P.textSecondary }}>{t.ethAmount.toFixed(5)} ETH</div>
+                </div>
+              </a>
+            ))}
+          </div>
+        )
+      ) : holders === null ? (
+        <div>{[1, 2, 3, 4].map((i) => <TradeRowSkeleton key={i} P={P} />)}</div>
+      ) : holdersError ? (
+        <div className="text-center py-6 text-[12px]" style={{ color: "#D92D20" }}>Couldn't load holders: {holdersError}</div>
+      ) : holders.length === 0 ? (
+        <div className="text-center py-8 text-[12.5px]" style={{ color: P.textMuted }}>No holders yet.</div>
+      ) : (
+        <div className="max-h-[360px] overflow-y-auto flex flex-col">
+          {holders.map((h, i) => (
+            <a
+              key={h.address}
+              href={`https://robinhoodchain.blockscout.com/address/${h.address}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between py-2.5"
+              style={{ borderBottom: `1px solid ${P.panelBorder}` }}
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="text-[11px] font-mono w-5" style={{ color: P.textMuted }}>#{i + 1}</span>
+                <span className="text-[12.5px] font-mono" style={{ color: P.textPrimary }}>{h.address.slice(0, 6)}...{h.address.slice(-4)}</span>
+              </div>
+              <div className="text-right">
+                <div className="text-[12.5px] font-mono font-semibold" style={{ color: P.textPrimary }}>{fmt(h.balance, 0)}</div>
+                <div className="text-[11px]" style={{ color: P.textMuted }}>{h.percentOfSupply.toFixed(2)}%</div>
+              </div>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TokenDetailView({ token, onBack, P }) {
   const [amount, setAmount] = useState("");
   const [side, setSide] = useState("buy");
@@ -364,6 +495,35 @@ function TokenDetailView({ token, onBack, P }) {
   const [tradeResult, setTradeResult] = useState(null);
   const [tokenBalance, setTokenBalance] = useState(0n);
 
+  // Real, live progress — initialized from whatever the page loaded with,
+  // then refreshed with fresh on-chain numbers right after every trade.
+  // This is the actual fix for the graduation bar not moving: nothing
+  // previously re-fetched this after a trade, so it just kept showing
+  // the snapshot from whenever the page first opened.
+  const [liveProgress, setLiveProgress] = useState({
+    marketCapUsd: token.marketCapUsd,
+    graduationThresholdUsd: token.graduationThresholdUsd,
+    graduated: token.graduated,
+  });
+
+  async function refreshProgress() {
+    try {
+      const fresh = await getLaunchProgress({ poolId: token.poolId });
+      setLiveProgress(fresh);
+    } catch {
+      // Non-fatal — the trade itself already succeeded either way. Worst
+      // case the bar just keeps its last known value until the next
+      // successful refresh.
+    }
+  }
+
+  // Also refresh the moment this page opens, not just after a trade —
+  // otherwise a token another user traded since Explore last fetched would
+  // still show a stale number here on first load.
+  useEffect(() => {
+    refreshProgress();
+  }, [token.poolId]);
+
   // Real update capability for the token's actual creator only —
   // verified server-side against the on-chain registered creator, not
   // just trusted from this check alone (this is just what shows the UI).
@@ -371,17 +531,43 @@ function TokenDetailView({ token, onBack, P }) {
   const [localLogoUrl, setLocalLogoUrl] = useState(null); // reflects a successful update immediately, without a full re-fetch
   const [editingLogo, setEditingLogo] = useState(false);
   const [logoUpdateError, setLogoUpdateError] = useState(null);
+  const [logoUpdateStep, setLogoUpdateStep] = useState(null);
   const editFileInputRef = useRef(null);
 
   async function handleLogoUpdate(e) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      setLogoUpdateError("No file was actually selected — try tapping the badge again.");
+      return;
+    }
     setLogoUpdateError(null);
     setEditingLogo(true);
+    setLogoUpdateStep("Uploading image…");
+
+    let newUrl;
     try {
-      const newUrl = await uploadTokenLogo(file);
-      const message = `I authorize updating the logo for token ${token.tokenAddress}`;
-      const signature = await signMessageAsync({ message });
+      newUrl = await uploadTokenLogo(file);
+    } catch (err) {
+      setLogoUpdateError(`Upload step failed: ${err?.message || String(err)}`);
+      setEditingLogo(false);
+      setLogoUpdateStep(null);
+      return;
+    }
+
+    setLogoUpdateStep("Waiting for your wallet to sign…");
+    const message = `I authorize updating the logo for token ${token.tokenAddress}`;
+    let signature;
+    try {
+      signature = await signMessageAsync({ message });
+    } catch (err) {
+      setLogoUpdateError(`Signing step failed: ${err?.message || String(err)}`);
+      setEditingLogo(false);
+      setLogoUpdateStep(null);
+      return;
+    }
+
+    setLogoUpdateStep("Saving…");
+    try {
       await saveTokenLogo({
         tokenAddress: token.tokenAddress,
         logoUrl: newUrl,
@@ -391,8 +577,9 @@ function TokenDetailView({ token, onBack, P }) {
         signerAddress: address,
       });
       setLocalLogoUrl(newUrl);
+      setLogoUpdateStep("Done — logo updated.");
     } catch (err) {
-      setLogoUpdateError(err?.message || String(err));
+      setLogoUpdateError(`Save step failed: ${err?.message || String(err)}`);
     } finally {
       setEditingLogo(false);
     }
@@ -437,6 +624,7 @@ function TokenDetailView({ token, onBack, P }) {
         ? await buyTokenReal({ tokenAddress: token.tokenAddress, ethAmount: amount, recipient: address })
         : await sellTokenReal({ tokenAddress: token.tokenAddress, tokenAmountWei: BigInt(Math.round(parseFloat(amount) * 1e18)), recipient: address });
       setTradeResult(result);
+      await refreshProgress();
     } catch (err) {
       setTradeError(err?.shortMessage || err?.message || String(err));
     } finally {
@@ -451,7 +639,7 @@ function TokenDetailView({ token, onBack, P }) {
   // consistency. This is illustrative, not a real swap quote.
   const TOTAL_SUPPLY = 1_000_000_000;
   const ETH_USD_PRICE = 3120;
-  const pricePerToken = token.marketCapUsd / TOTAL_SUPPLY;
+  const pricePerToken = liveProgress.marketCapUsd / TOTAL_SUPPLY;
   const amtNum = parseFloat(amount) || 0;
   const usdValue = side === "buy" ? amtNum * ETH_USD_PRICE : amtNum * pricePerToken;
   const tokensReceived = side === "buy" && pricePerToken > 0 ? usdValue / pricePerToken : 0;
@@ -482,11 +670,25 @@ function TokenDetailView({ token, onBack, P }) {
           </div>
           <div className="min-w-0">
             <div className="text-[18px] font-display font-semibold" style={{ color: P.textPrimary }}>{token.name}</div>
+            {!isCreator && (
+              <div className="text-[10px] mt-0.5" style={{ color: P.textMuted }}>
+                {address ? "Connected wallet isn't this token's creator — logo edit unavailable" : "Connect the creator's wallet to edit this token's logo"}
+              </div>
+            )}
             <div className="text-[12.5px] font-mono" style={{ color: P.textMuted }}>${token.symbol}</div>
           </div>
         </div>
-        {editingLogo && <div className="text-[11px] mb-2" style={{ color: P.textMuted }}>Uploading and signing…</div>}
-        {logoUpdateError && <div className="text-[11px] mb-2" style={{ color: "#D92D20" }}>{logoUpdateError}</div>}
+        {logoUpdateStep && (
+          <div className="rounded-lg p-3 mb-2 text-[12.5px] font-medium" style={{ background: `${LIME}15`, border: `1px solid ${LIME}40`, color: LIME_DEEP }}>
+            {logoUpdateStep}
+          </div>
+        )}
+        {logoUpdateError && (
+          <div className="rounded-lg p-3 mb-2 text-[12.5px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
+            <div className="font-semibold mb-0.5">Logo update failed</div>
+            <div>{logoUpdateError}</div>
+          </div>
+        )}
         <div className="flex flex-col gap-1 pt-2" style={{ borderTop: `1px solid ${P.panelBorder}` }}>
           <CopyableAddress address={token.tokenAddress} P={P} label="Contract" />
           <CopyableAddress address={token.creator} P={P} label="Creator" />
@@ -509,11 +711,11 @@ function TokenDetailView({ token, onBack, P }) {
       </div>
 
       <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-        <GraduationBar current={token.marketCapUsd} threshold={token.graduationThresholdUsd} P={P} />
+        <GraduationBar current={liveProgress.marketCapUsd} threshold={liveProgress.graduationThresholdUsd} P={P} />
         <div className="flex items-center gap-4 mt-3 pt-3" style={{ borderTop: `1px solid ${P.panelBorder}` }}>
           <div>
             <div className="text-[10.5px]" style={{ color: P.textMuted }}>Market cap</div>
-            <div className="text-[13px] font-mono font-semibold" style={{ color: P.textPrimary }}>${fmt(token.marketCapUsd, 0)}</div>
+            <div className="text-[13px] font-mono font-semibold" style={{ color: P.textPrimary }}>${fmt(liveProgress.marketCapUsd, 0)}</div>
           </div>
           <div>
             <div className="text-[10.5px]" style={{ color: P.textMuted }}>Holders</div>
@@ -612,6 +814,8 @@ function TokenDetailView({ token, onBack, P }) {
           </div>
         )}
       </div>
+
+      <TokenActivityPanel token={token} P={P} />
     </div>
   );
 }
@@ -709,8 +913,22 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
   );
 }
 
-function ProfilePage({ P }) {
+function ProfilePage({ onSelectToken, P }) {
   const { address, isConnected } = useAccount();
+  const [tab, setTab] = useState("launches");
+  const [portfolio, setPortfolio] = useState(null);
+  const [portfolioError, setPortfolioError] = useState(null);
+
+  useEffect(() => {
+    if (!address) return;
+    setPortfolio(null);
+    setPortfolioError(null);
+    let cancelled = false;
+    getUserPortfolio({ ownerAddress: address })
+      .then((real) => { if (!cancelled) setPortfolio(real); })
+      .catch((err) => { if (!cancelled) setPortfolioError(err?.message || String(err)); });
+    return () => { cancelled = true; };
+  }, [address]);
 
   if (!isConnected) {
     return (
@@ -721,20 +939,58 @@ function ProfilePage({ P }) {
     );
   }
 
-  // No real data source for this yet — fetching a wallet's actual launches,
-  // holdings, PnL, and creator fees needs either an indexer or targeted
-  // event-log queries against the Registry, neither of which exist yet.
-  // Rather than show fake numbers, this is left as an honest empty state
-  // until that real data pipeline exists.
+  const list = tab === "launches" ? portfolio?.launched : portfolio?.holdings;
+
   return (
     <div>
       <div className="text-[18px] font-display font-semibold" style={{ color: P.textPrimary }}>Profile</div>
       <div className="text-[12px] mb-4 font-mono" style={{ color: P.textMuted }}>{address}</div>
-      <div className="flex flex-col items-center text-center gap-2 py-16">
-        <Users size={26} color={P.textMuted} />
-        <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>No activity yet</div>
-        <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 220 }}>Your launches, holdings, and creator fees will show up here once you have some.</div>
+
+      <div className="flex rounded-xl p-1 mb-3" style={{ background: P.pillBg }}>
+        <button
+          onClick={() => setTab("launches")}
+          className="flex-1 py-2 rounded-lg text-[12.5px] font-semibold"
+          style={{ background: tab === "launches" ? P.panel : "transparent", color: tab === "launches" ? P.textPrimary : P.textSecondary }}
+        >
+          Your Launches
+        </button>
+        <button
+          onClick={() => setTab("holdings")}
+          className="flex-1 py-2 rounded-lg text-[12.5px] font-semibold"
+          style={{ background: tab === "holdings" ? P.panel : "transparent", color: tab === "holdings" ? P.textPrimary : P.textSecondary }}
+        >
+          Holdings
+        </button>
       </div>
+
+      {portfolio === null && !portfolioError ? (
+        <div className="text-center py-16 text-[12.5px]" style={{ color: P.textMuted }}>Checking real balances across every launch…</div>
+      ) : portfolioError ? (
+        <div className="rounded-xl p-4 text-[12px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
+          Couldn't load your portfolio: {portfolioError}
+        </div>
+      ) : list.length === 0 ? (
+        <div className="flex flex-col items-center text-center gap-2 py-16">
+          <Users size={26} color={P.textMuted} />
+          <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>
+            {tab === "launches" ? "You haven't launched anything yet" : "You don't hold any launched tokens yet"}
+          </div>
+          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 220 }}>
+            {tab === "launches" ? "Tokens you launch will show up here." : "Tokens you buy will show up here."}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {list.map((t) => (
+            <div key={t.id} onClick={() => onSelectToken(t)} className="cursor-pointer">
+              <TokenCard token={t} onClick={() => onSelectToken(t)} P={P} />
+              {tab === "holdings" && (
+                <div className="text-[11px] font-mono mt-1 px-1" style={{ color: P.textMuted }}>You hold: {fmt(t.walletBalance, 0)} {t.symbol}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -819,7 +1075,7 @@ export function LaunchpadTab({ P }) {
       {view === "detail" && selectedToken ? (
         <TokenDetailView token={selectedToken} onBack={() => setView("explore")} P={P} />
       ) : view === "profile" ? (
-        <ProfilePage P={P} />
+        <ProfilePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} />
       ) : view === "analytics" ? (
         <AnalyticsPage P={P} />
       ) : (

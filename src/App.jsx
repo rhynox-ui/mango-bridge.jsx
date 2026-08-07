@@ -27,6 +27,7 @@ import {
   Wallet,
   Send,
   Rocket,
+  Globe,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
@@ -1241,6 +1242,49 @@ function DocSection({ title, children, P }) {
   );
 }
 
+function NetworkSelectorModal({ onClose, P }) {
+  const { switchChain } = useSwitchChain();
+  const { chainId: connectedChainId, isConnected } = useAccount();
+  const chains = getChains();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between mb-4">
+          <span className="font-display text-[16px] font-semibold" style={{ color: P.textPrimary }}>Select Network</span>
+          <button onClick={onClose}><X size={18} color={P.textMuted} /></button>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          {Object.values(chains).map((chain) => {
+            const wagmiChain = getWagmiChain(chain.id);
+            const isActive = isConnected && connectedChainId === wagmiChain.id;
+            return (
+              <button
+                key={chain.id}
+                onClick={() => {
+                  if (isConnected) switchChain({ chainId: wagmiChain.id });
+                  onClose();
+                }}
+                className="flex items-center justify-between px-3.5 py-3 rounded-xl"
+                style={{ background: isActive ? P.pillBg : "transparent", border: `1px solid ${isActive ? P.panelBorder : "transparent"}` }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className="w-2 h-2 rounded-full" style={{ background: chain.color }} />
+                  <span className="text-[13.5px] font-medium" style={{ color: P.textPrimary }}>{chain.name}</span>
+                </div>
+                {isActive && <Check size={15} color={LIME_DEEP} />}
+              </button>
+            );
+          })}
+        </div>
+        {!isConnected && (
+          <div className="text-[11px] mt-3 text-center" style={{ color: P.textMuted }}>Connect a wallet to switch networks.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DocsModal({ onClose, P }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
@@ -1524,6 +1568,7 @@ export default function MangoBridge() {
   const [withdrawals, setWithdrawals] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
+  const [showNetworkSelector, setShowNetworkSelector] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sendToOther, setSendToOther] = useState(false);
   const [destAddress, setDestAddress] = useState("");
@@ -1734,8 +1779,8 @@ export default function MangoBridge() {
           <button onClick={toggleTheme} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
             {theme === "light" ? <Moon size={13} color={P.textSecondary} /> : <Sun size={13} color={P.textSecondary} />}
           </button>
-          <button onClick={() => setShowDocs(true)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-            <BookOpen size={13} color={P.textSecondary} />
+          <button onClick={() => setShowNetworkSelector(true)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+            <Globe size={13} color={P.textSecondary} />
           </button>
           {connected ? (
             <button onClick={() => disconnect()} className="flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-full text-[12px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
@@ -1951,6 +1996,7 @@ export default function MangoBridge() {
         />
       )}
       {showDocs && <DocsModal onClose={() => setShowDocs(false)} P={P} />}
+      {showNetworkSelector && <NetworkSelectorModal onClose={() => setShowNetworkSelector(false)} P={P} />}
     </div>
   );
 }

@@ -1,7 +1,8 @@
-import { readContract, writeContract, waitForTransactionReceipt } from "wagmi/actions";
+import { readContract, writeContract, waitForTransactionReceipt, getPublicClient } from "wagmi/actions";
 import { keccak256, encodeAbiParameters, parseAbiParameters, decodeEventLog } from "viem";
-import { upload } from "@vercel/blob/client";
 import { config } from "./wagmi.js";
+
+const ROBINHOOD_POOL_MANAGER = "0x8366a39CC670B4001A1121B8F6A443A643e40951";
 
 // ============================================================================
 // Token logos — real upload + registry, via Vercel Blob and a small API
@@ -14,11 +15,37 @@ import { config } from "./wagmi.js";
 // never pass through our own server, keeping this fast even on a mobile
 // connection. Returns the real, permanent URL once done.
 export async function uploadTokenLogo(file) {
-  const blob = await upload(file.name, file, {
-    access: "public",
-    handleUploadUrl: "/api/blob-upload",
-  });
-  return blob.url;
+  // Real timeout — without this, a stuck request (network issue, anything
+  // that never resolves or rejects on its own) leaves the UI stuck on
+  // "Uploading…" forever with no way out.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const res = await fetch("/api/blob-upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type,
+        "x-filename": file.name,
+      },
+      body: file,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Upload failed with status ${res.status}`);
+    }
+
+    const { url } = await res.json();
+    return url;
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("Upload timed out after 20 seconds — the request never completed");
+    }
+    throw err;
+  }
 }
 
 // Reads the full address->logoUrl mapping.
@@ -62,6 +89,35 @@ export const LAUNCHPAD_ROUTER_ADDRESS = "0xb347EEad23D4FC41338845E35Ee8Fc42D9789
 // used tonight. Source: Bags' own developer documentation for Robinhood
 // Chain, which lists the full protocol address book.
 export const STATE_VIEW_ADDRESS = "0xF3334192D15450CdD385c8B70e03f9A6bD9E673b";
+
+const SWAP_EVENT_ABI = [
+  {
+    type: "event",
+    name: "Swap",
+    inputs: [
+      { name: "id", type: "bytes32", indexed: true },
+      { name: "sender", type: "address", indexed: true },
+      { name: "amount0", type: "int128", indexed: false },
+      { name: "amount1", type: "int128", indexed: false },
+      { name: "sqrtPriceX96", type: "uint160", indexed: false },
+      { name: "liquidity", type: "uint128", indexed: false },
+      { name: "tick", type: "int24", indexed: false },
+      { name: "fee", type: "uint24", indexed: false },
+    ],
+  },
+];
+
+const TRANSFER_EVENT_ABI = [
+  {
+    type: "event",
+    name: "Transfer",
+    inputs: [
+      { name: "from", type: "address", indexed: true },
+      { name: "to", type: "address", indexed: true },
+      { name: "value", type: "uint256", indexed: false },
+    ],
+  },
+];
 
 const STATE_VIEW_ABI = [
   {
@@ -305,6 +361,34 @@ export async function getTokenBalance({ tokenAddress, ownerAddress }) {
 }
 
 // ============================================================================
+// User Portfolio — real "your launches" (filtering the full launch list by
+// creator address, data we already fetch) and real "holdings" (checking
+// this wallet's actual balance across every launched token). Honest
+// scaling note: holdings does one balance check per token that exists,
+// which is genuinely fine at today's token count but would need a real
+// indexer once there are hundreds of tokens to check against.
+// ============================================================================
+export async function getUserPortfolio({ ownerAddress }) {
+  const allLaunches = await getRealLaunches();
+  const owner = ownerAddress.toLowerCase();
+
+  const launched = allLaunches.filter((t) => t.creator.toLowerCase() === owner);
+
+  const balances = await Promise.all(
+    allLaunches.map((t) =>
+      getTokenBalance({ tokenAddress: t.tokenAddress, ownerAddress })
+        .then((bal) => ({ token: t, balance: bal }))
+        .catch(() => ({ token: t, balance: 0n }))
+    )
+  );
+  const holdings = balances
+    .filter((b) => b.balance > 0n)
+    .map((b) => ({ ...b.token, walletBalance: Number(b.balance) / 1e18 }));
+
+  return { launched, holdings };
+}
+
+// ============================================================================
 // launchToken — calls the real Factory contract to deploy a token and seed
 // its pool. The access-control handoff (transferLaunchOperator + setFactory)
 // has now happened — both confirmed successful on-chain. This call should
@@ -377,13 +461,129 @@ export async function getRealLaunchCount() {
 // Not yet used by any UI component — wiring this into the Explore page is
 // the natural next step once real launches actually exist to display.
 // ============================================================================
-// Frontend-only filter, not a contract change — every other token launched
-// during tonight's debugging stays real and on-chain, just hidden from
-// this UI for now. Temporary, until the real logoURI system (discussed
-// but not yet built) makes this unnecessary.
-const VISIBLE_TOKENS = new Set([
-  "0x67078594cf9c868a24abba47297ab7288011de2e", // $TEST — confirmed working buy + sell
-]);
+// ============================================================================
+// Recent Trades — real, direct from the Swap event PoolManager emits on
+// every trade, the same event visible in every trace tonight. No indexer
+// needed for this one; a direct log query is genuinely sufficient at
+// today's volume.
+// ============================================================================
+export async function getRecentTrades({ poolId, limit = 30 }) {
+  const client = getPublicClient(config, { chainId: ROBINHOOD_CHAIN_ID });
+
+  const logs = await client.getLogs({
+    address: ROBINHOOD_POOL_MANAGER,
+    event: SWAP_EVENT_ABI[0],
+    args: { id: poolId },
+    fromBlock: 0n,
+    toBlock: "latest",
+  });
+
+  const recent = logs.slice(-limit).reverse();
+
+  // The event's own "sender" field is the Router's address, not the real
+  // trader — every trade goes through our Router, so this always shows
+  // the same address regardless of who actually traded. The transaction's
+  // real "from" field is the actual trader, which needs a separate fetch
+  // per trade. Block timestamps also need a separate fetch, batched here
+  // rather than done one at a time.
+  const trades = await Promise.all(
+    recent.map(async (log) => {
+      const [tx, block] = await Promise.all([
+        client.getTransaction({ hash: log.transactionHash }),
+        client.getBlock({ blockNumber: log.blockNumber }),
+      ]);
+
+      const isBuy = log.args.amount0 < 0n; // ETH went in = buying the token
+      const tokenAmount = isBuy ? log.args.amount1 : -log.args.amount1;
+      const ethAmount = isBuy ? -log.args.amount0 : log.args.amount0;
+
+      return {
+        hash: log.transactionHash,
+        isBuy,
+        trader: tx.from,
+        tokenAmount: Number(tokenAmount) / 1e18,
+        ethAmount: Number(ethAmount) / 1e18,
+        timestamp: Number(block.timestamp) * 1000,
+      };
+    })
+  );
+
+  return trades;
+}
+
+// ============================================================================
+// Holders — reconstructed by replaying every Transfer event for the token
+// from its creation. Genuinely accurate at today's transaction volume, but
+// an honest limitation worth stating plainly: this scans the token's ENTIRE
+// transfer history on every call, which does not scale to a token with a
+// large trading history. A real production version needs an indexer
+// maintaining running balances, not a full replay each time.
+// ============================================================================
+export async function getTokenHolders({ tokenAddress, limit = 50 }) {
+  const client = getPublicClient(config, { chainId: ROBINHOOD_CHAIN_ID });
+
+  const logs = await client.getLogs({
+    address: tokenAddress,
+    event: TRANSFER_EVENT_ABI[0],
+    fromBlock: 0n,
+    toBlock: "latest",
+  });
+
+  const ZERO = "0x0000000000000000000000000000000000000000";
+  const balances = {};
+
+  for (const log of logs) {
+    const { from, to, value } = log.args;
+    if (from !== ZERO) {
+      balances[from] = (balances[from] || 0n) - value;
+    }
+    if (to !== ZERO) {
+      balances[to] = (balances[to] || 0n) + value;
+    }
+  }
+
+  const TOTAL_SUPPLY = 1_000_000_000n * 10n ** 18n;
+
+  const holders = Object.entries(balances)
+    .filter(([, bal]) => bal > 0n)
+    .map(([address, bal]) => ({
+      address,
+      balance: Number(bal) / 1e18,
+      percentOfSupply: Number((bal * 10000n) / TOTAL_SUPPLY) / 100,
+    }))
+    .sort((a, b) => b.balance - a.balance)
+    .slice(0, limit);
+
+  return holders;
+}
+
+// ============================================================================
+// Real-time progress refresh — used right after a trade completes, so the
+// graduation bar and market cap reflect the trade that just happened
+// instead of a stale snapshot from whenever the page first loaded. Only
+// re-reads the numbers that actually change from a trade (cumulative
+// fees, graduation status) — name/symbol/logo don't change from trading,
+// so skipping those keeps this fast.
+// ============================================================================
+export async function getLaunchProgress({ poolId }) {
+  const launchRaw = await readContract(config, {
+    address: LAUNCHPAD_REGISTRY_ADDRESS,
+    abi: REGISTRY_ABI,
+    functionName: "launches",
+    args: [poolId],
+    chainId: ROBINHOOD_CHAIN_ID,
+  });
+
+  // Same positional destructuring as getRealLaunches, for the same reason
+  // — no assumption about named property access on the decoded struct.
+  const [, , cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated] = launchRaw;
+
+  return {
+    marketCapUsd: Number(cumulativeProtocolFeesUsd) / 1e8,
+    graduationThresholdUsd: Number(graduationThresholdUsd) / 1e8,
+    graduated,
+  };
+}
 
 export async function getRealLaunches() {
   const count = await getRealLaunchCount();
@@ -416,8 +616,6 @@ export async function getRealLaunches() {
     // cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated,
     // launchedAt, graduatedAt).
     const [creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt] = launchRaw;
-
-    if (!VISIBLE_TOKENS.has(tokenAddress.toLowerCase())) continue;
 
     // Real name/symbol from the token contract itself — not stored in the
     // Registry, so this needs its own separate reads. If either fails for
