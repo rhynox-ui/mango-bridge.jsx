@@ -243,6 +243,19 @@ async function fetchRealLaunches() {
     // maintained by hand each time.
     if (computeCurrentHookPoolId(tokenAddress).toLowerCase() !== poolId.toLowerCase()) continue;
 
+    // Separate, explicit exclusion — these two are confirmed to be on the
+    // current Hook (verified via cast keccak against their real poolId),
+    // yet failed a real sell attempt. Root cause unclear — possibly a
+    // timing issue with an earlier Router version, possibly something
+    // else — deliberately not chased further tonight. Excluded by
+    // address specifically, not by the Hook-based rule above, since
+    // that rule genuinely doesn't apply to these two.
+    const KNOWN_PROBLEMATIC_TOKENS = new Set([
+      "0x353f7e2163a73bef1c996c0c58f2f11564838bbe",
+      "0x79f9ce00b64b96aac8f53c32d976b0e6a38a1e86",
+    ]);
+    if (KNOWN_PROBLEMATIC_TOKENS.has(tokenAddress.toLowerCase())) continue;
+
     let name = "Unknown";
     let symbol = "???";
     try {
