@@ -17,6 +17,15 @@ export function getChainKeyMap() {
   return CHAIN_KEY_TO_WAGMI_MAINNET;
 }
 export function getWagmiChain(chainKey) {
+  // Solana genuinely isn't an EVM chain — there's no wagmi chain
+  // definition for it, and there never will be, since wagmi itself only
+  // models EVM chains. Returning a safe placeholder here (id: undefined)
+  // rather than throwing means every call site using .id doesn't crash;
+  // those call sites are each responsible for skipping EVM-specific logic
+  // (balance checks, network-switching) when the id is undefined.
+  if (chainKey === "solana") {
+    return { id: undefined, name: "Solana", isSolana: true };
+  }
   const chain = CHAIN_KEY_TO_WAGMI_MAINNET[chainKey];
   if (!chain) throw new Error(`No mainnet chain configured for key "${chainKey}"`);
   return chain;

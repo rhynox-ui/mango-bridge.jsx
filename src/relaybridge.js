@@ -165,9 +165,19 @@ export function canRelayHandle(fromChainKey, toChainKey, fromAsset, toAsset) {
  * base units (wei/smallest denomination) as a string, matching the asset's
  * actual decimals — this function does not do decimal conversion itself.
  */
-export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress }) {
+export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress }) {
   const body = {
     user: userAddress,
+    // Real fix for a real gap: previously this always used userAddress as
+    // the implicit recipient too, meaning a custom destination address
+    // typed into the UI was silently ignored for every Relay-routed
+    // transfer — funds always landed back in the connected wallet
+    // regardless of what was entered. recipient is Relay's own documented
+    // field for this exact case (their own product supports sending to a
+    // different wallet, including a different chain type entirely, like
+    // EVM-to-Solana). Falls back to userAddress when no override is
+    // given, preserving the original behavior exactly for the common case.
+    recipient: recipientAddress || userAddress,
     originChainId: MAINNET_CHAIN_IDS[fromChainKey],
     destinationChainId: MAINNET_CHAIN_IDS[toChainKey],
     originCurrency: currencyAddress(fromChainKey, fromAsset),
