@@ -2,8 +2,9 @@
 
 Mango Protocol is a permissionless infrastructure suite for moving assets across chains and launching new tokens. Anyone can bridge, anyone can launch a token, anyone can trade — there's no gatekeeping, no approval process, no account to register. You connect a wallet and use it.
 
+**Live:** [mangoprotocol.site](https://mangoprotocol.site)
 
-**Status:** Bridge is live on mainnet. Launchpad contracts are deployed and verified on Robinhood Chain mainnet; the launch and trading interface is still in development.
+**Status:** Bridge is live on mainnet across Ethereum, Base, BNB Chain, Robinhood Chain, Stable, and Solana. Launchpad contracts are deployed and verified on Robinhood Chain mainnet; the launch and trading interface is still in development.
 
 ---
 
@@ -14,10 +15,11 @@ Mango Protocol is a permissionless infrastructure suite for moving assets across
 - BNB Chain
 - Robinhood Chain
 - Stable — Tether's own L1, native gas token USDT0
+- Solana — not EVM-compatible; see "Solana support" below for what that actually requires
 
 ## Supported assets
 
-ETH, BNB, USDC, USDT, USDG, WBTC, USDT0 — coverage varies by chain pair depending on which protocol handles that route (see below). Cross-*asset* swaps (e.g. BNB in, USDC out) are supported via Relay wherever both sides have a verified contract address. The app checks for a live route before you're ever asked to confirm — an unsupported pair is never silently faked as a success.
+ETH, BNB, USDC, USDT, USDG, WBTC, USDT0, SOL — coverage varies by chain pair depending on which protocol handles that route (see below). Cross-*asset* swaps (e.g. BNB in, USDC out) are supported via Relay wherever both sides have a verified contract address. The app checks for a live route before you're ever asked to confirm — an unsupported pair is never silently faked as a success.
 
 ---
 
@@ -31,9 +33,16 @@ For each transfer, the app picks the safest available mechanism for that specifi
 | Ethereum ↔ Base, ETH | [OP Stack canonical bridge](https://docs.base.org/base-chain/differences/eth-bridging) | Deposits are fast; withdrawals require Base's 7-day fraud-proof challenge period unless routed through Relay instead (see below). |
 | Ethereum ↔ Robinhood Chain, ETH/USDC | [Arbitrum canonical bridge](https://docs.arbitrum.io/) | Same deposit/withdrawal pattern as Base — Robinhood Chain is built on Arbitrum Orbit. |
 | Ethereum ↔ BNB Chain, ETH | [Wormhole Token Bridge](https://wormhole.com/docs) | Lock-and-mint via guardian attestation, both directions. Destination asset is Wormhole-wrapped ETH, not native BNB. |
-| Base/Robinhood Chain → Ethereum, ETH; cross-asset swaps; everything else with a verified contract address on both sides (BNB, USDT, USDC, USDG, USDT0 across chains; Base↔Robinhood Chain direct; Stable) | [Relay Protocol](https://docs.relay.link) | Solver network — different trust model than the routes above (you're trusting Relay's solvers to fulfill, not a canonical audited bridge), but non-custodial and typically settles in under a minute. Preferred over the 7-day canonical withdrawal path where available. |
+| Base/Robinhood Chain → Ethereum, ETH; cross-asset swaps; everything else with a verified contract address on both sides (BNB, USDT, USDC, USDG, USDT0 across chains; Base↔Robinhood Chain direct; Stable); every Solana-involving route, both directions | [Relay Protocol](https://docs.relay.link) | Solver network — different trust model than the routes above (you're trusting Relay's solvers to fulfill, not a canonical audited bridge), but non-custodial and typically settles in under a minute. Preferred over the 7-day canonical withdrawal path where available. Solana-sourced transfers execute through Relay's own SDK, using Solana's native transaction format — a genuinely separate code path from the EVM-to-EVM routes above. |
 
 **A pair only routes through Relay if this app has an independently verified contract address for the asset on both chains.** No addresses are ever guessed — an unverified combination has no route offered, and the app checks live before you confirm rather than risk sending funds to the wrong contract.
+
+## Solana support
+
+Solana isn't EVM-compatible — a genuinely different blockchain architecture, not just another chain in the same list as the rest. Two real, concrete consequences:
+
+- **Two separate wallets, not one.** Any route touching Solana — as source or destination — needs both an EVM wallet (Browser Wallet or WalletConnect) and a separate Solana wallet, connected via OKX Connect. The app prompts directly for whichever one is still missing, right in the bridge form.
+- **A different execution path.** Solana-sourced transfers sign and submit through Relay's own official SDK (`@relayprotocol/relay-sdk` + `@relayprotocol/relay-svm-wallet-adapter`), using Solana's real transaction format — not the wagmi-based signing used for every EVM-to-EVM route. Both directions are supported: Solana → EVM and EVM → Solana.
 
 ## Fees
 
@@ -100,10 +109,13 @@ Mango never takes custody of user funds at any point, on either the bridge or th
 ## Tech stack
 
 - **React + Vite**, Tailwind CSS
-- **wagmi / viem** for wallet connection and most on-chain calls
+- **wagmi / viem** for EVM wallet connection and most on-chain calls
 - **ethers v5** specifically for the Arbitrum integration (`@arbitrum/sdk` expects ethers v5 objects internally, not v6 — different chain-ID representations between the two versions caused a real bug during development, documented in `src/arbbridge.js`)
 - **@wormhole-foundation/sdk** for the Wormhole integration
 - **@web3icons/react** for real, official chain/token logos — static imports only, confirmed against the library's own documented examples one at a time (its dynamic lookup entry point requires a `<Suspense>` boundary this app doesn't have, and caused a real production crash before this was caught)
+- **@okxconnect/universal-provider + @okxconnect/solana-provider** for Solana wallet connection — genuinely separate from wagmi, since Solana isn't EVM
+- **@relayprotocol/relay-sdk + @relayprotocol/relay-svm-wallet-adapter** for Solana-sourced transfer execution specifically — Solana transactions can't go through the same wagmi-based signing used for every EVM route
+- **vite-plugin-node-polyfills** — `@solana/web3.js` expects Node's `Buffer` global, which browsers don't provide natively
 
 ## Local development
 
@@ -116,14 +128,28 @@ npm run dev
 
 ```
 src/
-  App.jsx             — main UI, routing logic, transaction flow
-  wagmi.js             — chain definitions and wallet config
-  networkMode.js       — network mode (mainnet-only)
-  cctp.js              — Circle CCTP integration
-  opbridge.js          — Base (OP Stack) bridge integration
-  arbbridge.js         — Robinhood Chain (Arbitrum) bridge integration
-  wormholebridge.js    — Wormhole integration (both directions)
-  relaybridge.js       — Relay Protocol integration
+  App.jsx                     — main UI, routing logic, transaction flow
+  wagmi.js                    — chain definitions and wallet config
+  networkMode.js               — network mode (mainnet-only)
+  cctp.js                      — Circle CCTP integration
+  opbridge.js                  — Base (OP Stack) bridge integration
+  arbbridge.js                 — Robinhood Chain (Arbitrum) bridge integration
+  wormholebridge.js            — Wormhole integration (both directions)
+  relaybridge.js                — Relay Protocol integration (EVM routes + recipient/currency resolution shared with the Solana path)
+  relaySdkSolanaExecution.js   — Solana-sourced transfer execution via Relay's own SDK
+  SolanaWalletContext.jsx      — shared Solana connection state (OKX Connect), used across the app
+  SolanaConnect.jsx            — isolated Solana connection test page, reachable at ?test=solana
+  multiAssetBalances.js        — real, live balance fetching for every asset on the current chain, EVM + Solana
+  Launchpad.jsx                — token launch and trading UI
+  launchpad-contracts.js       — client-side launchpad contract calls
+
+api/
+  token-activity.js            — server-side, cached launch/trade/holder data, filtered to only Hook-verified launches
+  blob-upload.js                — logo upload handling
+  logo-registry.js              — logo URL registry
+
+contracts/
+  MangoLaunchFactory.sol, MangoLaunchHook.sol, MangoLaunchRegistry.sol, MangoLaunchRouter.sol, MangoLaunchToken.sol — see "The Launchpad" above for live addresses and version history
 ```
 
 ---
