@@ -13,6 +13,8 @@
     "@arbitrum/sdk": "^4.0.2",
     "@okxconnect/solana-provider": "^1.9.1",
     "@okxconnect/universal-provider": "^1.9.1",
+    "@relayprotocol/relay-sdk": "^7.0.1",
+    "@relayprotocol/relay-svm-wallet-adapter": "^21.0.1",
     "@solana/web3.js": "^1.98.4",
     "@tanstack/react-query": "^5.51.1",
     "@vercel/blob": "^2.7.0",
