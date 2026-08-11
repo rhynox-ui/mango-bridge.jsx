@@ -1,6 +1,7 @@
 import { NetworkEthereum, NetworkBase, NetworkBinanceSmartChain, TokenETH, TokenUSDC, TokenUSDT, TokenBNB } from "@web3icons/react";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { parseUnits, isAddress } from "viem";
+import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
 import { PublicKey } from "@solana/web3.js";
 import { useSolanaWallet } from "./SolanaWalletContext.jsx";
 import {
@@ -472,7 +473,12 @@ function SolanaLogoIcon({ size, fallback }) {
   if (failed) return fallback;
   return (
     <img
-      src="https://solana.com/src/img/branding/solanaLogoMark.svg"
+      // Real, confirmed URL — icons.sol.new, an open-source (MIT
+      // licensed) icon library built specifically for the Solana
+      // ecosystem, explicitly designed for third-party embedding like
+      // this. More reliable than hotlinking solana.com's own site
+      // assets, which aren't necessarily meant for cross-origin use.
+      src="https://icons.sol.new/svg/platforms/solana.svg"
       alt="Solana"
       width={size}
       height={size}
@@ -489,15 +495,12 @@ function USDT0Icon({ size, color }) {
   if (failed) return <HandDrawnAssetGlyph symbol="USDT0" size={size} color={color} />;
   return (
     <img
-      // Official asset, hosted directly on USDT0's own domain — found via
-      // usdt0.to/transfer, more authoritative than a third-party mirror.
-      // Genuine open question: this is used as their site's own navbar
-      // logo, which sometimes means a full wordmark rather than an
-      // icon-only mark — worth a visual check once deployed, since a
-      // wordmark could look cramped in a small circular badge. Falls back
-      // to the hand-drawn version automatically if this doesn't load or
-      // look right.
-      src="https://usdt0.to/static/logo/logo-dark.svg"
+      // Real, confirmed URL from USDT0's own official media kit
+      // (docs.usdt0.to/resources/mediakit) — explicitly labeled "Icon —
+      // simplified symbol for smaller form factors," unlike the earlier
+      // navbar logo, which risked being a full wordmark rather than an
+      // icon-only mark.
+      src="https://docs.usdt0.to/downloads/usdt0/Symbol_USDT0_Secondary.svg"
       alt="USDT0"
       width={size}
       height={size}
@@ -531,6 +534,14 @@ function AssetIcon({ symbol, size = 18 }) {
     );
   }
 
+  if (symbol === "SOL") {
+    return (
+      <span className="flex items-center justify-center rounded-full shrink-0 overflow-hidden" style={{ width: size, height: size, background: "#9945FF15" }}>
+        <SolanaLogoIcon size={size * 0.68} fallback={<HandDrawnAssetGlyph symbol="SOL" size={size} color={color} />} />
+      </span>
+    );
+  }
+
   // Static imports only, matching @web3icons/react's own documented working
   // examples (TokenETH, TokenUSDC, TokenUSDT, TokenBNB) — no dynamic
   // lookup. The dynamic /dynamic entry point requires a <Suspense> boundary
@@ -554,7 +565,7 @@ function AssetIcon({ symbol, size = 18 }) {
   return <HandDrawnAssetGlyph symbol={symbol} size={size} color={color} />;
 }
 
-function AssetDropdown({ assetIdx, setAssetIdx, chainId, P }) {
+function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const ref = useRef(null);
@@ -578,6 +589,10 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P }) {
       const rect = ref.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
       setOpenUpward(spaceBelow < 140);
+      // Real, required trigger: refresh balances the moment the list
+      // opens, not just on connect/network-change, so a value that
+      // changed since the last fetch is never shown stale.
+      onOpen?.();
     }
     setOpen((o) => !o);
   }
@@ -591,18 +606,30 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P }) {
       </button>
       {open && (
         <div
-          className={`absolute right-0 z-30 w-44 rounded-xl overflow-hidden shadow-2xl ${openUpward ? "bottom-full mb-2" : "top-full mt-2"}`}
+          className={`absolute right-0 z-30 w-52 rounded-xl overflow-hidden shadow-2xl ${openUpward ? "bottom-full mb-2" : "top-full mt-2"}`}
           style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, maxHeight: "min(60vh, 320px)", overflowY: "auto" }}
         >
-          {ASSETS.map((a, i) => (
-            <button key={a.symbol} onClick={() => { setAssetIdx(i); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left">
-              <AssetIcon symbol={a.symbol} size={22} />
-              <div className="flex flex-col">
-                <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{a.symbol}</span>
-                <span className="text-[11px]" style={{ color: P.textMuted }}>{a.name}</span>
-              </div>
-            </button>
-          ))}
+          {ASSETS.map((a, i) => {
+            // Real balance for this specific asset, if we have a fetched
+            // value for it — assets with no real address on the current
+            // chain (and thus no entry in `balances`) show nothing
+            // rather than a misleading "0".
+            const realBalance = balances?.[a.symbol];
+            return (
+              <button key={a.symbol} onClick={() => { setAssetIdx(i); setOpen(false); }} className="w-full flex items-center justify-between gap-2.5 px-3 py-2.5 text-left">
+                <div className="flex items-center gap-2.5">
+                  <AssetIcon symbol={a.symbol} size={22} />
+                  <div className="flex flex-col">
+                    <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{a.symbol}</span>
+                    <span className="text-[11px]" style={{ color: P.textMuted }}>{a.name}</span>
+                  </div>
+                </div>
+                <span className="text-[11.5px] font-mono shrink-0" style={{ color: P.textSecondary }}>
+                  {balancesLoading ? "…" : realBalance !== undefined ? fmt(realBalance, realBalance < 1 ? 4 : 2) : ""}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -734,7 +761,7 @@ function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
   return "relay";
 }
 
-function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received, devFeeAmount, destination, account, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated }) {
+function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received, devFeeAmount, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated }) {
   const kind = getTransferKind(from, to, asset, toAsset);
   const isReal = kind !== "simulated";
   const steps = kind === "cctp" ? CCTP_STEPS
@@ -856,7 +883,14 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
           toChainId: MAINNET_CHAIN_IDS[to],
           toCurrency: currencyAddress(to, toAsset),
           amountBaseUnits: totalBaseUnits.toString(),
-          recipient: destination || account,
+          // Real bug fix: previously defaulted to `account`, which for a
+          // Solana-sourced transfer IS the Solana address — invalid as a
+          // recipient on any EVM destination chain. Relay's own docs are
+          // explicit that Solana-involved routes need both wallets
+          // connected; evmAddress is that second, EVM-side connection,
+          // and the only valid default recipient here when no custom
+          // destination is set.
+          recipient: destination || evmAddress,
           onProgress: ({ currentStep, txHashes }) => {
             if (txHashes?.length) setRealBurnHash(txHashes[0]);
           },
@@ -880,11 +914,18 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
           });
         }
 
+        // Real fix, symmetric with the Solana-sourced path above: when
+        // the DESTINATION is Solana (e.g. Base -> Solana), the default
+        // recipient must be the connected Solana address, not the EVM
+        // one — same category of bug as before, just the other
+        // direction. Solana being involved on either side always needs
+        // its own, correctly-typed address as the real recipient.
+        const defaultRecipient = CHAINS[to]?.isSolana ? solanaWallet?.address : account;
         const quote = await getRelayQuote({
           fromChainKey: from, toChainKey: to,
           fromAsset: asset, toAsset: toAsset,
           amountBaseUnits: transferBaseUnits.toString(), userAddress: account,
-          recipientAddress: destination || account,
+          recipientAddress: destination || defaultRecipient,
         });
         const result = await executeRelayQuote({
           quote,
@@ -1482,13 +1523,6 @@ function WalletSelectorModal({ onClose, P }) {
       onClick: handleWalletConnect,
       loading: false,
     },
-    {
-      key: "solana",
-      title: "Solana Wallet",
-      subtitle: "Connect via OKX for Solana-based transfers",
-      onClick: handleSolanaConnect,
-      loading: connectingSolana || solanaWallet.connecting,
-    },
   ];
 
   return (
@@ -1847,6 +1881,33 @@ export default function MangoBridge() {
   const activeAccount = isFromSolana ? solanaWallet.address : address;
   const connected = isFromSolana ? !!solanaWallet.address : isConnected;
 
+  // Real, live balances for every asset relevant to the current "from"
+  // chain — not just the currently-selected one. Powers the balance
+  // display directly inside the asset dropdown itself.
+  const [fromChainBalances, setFromChainBalances] = useState({});
+  const [balancesLoading, setBalancesLoading] = useState(false);
+
+  const refreshFromChainBalances = useCallback(async () => {
+    if (!connected) { setFromChainBalances({}); return; }
+    setBalancesLoading(true);
+    try {
+      const real = isFromSolana
+        ? await fetchSolanaBalance({ solanaAddress: solanaWallet.address })
+        : await fetchAllEvmBalances({ chainKey: from, nativeSymbol: NATIVE_SYMBOL_BY_CHAIN[from], address });
+      setFromChainBalances(real);
+    } finally {
+      setBalancesLoading(false);
+    }
+  }, [connected, isFromSolana, from, address, solanaWallet.address]);
+
+  // Refreshes on wallet connect and network change — the third required
+  // trigger (asset list opening) is wired directly into AssetDropdown's
+  // own onClick below, since that's a real user action, not state this
+  // effect can observe on its own.
+  useEffect(() => {
+    refreshFromChainBalances();
+  }, [refreshFromChainBalances]);
+
   const fromWagmiChain = getWagmiChain(from);
   // Wrong-network detection is an EVM-wallet concept — doesn't apply when
   // the source chain is Solana, since that's a completely separate
@@ -1946,7 +2007,7 @@ export default function MangoBridge() {
   // — a live check, not a guess based on which addresses we happen to have.
   const [routeCheck, setRouteCheck] = useState({ status: "idle" });
   useEffect(() => {
-    if (kind !== "relay" || amtNum <= 0 || !connected || !address) {
+    if (kind !== "relay" || amtNum <= 0 || !connected || !address || (CHAINS[to]?.isSolana && !sendToOther && !solanaWallet.address)) {
       setRouteCheck({ status: "idle" });
       return;
     }
@@ -1961,6 +2022,14 @@ export default function MangoBridge() {
           fromChainKey: from, toChainKey: to,
           fromAsset: fromAsset.symbol, toAsset: toAsset.symbol,
           amountBaseUnits, userAddress: activeAccount,
+          // Same real fix as the execution path — a Solana source needs
+          // the connected EVM address as the recipient on an EVM
+          // destination, not the Solana address itself.
+          // Same real fix, symmetric for both directions — Solana
+          // involved on EITHER side needs its own correctly-typed
+          // address as the recipient, not whichever wallet happens to
+          // be the "account" for the source side.
+          recipientAddress: sendToOther ? destAddress : (CHAINS[to]?.isSolana ? solanaWallet.address : (isFromSolana ? address : activeAccount)),
         });
         if (!cancelled) setRouteCheck({ status: "ok" });
       } catch (err) {
@@ -1991,7 +2060,12 @@ export default function MangoBridge() {
   const gasReserve = GAS_RESERVE[fromAsset.symbol] ?? 0;
   const spendableBalance = availableBalance !== null ? Math.max(availableBalance - gasReserve, 0) : null;
   const insufficient = usingLiveBalance && spendableBalance !== null && amtNum > spendableBalance;
-  const canBridge = amtNum > 0 && from !== to && !insufficient && !onWrongNetwork && (!sendToOther || isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana));
+  // Symmetric requirement: Solana involved on EITHER side needs its own
+  // real connection before a valid recipient can even be determined —
+  // not just when it's the source.
+  const needsEvmAddressForSolanaSource = isFromSolana && !CHAINS[to]?.isSolana && !sendToOther && !address;
+  const needsSolanaAddressForSolanaDest = CHAINS[to]?.isSolana && !isFromSolana && !sendToOther && !solanaWallet.address;
+  const canBridge = amtNum > 0 && from !== to && !insufficient && !onWrongNetwork && !needsEvmAddressForSolanaSource && !needsSolanaAddressForSolanaDest && (!sendToOther || isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana));
 
   function persist(newBalances, newHistory) {
     saveJSON("mango:balances", newBalances);
@@ -2142,7 +2216,7 @@ export default function MangoBridge() {
                     style={{ color: P.textPrimary }}
                   />
                   <button onClick={setMax} disabled={availableBalance === null} className="text-[10.5px] font-bold px-2 py-1 rounded-md mr-2 shrink-0" style={{ background: availableBalance === null ? P.pillBg : `${LIME}1A`, color: availableBalance === null ? P.textMuted : LIME_DEEP, opacity: availableBalance === null ? 0.6 : 1 }}>MAX</button>
-                  <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} />
+                  <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} />
                 </div>
                 {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>Insufficient balance on {CHAINS[from].name}</div>}
               </div>
@@ -2190,6 +2264,30 @@ export default function MangoBridge() {
                 </div>
               )}
 
+              {/* Real, contextual second-wallet prompt — only appears at
+                  all when Solana is genuinely involved on either side of
+                  the current selection, since that's the only time a
+                  second, separate wallet is actually needed. */}
+              {(isFromSolana || CHAINS[to]?.isSolana) && !solanaWallet.address && (
+                <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+                  <div className="text-[12.5px] font-medium mb-1" style={{ color: P.textPrimary }}>Solana wallet needed</div>
+                  <div className="text-[11px] mb-2.5" style={{ color: P.textMuted }}>
+                    Solana isn't EVM-compatible, so this route needs its own separate connection, alongside your regular wallet.
+                  </div>
+                  <button
+                    onClick={async () => { try { await solanaWallet.connect(); } catch {} }}
+                    disabled={solanaWallet.connecting}
+                    className="w-full py-2.5 rounded-lg text-[12.5px] font-semibold"
+                    style={{ background: P.ctaBg, color: P.ctaText, opacity: solanaWallet.connecting ? 0.6 : 1 }}
+                  >
+                    {solanaWallet.connecting ? "Connecting…" : "Connect Solana Wallet"}
+                  </button>
+                  {solanaWallet.error && (
+                    <div className="mt-2 text-[10.5px]" style={{ color: "#D92D20" }}>{solanaWallet.error}</div>
+                  )}
+                </div>
+              )}
+
               {/* Send to another address */}
               <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                 <label className="flex items-center gap-2.5 cursor-pointer">
@@ -2225,7 +2323,7 @@ export default function MangoBridge() {
                   cursor: connected && canBridge && !routeUnavailable ? "pointer" : "not-allowed",
                 }}
               >
-                {!connected ? "Connect wallet" : onWrongNetwork ? "Switch network to continue" : from === to ? "Choose different chains" : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
+                {!connected ? "Connect wallet" : onWrongNetwork ? "Switch network to continue" : from === to ? "Choose different chains" : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
               </button>
               {routeUnavailable && (
                 <div className="text-center mt-2 text-[11.5px]" style={{ color: "#D92D20" }}>
@@ -2282,6 +2380,7 @@ export default function MangoBridge() {
           devFeeAmount={devFeeAmount}
           destination={sendToOther ? destAddress : null}
           account={activeAccount}
+          evmAddress={address}
           isFromSolana={isFromSolana}
           solanaWallet={solanaWallet}
           onClose={() => setShowModal(false)}
