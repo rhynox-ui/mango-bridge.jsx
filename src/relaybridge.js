@@ -69,6 +69,12 @@ const MAINNET_CHAIN_IDS = {
   bnb: 56,
   robinhood: 4663,
   stable: 988,
+  // Confirmed directly from Relay's own SDK documentation
+  // (docs.relay.link/references/relay-kit/sdk/adapters) — explicitly
+  // labeled "Chain ID that Relay uses to identify Solana." Not a real
+  // Solana concept (Solana doesn't have numeric chain IDs the way EVM
+  // does) — this is specifically Relay's own internal identifier for it.
+  solana: 792703809,
 };
 
 // Native gas token per chain, and verified mainnet contract addresses for
@@ -98,7 +104,7 @@ const MAINNET_CHAIN_IDS = {
 // asset, so it belongs in TOKEN_ADDRESSES below, not this native-symbol
 // shortcut. Confirmed directly against Relay's live /chains endpoint, not
 // assumed.
-const NATIVE_SYMBOL = { ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH" };
+const NATIVE_SYMBOL = { ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", solana: "SOL" };
 const TOKEN_ADDRESSES = {
   USDC: {
     ethereum: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
@@ -141,8 +147,22 @@ const TOKEN_ADDRESSES = {
   },
 };
 
-function currencyAddress(chainKey, assetSymbol) {
-  if (assetSymbol === NATIVE_SYMBOL[chainKey]) return NATIVE_TOKEN_ADDRESS;
+// Real, chain-specific native placeholders — confirmed directly from
+// Relay's own official docs (docs.relay.link/features/deposit-addresses),
+// which explicitly lists these three side by side: EVM's zero-address,
+// Bitcoin's burn address, and Solana's System Program address. These are
+// NOT interchangeable — a single shared constant here would be wrong for
+// any chain whose native placeholder isn't the EVM convention.
+const NATIVE_PLACEHOLDER_BY_CHAIN = {
+  ethereum: NATIVE_TOKEN_ADDRESS,
+  base: NATIVE_TOKEN_ADDRESS,
+  bnb: NATIVE_TOKEN_ADDRESS,
+  robinhood: NATIVE_TOKEN_ADDRESS,
+  solana: "11111111111111111111111111111111",
+};
+
+export function currencyAddress(chainKey, assetSymbol) {
+  if (assetSymbol === NATIVE_SYMBOL[chainKey]) return NATIVE_PLACEHOLDER_BY_CHAIN[chainKey] || NATIVE_TOKEN_ADDRESS;
   const addr = TOKEN_ADDRESSES[assetSymbol]?.[chainKey];
   if (!addr) throw new Error(`No verified mainnet contract address for ${assetSymbol} on ${chainKey} — not safe to guess one.`);
   return addr;

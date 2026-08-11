@@ -35,7 +35,8 @@ import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
-import { getRelayQuote, executeRelayQuote, canRelayHandle, sendRelayProtocolFee, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
+import { getRelayQuote, executeRelayQuote, canRelayHandle, sendRelayProtocolFee, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
+import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
 import { LaunchpadTab } from "./Launchpad.jsx";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
@@ -264,7 +265,7 @@ function ChainIcon({ id, size }) {
   // silently fell through to the Robinhood arrow icon below — visually
   // making it look like the chain selector wasn't actually changing
   // anything, even though the underlying state genuinely was.
-  if (id === "solana") return solanaFallback;
+  if (id === "solana") return <SolanaLogoIcon size={s} fallback={solanaFallback} />;
   return robinhoodFallback;
 }
 
@@ -463,6 +464,24 @@ function USDGIcon({ size, color }) {
   );
 }
 
+// Real, official Solana logomark — solana.com/branding, explicitly
+// labeled "Official Solana logo mark icon" (confirmed icon-only, not the
+// full wordmark with text), hosted directly on Solana's own domain.
+function SolanaLogoIcon({ size, fallback }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return fallback;
+  return (
+    <img
+      src="https://solana.com/src/img/branding/solanaLogoMark.svg"
+      alt="Solana"
+      width={size}
+      height={size}
+      style={{ width: size, height: size, objectFit: "contain" }}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 // Real, confirmed URL — found directly in Relay's own /chains response,
 // under Stable chain's featuredTokens entry for USDT0. Not guessed.
 function USDT0Icon({ size, color }) {
@@ -470,7 +489,15 @@ function USDT0Icon({ size, color }) {
   if (failed) return <HandDrawnAssetGlyph symbol="USDT0" size={size} color={color} />;
   return (
     <img
-      src="https://coin-images.coingecko.com/coins/images/39963/large/usdt.png?1724952731"
+      // Official asset, hosted directly on USDT0's own domain — found via
+      // usdt0.to/transfer, more authoritative than a third-party mirror.
+      // Genuine open question: this is used as their site's own navbar
+      // logo, which sometimes means a full wordmark rather than an
+      // icon-only mark — worth a visual check once deployed, since a
+      // wordmark could look cramped in a small circular badge. Falls back
+      // to the hand-drawn version automatically if this doesn't load or
+      // look right.
+      src="https://usdt0.to/static/logo/logo-dark.svg"
       alt="USDT0"
       width={size}
       height={size}
@@ -707,7 +734,7 @@ function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
   return "relay";
 }
 
-function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received, devFeeAmount, destination, account, onClose, onComplete, onWithdrawalInitiated }) {
+function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received, devFeeAmount, destination, account, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated }) {
   const kind = getTransferKind(from, to, asset, toAsset);
   const isReal = kind !== "simulated";
   const steps = kind === "cctp" ? CCTP_STEPS
@@ -815,6 +842,28 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         setStepIndex(steps.length);
         setPhase("done");
         onComplete(result.srcTxHash);
+      } else if (kind === "relay" && isFromSolana) {
+        // Real, separate execution path for Solana-sourced transfers —
+        // see relaySdkSolanaExecution.js for why this can't share the
+        // EVM path below (wagmi has no concept of Solana chains at all).
+        const decimals = ASSET_ONCHAIN_DECIMALS[asset];
+        const totalBaseUnits = parseUnits(amount, decimals);
+
+        setStepIndex(0);
+        const result = await executeSolanaSourcedTransfer({
+          solanaAddress: account,
+          solanaProvider: solanaWallet.solanaProvider.current,
+          toChainId: MAINNET_CHAIN_IDS[to],
+          toCurrency: currencyAddress(to, toAsset),
+          amountBaseUnits: totalBaseUnits.toString(),
+          recipient: destination || account,
+          onProgress: ({ currentStep, txHashes }) => {
+            if (txHashes?.length) setRealBurnHash(txHashes[0]);
+          },
+        });
+        setStepIndex(steps.length);
+        setPhase("done");
+        onComplete(result?.txHashes?.[0] || "");
       } else if (kind === "relay") {
         const decimals = ASSET_ONCHAIN_DECIMALS[asset];
         const totalBaseUnits = parseUnits(amount, decimals);
@@ -1870,8 +1919,18 @@ export default function MangoBridge() {
   const P = PALETTE[theme];
 
   function swap() { setFrom(to); setTo(from); setFromAssetIdxRaw(toAssetIdx); setToAssetIdxRaw(fromAssetIdx); }
-  function handleFromChange(id) { setFrom(id); if (id === to) setTo(CHAIN_ORDER.find((c) => c !== id)); setAmount(""); }
-  function handleToChange(id) { setTo(id); if (id === from) setFrom(CHAIN_ORDER.find((c) => c !== id)); setAmount(""); }
+  // Real bug fix: switching chains never reset the selected asset, so a
+  // stale asset from the previous chain (e.g. BNB) could stay selected
+  // even after switching to a chain that doesn't support it at all (e.g.
+  // Stable, which only ever has USDT0). Resetting to each chain's native
+  // asset on change guarantees the selection is always valid.
+  function defaultAssetIdxFor(chainKey) {
+    const native = NATIVE_SYMBOL_BY_CHAIN[chainKey];
+    const idx = ASSETS.findIndex((a) => a.symbol === native);
+    return idx >= 0 ? idx : 0;
+  }
+  function handleFromChange(id) { setFrom(id); if (id === to) setTo(CHAIN_ORDER.find((c) => c !== id)); setFromAssetIdxRaw(defaultAssetIdxFor(id)); setAmount(""); }
+  function handleToChange(id) { setTo(id); if (id === from) setFrom(CHAIN_ORDER.find((c) => c !== id)); setToAssetIdxRaw(defaultAssetIdxFor(id)); setAmount(""); }
   function handleConnect() {
     setShowWalletSelector(true);
   }
@@ -2171,6 +2230,9 @@ export default function MangoBridge() {
               {routeUnavailable && (
                 <div className="text-center mt-2 text-[11.5px]" style={{ color: "#D92D20" }}>
                   No available route for this trade right now — {fromAsset.symbol} on {CHAINS[from].name} to {toAsset.symbol} on {CHAINS[to].name} isn't supported yet.
+                  {routeCheck.message && (
+                    <div className="mt-1 opacity-70 font-mono text-[10px]">{routeCheck.message}</div>
+                  )}
                 </div>
               )}
 
@@ -2220,6 +2282,8 @@ export default function MangoBridge() {
           devFeeAmount={devFeeAmount}
           destination={sendToOther ? destAddress : null}
           account={activeAccount}
+          isFromSolana={isFromSolana}
+          solanaWallet={solanaWallet}
           onClose={() => setShowModal(false)}
           onComplete={handleComplete}
           onWithdrawalInitiated={handleWithdrawalInitiated}
