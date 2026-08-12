@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { parseUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
 import { PublicKey } from "@solana/web3.js";
-import { useSolanaWallet } from "./SolanaWalletContext.jsx";
+import { useSolanaWallet, detectSolanaWallet } from "./SolanaWalletContext.jsx";
 import {
   useAccount,
   useConnect,
@@ -1492,77 +1492,132 @@ function NetworkSelectorModal({ onClose, P }) {
   );
 }
 
-function WalletSelectorModal({ onClose, P }) {
-  const { connect, connectors } = useConnect();
-  const solanaWallet = useSolanaWallet();
-  const [connectingSolana, setConnectingSolana] = useState(false);
+// Real, named Solana wallets this modal offers — each backed by that
+// wallet's own documented injected provider (checked live via
+// detectSolanaWallet), except OKX, which connects through its Universal
+// Provider SDK and so is always available regardless of what's installed.
+const SOLANA_WALLET_LIST = [
+  { type: "okx", name: "OKX Wallet", installUrl: null },
+  { type: "phantom", name: "Phantom", installUrl: "https://phantom.app/download" },
+  { type: "solflare", name: "Solflare", installUrl: "https://solflare.com/download" },
+  { type: "backpack", name: "Backpack", installUrl: "https://backpack.app/download" },
+];
 
-  async function handleSolanaConnect() {
-    setConnectingSolana(true);
+function WalletSelectorModal({ onClose, P, solanaRelevant }) {
+  const { connect, connectors, isPending, variables } = useConnect();
+  const solanaWallet = useSolanaWallet();
+  const [connectingSolanaType, setConnectingSolanaType] = useState(null);
+
+  async function handleSolanaConnect(type) {
+    setConnectingSolanaType(type);
     try {
-      await solanaWallet.connect();
+      await solanaWallet.connect(type);
       onClose();
     } catch {
       // Real error is already captured in solanaWallet.error and shown
       // below — nothing further needed here beyond stopping the
       // loading state.
     } finally {
-      setConnectingSolana(false);
+      setConnectingSolanaType(null);
     }
   }
 
-  function handleInjected() {
-    const injectedConnector = connectors.find((c) => c.id === "injected");
-    if (injectedConnector) connect({ connector: injectedConnector });
+  function handleEvmConnect(connector) {
+    connect({ connector });
     onClose();
   }
 
-  function handleWalletConnect() {
-    const wcConnector = connectors.find((c) => c.id === "walletConnect");
-    if (wcConnector) connect({ connector: wcConnector });
-    onClose();
-  }
-
-  const options = [
-    {
-      key: "injected",
-      title: "Browser Wallet",
-      subtitle: "MetaMask, OKX, or another extension already in this browser",
-      onClick: handleInjected,
-      loading: false,
-    },
-    {
-      key: "walletconnect",
-      title: "WalletConnect",
-      subtitle: "Scan a QR code with any compatible mobile wallet",
-      onClick: handleWalletConnect,
-      loading: false,
-    },
-  ];
+  // Real, dynamically-discovered EVM wallets — wagmi's default EIP-6963
+  // discovery means each actually-installed extension (MetaMask, Coinbase
+  // Wallet, OKX Wallet, Trust Wallet, etc.) shows up here under its own
+  // real name automatically; nothing here is a hardcoded, possibly-wrong
+  // guess about what's on the user's machine. WalletConnect is rendered
+  // separately below since it's a fixed option, not something detected.
+  const wcConnector = connectors.find((c) => c.id === "walletConnect");
+  const evmWalletConnectors = connectors.filter((c) => c.id !== "walletConnect");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
-      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+      <div className="w-full max-w-sm rounded-2xl p-5 max-h-[85vh] overflow-y-auto" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
         <div className="flex items-center justify-between mb-4">
           <span className="font-display text-[16px] font-semibold" style={{ color: P.textPrimary }}>Connect Wallet</span>
           <button onClick={onClose}><X size={18} color={P.textMuted} /></button>
         </div>
-        <div className="flex flex-col gap-2">
-          {options.map((opt) => (
-            <button
-              key={opt.key}
-              onClick={opt.onClick}
-              disabled={opt.loading}
-              className="flex flex-col items-start px-3.5 py-3 rounded-xl text-left"
-              style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: opt.loading ? 0.6 : 1 }}
-            >
-              <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>
-                {opt.loading ? "Connecting…" : opt.title}
-              </span>
-              <span className="text-[11px] mt-0.5" style={{ color: P.textMuted }}>{opt.subtitle}</span>
-            </button>
-          ))}
+
+        {solanaRelevant && (
+          <div className="mb-4">
+            <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: P.textMuted }}>Solana</div>
+            <div className="flex flex-col gap-2">
+              {SOLANA_WALLET_LIST.map((w) => {
+                const installed = detectSolanaWallet(w.type);
+                const loading = connectingSolanaType === w.type;
+                if (!installed) {
+                  return (
+                    <a
+                      key={w.type}
+                      href={w.installUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between px-3.5 py-3 rounded-xl text-left"
+                      style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: 0.6 }}
+                    >
+                      <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>{w.name}</span>
+                      <span className="text-[11px]" style={{ color: P.textMuted }}>Install</span>
+                    </a>
+                  );
+                }
+                return (
+                  <button
+                    key={w.type}
+                    onClick={() => handleSolanaConnect(w.type)}
+                    disabled={loading}
+                    className="flex items-center justify-between px-3.5 py-3 rounded-xl text-left"
+                    style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: loading ? 0.6 : 1 }}
+                  >
+                    <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>{w.name}</span>
+                    {loading && <span className="text-[11px]" style={{ color: P.textMuted }}>Connecting…</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: P.textMuted }}>EVM</div>
+          <div className="flex flex-col gap-2">
+            {evmWalletConnectors.map((c) => {
+              const loading = isPending && variables?.connector?.uid === c.uid;
+              const label = c.id === "injected" && c.name === "Injected" ? "Other Browser Wallet" : c.name;
+              return (
+                <button
+                  key={c.uid}
+                  onClick={() => handleEvmConnect(c)}
+                  disabled={loading}
+                  className="flex items-center justify-between px-3.5 py-3 rounded-xl text-left"
+                  style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: loading ? 0.6 : 1 }}
+                >
+                  <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>{label}</span>
+                  {loading && <span className="text-[11px]" style={{ color: P.textMuted }}>Connecting…</span>}
+                </button>
+              );
+            })}
+            {wcConnector && (
+              <button
+                onClick={() => handleEvmConnect(wcConnector)}
+                disabled={isPending && variables?.connector?.uid === wcConnector.uid}
+                className="flex flex-col items-start px-3.5 py-3 rounded-xl text-left"
+                style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: isPending && variables?.connector?.uid === wcConnector.uid ? 0.6 : 1 }}
+              >
+                <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>
+                  {isPending && variables?.connector?.uid === wcConnector.uid ? "Connecting…" : "WalletConnect"}
+                </span>
+                <span className="text-[11px] mt-0.5" style={{ color: P.textMuted }}>Scan a QR code with any compatible mobile wallet</span>
+              </button>
+            )}
+          </div>
         </div>
+
         {solanaWallet.error && (
           <div className="mt-3 rounded-lg p-3 text-[11.5px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
             {solanaWallet.error}
@@ -2314,7 +2369,7 @@ export default function MangoBridge() {
                     Solana isn't EVM-compatible, so this route needs its own separate connection, alongside your regular wallet.
                   </div>
                   <button
-                    onClick={async () => { try { await solanaWallet.connect(); } catch {} }}
+                    onClick={() => setShowWalletSelector(true)}
                     disabled={solanaWallet.connecting}
                     className="w-full py-2.5 rounded-lg text-[12.5px] font-semibold"
                     style={{ background: P.ctaBg, color: P.ctaText, opacity: solanaWallet.connecting ? 0.6 : 1 }}
@@ -2452,7 +2507,7 @@ export default function MangoBridge() {
         />
       )}
       {showDocs && <DocsModal onClose={() => setShowDocs(false)} P={P} />}
-      {showWalletSelector && <WalletSelectorModal onClose={() => setShowWalletSelector(false)} P={P} />}
+      {showWalletSelector && <WalletSelectorModal onClose={() => setShowWalletSelector(false)} P={P} solanaRelevant={isFromSolana || !!CHAINS[to]?.isSolana} />}
       {showNetworkSelector && <NetworkSelectorModal onClose={() => setShowNetworkSelector(false)} P={P} />}
     </div>
   );
