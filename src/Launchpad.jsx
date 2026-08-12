@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useAccount, useBalance, useSignMessage } from "wagmi";
-import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check } from "lucide-react";
+import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
+import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
 import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
@@ -1070,7 +1070,8 @@ function AnalyticsPage({ P }) {
 }
 
 export function LaunchpadTab({ P }) {
-  const { address } = useAccount();
+  const { address, isConnected, chainId } = useAccount();
+  const { switchChainAsync } = useSwitchChain();
   const [view, setView] = useState("explore");
   const [selectedToken, setSelectedToken] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -1079,8 +1080,50 @@ export function LaunchpadTab({ P }) {
   // Explore page would leave the stale empty state showing.
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Real, one-shot network-switch prompt. LaunchpadTab only exists in the
+  // tree while the user is actually on the Launchpad tab (App.jsx mounts
+  // it conditionally on tab === "launchpad"), so an effect with an empty
+  // dependency array here fires exactly once per navigation IN — not on
+  // every render, and not again while already sitting on the tab. The
+  // hasPrompted ref (rather than relying on the effect's own one-shot
+  // semantics alone) additionally guards against React StrictMode's
+  // dev-only double-invoke, which would otherwise fire the wallet's
+  // switch prompt twice on a single real navigation.
+  //
+  // EVM-only by construction: useAccount() is wagmi's own hook, which has
+  // no concept of the separate Solana connection (OKX / AppKit's
+  // SolanaAdapter) — a Solana-only wallet leaves isConnected false here,
+  // so this never fires for it, exactly as it shouldn't since Solana
+  // isn't relevant to the launchpad at all.
+  const [switchRejected, setSwitchRejected] = useState(false);
+  const hasPromptedRef = useRef(false);
+  useEffect(() => {
+    if (hasPromptedRef.current) return;
+    hasPromptedRef.current = true;
+    if (!isConnected || chainId === ROBINHOOD_CHAIN_ID) return;
+    switchChainAsync({ chainId: ROBINHOOD_CHAIN_ID }).catch(() => setSwitchRejected(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onWrongNetwork = isConnected && chainId !== ROBINHOOD_CHAIN_ID;
+
   return (
     <div className="px-4 pb-24">
+      {onWrongNetwork && switchRejected && (
+        <div className="flex items-center justify-between gap-3 mb-3 px-3.5 py-2.5 rounded-xl" style={{ background: "#FCEFD9", border: "1px solid #F0D9A8" }}>
+          <span className="flex items-center gap-2 text-[12px]" style={{ color: "#8A5A00" }}>
+            <AlertTriangle size={13} /> Launchpad runs on Robinhood Chain — switch your wallet to continue.
+          </span>
+          <button
+            onClick={() => switchChainAsync({ chainId: ROBINHOOD_CHAIN_ID }).then(() => setSwitchRejected(false)).catch(() => setSwitchRejected(true))}
+            className="text-[12px] font-semibold px-3 py-1.5 rounded-lg shrink-0"
+            style={{ background: "#8A5A00", color: "#FFFFFF" }}
+          >
+            Switch
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1">
           <button onClick={() => setView("explore")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "explore" || view === "detail" ? P.pillBg : "transparent", color: view === "explore" || view === "detail" ? P.textPrimary : P.textMuted }}>Explore</button>

@@ -2234,7 +2234,7 @@ export default function MangoBridge() {
         </div>
       </div>
 
-      {onWrongNetwork && (
+      {tab === "bridge" && onWrongNetwork && (
         <div className="flex items-center justify-between gap-3 px-6 py-2.5" style={{ background: "#FCEFD9", borderBottom: "1px solid #F0D9A8" }}>
           <span className="flex items-center gap-2 text-[12.5px]" style={{ color: "#8A5A00" }}>
             <AlertTriangle size={13} /> Wallet is on the wrong network for {CHAINS[from].name}
