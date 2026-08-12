@@ -1080,15 +1080,24 @@ export function LaunchpadTab({ P }) {
   // Explore page would leave the stale empty state showing.
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Real, one-shot network-switch prompt. LaunchpadTab only exists in the
-  // tree while the user is actually on the Launchpad tab (App.jsx mounts
-  // it conditionally on tab === "launchpad"), so an effect with an empty
-  // dependency array here fires exactly once per navigation IN — not on
-  // every render, and not again while already sitting on the tab. The
-  // hasPrompted ref (rather than relying on the effect's own one-shot
-  // semantics alone) additionally guards against React StrictMode's
-  // dev-only double-invoke, which would otherwise fire the wallet's
-  // switch prompt twice on a single real navigation.
+  // Real network-switch prompt, one per connected address per visit to
+  // this tab. Originally gated by a mount-only empty-deps effect (fire
+  // once per LaunchpadTab mount, since it only exists in the tree while
+  // tab === "launchpad"), which turned out to have a real gap: if the
+  // wallet was still connecting when this component mounted (isConnected
+  // false at that exact moment), the one-shot guard consumed itself on
+  // that first, premature check and never got another chance once the
+  // connection actually completed — the prompt silently never fired.
+  // Gating on the connected *address* instead of "have I mounted yet"
+  // fixes that: the effect re-evaluates whenever isConnected/chainId/
+  // address actually change (not on every render — that's what the
+  // dependency array is for), and promptedForRef makes sure a given
+  // address only gets prompted once per mount regardless of how many
+  // times those values happen to change afterward. A fresh navigation
+  // back into this tab still remounts the component (App.jsx renders it
+  // conditionally on tab === "launchpad"), resetting the ref — so this
+  // keeps the original "once per navigation in" behavior while also
+  // covering "connects after already being on the tab".
   //
   // EVM-only by construction: useAccount() is wagmi's own hook, which has
   // no concept of the separate Solana connection (OKX / AppKit's
@@ -1096,14 +1105,13 @@ export function LaunchpadTab({ P }) {
   // so this never fires for it, exactly as it shouldn't since Solana
   // isn't relevant to the launchpad at all.
   const [switchRejected, setSwitchRejected] = useState(false);
-  const hasPromptedRef = useRef(false);
+  const promptedForRef = useRef(null);
   useEffect(() => {
-    if (hasPromptedRef.current) return;
-    hasPromptedRef.current = true;
     if (!isConnected || chainId === ROBINHOOD_CHAIN_ID) return;
+    if (promptedForRef.current === address) return;
+    promptedForRef.current = address;
     switchChainAsync({ chainId: ROBINHOOD_CHAIN_ID }).catch(() => setSwitchRejected(true));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isConnected, chainId, address, switchChainAsync]);
 
   const onWrongNetwork = isConnected && chainId !== ROBINHOOD_CHAIN_ID;
 

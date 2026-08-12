@@ -35,13 +35,41 @@ import { PhantomWalletAdapter, SolflareWalletAdapter, CoinbaseWalletAdapter, Tru
 import { createAppKit } from "@reown/appkit/react";
 import { solana } from "@reown/appkit/networks";
 import { SolanaAdapter } from "@reown/appkit-adapter-solana";
-import { wagmiAdapter, ALL_CHAINS, WALLETCONNECT_PROJECT_ID } from "./wagmi.js";
+import { wagmiAdapter, CHAIN_KEY_TO_WAGMI_MAINNET, WALLETCONNECT_PROJECT_ID } from "./wagmi.js";
+
+// Real, mainnet-only network list — deliberately NOT the same ALL_CHAINS
+// wagmi.js hands to WagmiAdapter (which includes sepolia / baseSepolia /
+// bscTestnet / robinhoodTestnet, kept there only for possible future
+// testnet development per networkMode.js's own comment, and reachable by
+// nothing else in this app: getWagmiChain()/getChainKeyMap() only ever
+// resolve through CHAIN_KEY_TO_WAGMI_MAINNET). Advertising those same
+// testnets to AppKit as connectable networks was a real bug: AppKit picks
+// networks[0] as an implicit default even with no explicit
+// `defaultNetwork` set, and ALL_CHAINS[0] is sepolia — so AppKit was
+// silently issuing its own switchChain(to Sepolia) on every fresh wallet
+// connection, racing whatever chain the app itself actually wants. That's
+// what was really behind the "network switch prompted multiple times"
+// bug reported from a real wallet connection — not a Launchpad-only bug.
+const MAINNET_EVM_CHAINS = Object.values(CHAIN_KEY_TO_WAGMI_MAINNET);
 
 // Real, official Solana mainnet CaipNetwork from Reown's own package —
 // its id ("5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp") is the same genesis hash
 // already used as SOLANA_MAINNET across this codebase, confirmed by
 // reading the installed package source, not assumed.
 export { solana as solanaNetwork };
+
+// Real bug, found live: metadata.url below used to be hardcoded to
+// "https://mangoprotocol.site". The site is actually served at
+// "https://www.mangoprotocol.site" (confirmed both from a real browser
+// console warning — Reown's own SDK flags this exact mismatch as
+// "probably unintended and can lead to issues" — and from live
+// wallet-connect logs showing repeated failed session-restore attempts
+// and a growing EventEmitter listener count, consistent with
+// WalletConnect session verification failing against the wrong origin
+// and retrying). Deriving this from window.location.origin at runtime
+// means it always matches whatever domain actually served the page,
+// instead of this file having to guess or hardcode one.
+const SITE_URL = typeof window !== "undefined" ? window.location.origin : "https://mangoprotocol.site";
 
 export const solanaAdapter = new SolanaAdapter({
   wallets: [
@@ -54,14 +82,18 @@ export const solanaAdapter = new SolanaAdapter({
 
 export const appKit = createAppKit({
   adapters: [wagmiAdapter, solanaAdapter],
-  networks: [...ALL_CHAINS, solana],
-  defaultNetwork: ALL_CHAINS[0],
+  networks: [...MAINNET_EVM_CHAINS, solana],
+  // No defaultNetwork set on purpose — nothing here should force a
+  // network switch on connect at all. Each part of the app (Bridge,
+  // Launchpad) already handles its own wrong-network guidance
+  // contextually; AppKit forcing its own choice (see MAINNET_EVM_CHAINS
+  // comment above) is exactly the bug this file is fixing.
   projectId: WALLETCONNECT_PROJECT_ID,
   metadata: {
     name: "Mango Protocol",
     description: "Cross-chain bridge and Uniswap v4 launchpad",
-    url: "https://mangoprotocol.site",
-    icons: ["https://mangoprotocol.site/logo.png"],
+    url: SITE_URL,
+    icons: [`${SITE_URL}/logo.png`],
   },
   // Deliberately narrowed down from AppKit's defaults to just wallet
   // connection — this app is strictly non-custodial (see CLAUDE.md /
