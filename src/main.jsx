@@ -6,6 +6,7 @@ import App from "./App.jsx";
 import SolanaConnectTest from "./SolanaConnect.jsx";
 import { SolanaWalletProvider } from "./SolanaWalletContext.jsx";
 import { config } from "./wagmi.js";
+import "./appkit.js";
 import "./index.css";
 
 const queryClient = new QueryClient();

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { parseUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
 import { PublicKey } from "@solana/web3.js";
-import { useSolanaWallet, detectSolanaWallet } from "./SolanaWalletContext.jsx";
+import { useSolanaWallet } from "./SolanaWalletContext.jsx";
 import {
   useAccount,
   useConnect,
@@ -11,6 +11,7 @@ import {
   useSwitchChain,
   useBalance,
 } from "wagmi";
+import { useAppKit, useAppKitAccount, useAppKitProvider, useDisconnect as useAppKitDisconnect } from "@reown/appkit/react";
 import {
   ChevronDown,
   ArrowUpDown,
@@ -1492,49 +1493,39 @@ function NetworkSelectorModal({ onClose, P }) {
   );
 }
 
-// Real, named Solana wallets this modal offers — each backed by that
-// wallet's own documented injected provider (checked live via
-// detectSolanaWallet), except OKX, which connects through its Universal
-// Provider SDK and so is always available regardless of what's installed.
-const SOLANA_WALLET_LIST = [
-  { type: "okx", name: "OKX Wallet", installUrl: null },
-  { type: "phantom", name: "Phantom", installUrl: "https://phantom.app/download" },
-  { type: "solflare", name: "Solflare", installUrl: "https://solflare.com/download" },
-  { type: "backpack", name: "Backpack", installUrl: "https://backpack.app/download" },
-];
-
+// Real wallet selection, now backed by Reown AppKit's own searchable,
+// 500+-wallet directory instead of a hand-enumerated button list — see
+// src/appkit.js for the createAppKit() call this modal opens into.
+// OKX Wallet for Solana stays as its own explicitly-labeled option since
+// it's deliberately kept outside AppKit (see appkit.js for why).
 function WalletSelectorModal({ onClose, P, solanaRelevant }) {
-  const { connect, connectors, isPending, variables } = useConnect();
   const solanaWallet = useSolanaWallet();
-  const [connectingSolanaType, setConnectingSolanaType] = useState(null);
+  const { open: openAppKit } = useAppKit();
+  const [connectingOkx, setConnectingOkx] = useState(false);
 
-  async function handleSolanaConnect(type) {
-    setConnectingSolanaType(type);
+  async function handleOkxConnect() {
+    setConnectingOkx(true);
     try {
-      await solanaWallet.connect(type);
+      await solanaWallet.connect();
       onClose();
     } catch {
       // Real error is already captured in solanaWallet.error and shown
       // below — nothing further needed here beyond stopping the
       // loading state.
     } finally {
-      setConnectingSolanaType(null);
+      setConnectingOkx(false);
     }
   }
 
-  function handleEvmConnect(connector) {
-    connect({ connector });
+  function openAppKitSolana() {
+    openAppKit({ view: "Connect", namespace: "solana" });
     onClose();
   }
 
-  // Real, dynamically-discovered EVM wallets — wagmi's default EIP-6963
-  // discovery means each actually-installed extension (MetaMask, Coinbase
-  // Wallet, OKX Wallet, Trust Wallet, etc.) shows up here under its own
-  // real name automatically; nothing here is a hardcoded, possibly-wrong
-  // guess about what's on the user's machine. WalletConnect is rendered
-  // separately below since it's a fixed option, not something detected.
-  const wcConnector = connectors.find((c) => c.id === "walletConnect");
-  const evmWalletConnectors = connectors.filter((c) => c.id !== "walletConnect");
+  function openAppKitEvm() {
+    openAppKit({ view: "Connect", namespace: "eip155" });
+    onClose();
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
@@ -1548,74 +1539,37 @@ function WalletSelectorModal({ onClose, P, solanaRelevant }) {
           <div className="mb-4">
             <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: P.textMuted }}>Solana</div>
             <div className="flex flex-col gap-2">
-              {SOLANA_WALLET_LIST.map((w) => {
-                const installed = detectSolanaWallet(w.type);
-                const loading = connectingSolanaType === w.type;
-                if (!installed) {
-                  return (
-                    <a
-                      key={w.type}
-                      href={w.installUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-between px-3.5 py-3 rounded-xl text-left"
-                      style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: 0.6 }}
-                    >
-                      <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>{w.name}</span>
-                      <span className="text-[11px]" style={{ color: P.textMuted }}>Install</span>
-                    </a>
-                  );
-                }
-                return (
-                  <button
-                    key={w.type}
-                    onClick={() => handleSolanaConnect(w.type)}
-                    disabled={loading}
-                    className="flex items-center justify-between px-3.5 py-3 rounded-xl text-left"
-                    style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: loading ? 0.6 : 1 }}
-                  >
-                    <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>{w.name}</span>
-                    {loading && <span className="text-[11px]" style={{ color: P.textMuted }}>Connecting…</span>}
-                  </button>
-                );
-              })}
+              <button
+                onClick={handleOkxConnect}
+                disabled={connectingOkx}
+                className="flex items-center justify-between px-3.5 py-3 rounded-xl text-left"
+                style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: connectingOkx ? 0.6 : 1 }}
+              >
+                <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>OKX Wallet</span>
+                {connectingOkx && <span className="text-[11px]" style={{ color: P.textMuted }}>Connecting…</span>}
+              </button>
+              <button
+                onClick={openAppKitSolana}
+                className="flex flex-col items-start px-3.5 py-3 rounded-xl text-left"
+                style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}
+              >
+                <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>More Solana Wallets</span>
+                <span className="text-[11px] mt-0.5" style={{ color: P.textMuted }}>Phantom, Solflare, Coinbase, Trust, Backpack, and more</span>
+              </button>
             </div>
           </div>
         )}
 
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: P.textMuted }}>EVM</div>
-          <div className="flex flex-col gap-2">
-            {evmWalletConnectors.map((c) => {
-              const loading = isPending && variables?.connector?.uid === c.uid;
-              const label = c.id === "injected" && c.name === "Injected" ? "Other Browser Wallet" : c.name;
-              return (
-                <button
-                  key={c.uid}
-                  onClick={() => handleEvmConnect(c)}
-                  disabled={loading}
-                  className="flex items-center justify-between px-3.5 py-3 rounded-xl text-left"
-                  style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: loading ? 0.6 : 1 }}
-                >
-                  <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>{label}</span>
-                  {loading && <span className="text-[11px]" style={{ color: P.textMuted }}>Connecting…</span>}
-                </button>
-              );
-            })}
-            {wcConnector && (
-              <button
-                onClick={() => handleEvmConnect(wcConnector)}
-                disabled={isPending && variables?.connector?.uid === wcConnector.uid}
-                className="flex flex-col items-start px-3.5 py-3 rounded-xl text-left"
-                style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: isPending && variables?.connector?.uid === wcConnector.uid ? 0.6 : 1 }}
-              >
-                <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>
-                  {isPending && variables?.connector?.uid === wcConnector.uid ? "Connecting…" : "WalletConnect"}
-                </span>
-                <span className="text-[11px] mt-0.5" style={{ color: P.textMuted }}>Scan a QR code with any compatible mobile wallet</span>
-              </button>
-            )}
-          </div>
+          <button
+            onClick={openAppKitEvm}
+            className="w-full flex flex-col items-start px-3.5 py-3 rounded-xl text-left"
+            style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}
+          >
+            <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>Browse EVM Wallets</span>
+            <span className="text-[11px] mt-0.5" style={{ color: P.textMuted }}>MetaMask, Trust Wallet, Binance Wallet, SafePal, and 500+ more</span>
+          </button>
         </div>
 
         {solanaWallet.error && (
@@ -1963,6 +1917,10 @@ export default function MangoBridge() {
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
   const solanaWallet = useSolanaWallet();
+  const { open: openAppKit } = useAppKit();
+  const appKitSolana = useAppKitAccount({ namespace: "solana" });
+  const { walletProvider: appKitSolanaProvider } = useAppKitProvider("solana");
+  const { disconnect: disconnectAppKit } = useAppKitDisconnect();
   const [showWalletSelector, setShowWalletSelector] = useState(false);
 
   // Real, unified concept: which wallet is actually relevant depends on
@@ -1971,9 +1929,31 @@ export default function MangoBridge() {
   // exist side by side — this is the one place that decides which one
   // matters for the current selection, so downstream code doesn't have
   // to keep re-deciding it.
+  //
+  // Solana itself now has two possible connections layered on top of
+  // each other — OKX (its own, separate path) and everything else,
+  // connected through AppKit's SolanaAdapter. activeSolanaAddress is
+  // whichever one is actually connected; OKX wins if somehow both are
+  // (shouldn't normally happen, since connecting one doesn't disconnect
+  // the other, but OKX is the one with a real, proven execution path).
   const isFromSolana = CHAINS[from]?.isSolana;
-  const activeAccount = isFromSolana ? solanaWallet.address : address;
-  const connected = isFromSolana ? !!solanaWallet.address : isConnected;
+  const activeSolanaAddress = solanaWallet.address || appKitSolana.address;
+  const activeAccount = isFromSolana ? activeSolanaAddress : address;
+  const connected = isFromSolana ? !!activeSolanaAddress : isConnected;
+
+  // BridgeModal reads solanaWallet.solanaProvider.current for real
+  // Solana-sourced execution (see relaySdkSolanaExecution.js). When OKX
+  // is the one actually connected, pass it through unchanged — that's
+  // the one proven path. Otherwise fall back to AppKit's own Solana
+  // provider: its signTransaction(transaction) shape is structurally
+  // compatible per @reown/appkit-utils/solana's installed types (same
+  // single-transaction-argument signature the execution code already
+  // calls), but this specific combination hasn't been exercised against
+  // a real, funded transfer yet — flag this first if a non-OKX
+  // Solana-sourced bridge is reported broken.
+  const effectiveSolanaWallet = solanaWallet.address
+    ? solanaWallet
+    : { ...solanaWallet, solanaProvider: { current: appKitSolanaProvider } };
 
   // Real, live balances for every asset relevant to the current "from"
   // chain — not just the currently-selected one. Powers the balance
@@ -1986,13 +1966,13 @@ export default function MangoBridge() {
     setBalancesLoading(true);
     try {
       const real = isFromSolana
-        ? await fetchSolanaBalance({ solanaAddress: solanaWallet.address })
+        ? await fetchSolanaBalance({ solanaAddress: activeSolanaAddress })
         : await fetchAllEvmBalances({ chainKey: from, nativeSymbol: NATIVE_SYMBOL_BY_CHAIN[from], address });
       setFromChainBalances(real);
     } finally {
       setBalancesLoading(false);
     }
-  }, [connected, isFromSolana, from, address, solanaWallet.address]);
+  }, [connected, isFromSolana, from, address, activeSolanaAddress]);
 
   // Refreshes on wallet connect and network change — the third required
   // trigger (asset list opening) is wired directly into AssetDropdown's
@@ -2087,7 +2067,11 @@ export default function MangoBridge() {
   function handleFromChange(id) { setFrom(id); if (id === to) setTo(CHAIN_ORDER.find((c) => c !== id)); setFromAssetIdxRaw(defaultAssetIdxFor(id)); setAmount(""); }
   function handleToChange(id) { setTo(id); if (id === from) setFrom(CHAIN_ORDER.find((c) => c !== id)); setToAssetIdxRaw(defaultAssetIdxFor(id)); setAmount(""); }
   function handleConnect() {
-    setShowWalletSelector(true);
+    if (isFromSolana || CHAINS[to]?.isSolana) {
+      setShowWalletSelector(true);
+    } else {
+      openAppKit({ view: "Connect", namespace: "eip155" });
+    }
   }
 
   const isCrossAsset = fromAsset.symbol !== toAsset.symbol;
@@ -2101,7 +2085,7 @@ export default function MangoBridge() {
   // — a live check, not a guess based on which addresses we happen to have.
   const [routeCheck, setRouteCheck] = useState({ status: "idle" });
   useEffect(() => {
-    if (kind !== "relay" || amtNum <= 0 || !connected || !address || (CHAINS[to]?.isSolana && !sendToOther && !solanaWallet.address)) {
+    if (kind !== "relay" || amtNum <= 0 || !connected || !address || (CHAINS[to]?.isSolana && !sendToOther && !activeSolanaAddress)) {
       setRouteCheck({ status: "idle" });
       return;
     }
@@ -2123,7 +2107,7 @@ export default function MangoBridge() {
           // involved on EITHER side needs its own correctly-typed
           // address as the recipient, not whichever wallet happens to
           // be the "account" for the source side.
-          recipientAddress: sendToOther ? destAddress : (CHAINS[to]?.isSolana ? solanaWallet.address : (isFromSolana ? address : activeAccount)),
+          recipientAddress: sendToOther ? destAddress : (CHAINS[to]?.isSolana ? activeSolanaAddress : (isFromSolana ? address : activeAccount)),
         });
         if (!cancelled) setRouteCheck({ status: "ok" });
       } catch (err) {
@@ -2158,7 +2142,7 @@ export default function MangoBridge() {
   // real connection before a valid recipient can even be determined —
   // not just when it's the source.
   const needsEvmAddressForSolanaSource = isFromSolana && !CHAINS[to]?.isSolana && !sendToOther && !address;
-  const needsSolanaAddressForSolanaDest = CHAINS[to]?.isSolana && !isFromSolana && !sendToOther && !solanaWallet.address;
+  const needsSolanaAddressForSolanaDest = CHAINS[to]?.isSolana && !isFromSolana && !sendToOther && !activeSolanaAddress;
   const canBridge = amtNum > 0 && from !== to && !insufficient && !onWrongNetwork && !needsEvmAddressForSolanaSource && !needsSolanaAddressForSolanaDest && (!sendToOther || isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana));
 
   function persist(newBalances, newHistory) {
@@ -2233,7 +2217,12 @@ export default function MangoBridge() {
             <Globe size={13} color={P.textSecondary} />
           </button>
           {connected ? (
-            <button onClick={() => (isFromSolana ? solanaWallet.disconnect() : disconnect())} className="flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-full text-[12px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
+            <button
+              onClick={() => {
+                if (!isFromSolana) { disconnect(); return; }
+                if (solanaWallet.address) { solanaWallet.disconnect(); } else { disconnectAppKit({ namespace: "solana" }); }
+              }}
+              className="flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-full text-[12px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: LIME }} />
               {activeAccount ? `${activeAccount.slice(0, 5)}…${activeAccount.slice(-3)}` : ""}
             </button>
@@ -2362,7 +2351,7 @@ export default function MangoBridge() {
                   all when Solana is genuinely involved on either side of
                   the current selection, since that's the only time a
                   second, separate wallet is actually needed. */}
-              {(isFromSolana || CHAINS[to]?.isSolana) && !solanaWallet.address && (
+              {(isFromSolana || CHAINS[to]?.isSolana) && !activeSolanaAddress && (
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <div className="text-[12.5px] font-medium mb-1" style={{ color: P.textPrimary }}>Solana wallet needed</div>
                   <div className="text-[11px] mb-2.5" style={{ color: P.textMuted }}>
@@ -2397,7 +2386,7 @@ export default function MangoBridge() {
                     Your Solana wallet is connected, but {CHAINS[to].name} needs a separate EVM wallet as the destination.
                   </div>
                   <button
-                    onClick={() => setShowWalletSelector(true)}
+                    onClick={() => openAppKit({ view: "Connect", namespace: "eip155" })}
                     className="w-full py-2.5 rounded-lg text-[12.5px] font-semibold"
                     style={{ background: P.ctaBg, color: P.ctaText }}
                   >
@@ -2500,7 +2489,7 @@ export default function MangoBridge() {
           account={activeAccount}
           evmAddress={address}
           isFromSolana={isFromSolana}
-          solanaWallet={solanaWallet}
+          solanaWallet={effectiveSolanaWallet}
           onClose={() => setShowModal(false)}
           onComplete={handleComplete}
           onWithdrawalInitiated={handleWithdrawalInitiated}

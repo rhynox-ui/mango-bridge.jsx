@@ -1,12 +1,12 @@
-import { createConfig, http } from "wagmi";
+import { http } from "wagmi";
 import { sepolia, baseSepolia, bscTestnet, mainnet, base, bsc } from "wagmi/chains";
-import { injected, walletConnect } from "wagmi/connectors";
 import { defineChain } from "viem";
+import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
 
 // This is a WalletConnect/Reown *Project ID* — a public identifier used to
 // register the app with WalletConnect's relay network, not a secret.
 // It's safe to have in client-side code and committed to the repo.
-const WALLETCONNECT_PROJECT_ID = "90386e6d00c461cd50f7e8a82e76d4b5";
+export const WALLETCONNECT_PROJECT_ID = "90386e6d00c461cd50f7e8a82e76d4b5";
 
 // ---------------------------------------------------------------------------
 // Robinhood Chain — both networks defined manually, since neither is in
@@ -77,22 +77,20 @@ export const CHAIN_KEY_TO_WAGMI_MAINNET = {
   stable: stableMainnet,
 };
 
-const ALL_CHAINS = [sepolia, baseSepolia, bscTestnet, robinhoodTestnet, mainnet, base, bsc, robinhoodMainnet, stableMainnet];
+export const ALL_CHAINS = [sepolia, baseSepolia, bscTestnet, robinhoodTestnet, mainnet, base, bsc, robinhoodMainnet, stableMainnet];
 
-export const config = createConfig({
-  chains: ALL_CHAINS,
-  connectors: [
-    injected(),
-    walletConnect({
-      projectId: WALLETCONNECT_PROJECT_ID,
-      metadata: {
-        name: "Mango Protocol",
-        description: "Cross-chain bridge",
-        url: "https://mangoprotocol.site",
-        icons: ["https://avatars.githubusercontent.com/u/37784886"],
-      },
-      showQrModal: true,
-    }),
-  ],
+// Real Reown AppKit wiring, layered on top of this exact chain list and
+// project ID rather than replacing them — see src/appkit.js for the
+// createAppKit() call that actually registers the wallet-connect modal.
+// AppKit's WagmiAdapter is what builds the wagmi Config now (that's the
+// only way its adapter model works — it owns config construction, it
+// can't wrap an already-built Config instance), but every chain, RPC, and
+// the WalletConnect project ID it uses are exactly the ones this project
+// already had; nothing about ALL_CHAINS above changed for this.
+export const wagmiAdapter = new WagmiAdapter({
+  networks: ALL_CHAINS,
+  projectId: WALLETCONNECT_PROJECT_ID,
   transports: Object.fromEntries(ALL_CHAINS.map((c) => [c.id, http()])),
 });
+
+export const config = wagmiAdapter.wagmiConfig;
