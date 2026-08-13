@@ -39,7 +39,7 @@ import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithd
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
 import { getRelayQuote, executeRelayQuote, canRelayHandle, sendRelayProtocolFee, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
-import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
+import { executeSolanaSourcedTransfer, sendSolanaProtocolFee } from "./relaySdkSolanaExecution.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
 import { LaunchpadTab } from "./Launchpad.jsx";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
@@ -67,6 +67,23 @@ const CHAINS_MAINNET = {
   // documented real-world performance (median ~2.7s execution, sub-cent
   // network fees), not guessed.
   solana: { id: "solana", name: "Solana", short: "SOL", color: "#9945FF", mark: "◆", baseSeconds: 3, baseFee: 0.001, explorer: "https://solscan.io/tx/", isSolana: true },
+  // Native-asset-only additions — chain id, native currency, and explorer
+  // URL all sourced from wagmi/chains' own maintained definitions (see
+  // src/wagmi.js), not hand-typed. No token contract addresses are
+  // verified for these yet, so only each chain's native asset is
+  // supported; every transfer involving one of these routes through Relay
+  // (see getTransferKind() below — no CCTP/OP-stack/Arbitrum-canonical
+  // entry exists for any of them, so they fall through to "relay" safely).
+  // baseSeconds/baseFee are rough initial display estimates only, same as
+  // every other chain here — replaced by a real Relay quote once one loads.
+  arbitrum: { id: "arbitrum", name: "Arbitrum One", short: "ARB", color: "#28A0F0", mark: "◆", baseSeconds: 30, baseFee: 0.05, explorer: "https://arbiscan.io/tx/" },
+  avalanche: { id: "avalanche", name: "Avalanche", short: "AVAX", color: "#E84142", mark: "▲", baseSeconds: 20, baseFee: 0.05, explorer: "https://snowtrace.io/tx/" },
+  abstract: { id: "abstract", name: "Abstract", short: "ABS", color: "#00E599", mark: "◆", baseSeconds: 30, baseFee: 0.03, explorer: "https://abscan.org/tx/" },
+  hyperevm: { id: "hyperevm", name: "HyperEVM", short: "HYPE", color: "#97FCE4", mark: "◆", baseSeconds: 15, baseFee: 0.02, explorer: "https://hyperevmscan.io/tx/" },
+  ink: { id: "ink", name: "Ink", short: "INK", color: "#7132F5", mark: "◆", baseSeconds: 30, baseFee: 0.03, explorer: "https://explorer.inkonchain.com/tx/" },
+  plasma: { id: "plasma", name: "Plasma", short: "XPL", color: "#0FDD8D", mark: "◆", baseSeconds: 20, baseFee: 0.02, explorer: "https://plasmascan.to/tx/" },
+  unichain: { id: "unichain", name: "Unichain", short: "UNI", color: "#FF007A", mark: "◆", baseSeconds: 30, baseFee: 0.03, explorer: "https://uniscan.xyz/tx/" },
+  xlayer: { id: "xlayer", name: "X Layer", short: "OKB", color: "#00D2B5", mark: "◆", baseSeconds: 30, baseFee: 0.03, explorer: "https://www.oklink.com/xlayer/tx/" },
 };
 function getChains() { return isMainnet() ? CHAINS_MAINNET : CHAINS_TESTNET; }
 // Proxy so every existing `CHAINS[key]` reference throughout this file stays
@@ -76,7 +93,7 @@ const CHAINS = new Proxy({}, {
   ownKeys() { return Reflect.ownKeys(getChains()); },
   getOwnPropertyDescriptor(_, key) { return Reflect.getOwnPropertyDescriptor(getChains(), key); },
 });
-const CHAIN_ORDER = ["ethereum", "base", "bnb", "robinhood", "stable", "solana"];
+const CHAIN_ORDER = ["ethereum", "base", "bnb", "robinhood", "stable", "solana", "arbitrum", "avalanche", "abstract", "hyperevm", "ink", "plasma", "unichain", "xlayer"];
 
 // Real, network-aware address validation. EVM uses viem's own isAddress
 // (proper format + checksum validation, not a hand-rolled regex). Solana
@@ -96,7 +113,11 @@ function isValidDestinationAddress(address, isSolanaChain) {
   }
   return isAddress(address.trim());
 }
-const NATIVE_SYMBOL_BY_CHAIN = { ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", stable: "USDT0", solana: "SOL" };
+const NATIVE_SYMBOL_BY_CHAIN = {
+  ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", stable: "USDT0", solana: "SOL",
+  arbitrum: "ETH", avalanche: "AVAX", abstract: "ETH", hyperevm: "HYPE",
+  ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB",
+};
 
 const ASSETS = [
   { symbol: "USDC", name: "USD Coin", decimals: 2, price: 1, color: "#2775CA" },
@@ -110,6 +131,16 @@ const ASSETS = [
   // asset never existed anywhere in this list — meaning even once a user
   // reached Solana, there was nothing valid to actually send or receive.
   { symbol: "SOL", name: "Solana", decimals: 4, price: 145, color: "#9945FF" },
+  // Native assets for the 8 newly added chains — ETH already covers
+  // Arbitrum/Abstract/Ink/Unichain above, so only genuinely new native
+  // symbols need their own entry here. price is a rough, cosmetic
+  // UI-preview estimate only (same caveat as every price above — not
+  // fund-critical, never used to compute an actual transfer amount, which
+  // always comes from a real Relay quote).
+  { symbol: "AVAX", name: "Avalanche", decimals: 4, price: 25, color: "#E84142" },
+  { symbol: "HYPE", name: "Hyperliquid", decimals: 4, price: 25, color: "#97FCE4" },
+  { symbol: "XPL", name: "Plasma", decimals: 2, price: 0.5, color: "#0FDD8D" },
+  { symbol: "OKB", name: "OKB", decimals: 4, price: 45, color: "#00D2B5" },
 ];
 
 const DEFAULT_BALANCES = {
@@ -121,6 +152,16 @@ const DEFAULT_BALANCES = {
   // any transaction into Stable completed — balances[to][toAsset.symbol]
   // needs an entry to write into. Stable only ever holds USDT0.
   stable: { USDT0: 0 },
+  // Same reason as stable above — each new chain needs its own native-asset
+  // entry to write into, or a transfer landing there crashes on completion.
+  arbitrum: { ETH: 0 },
+  avalanche: { AVAX: 0 },
+  abstract: { ETH: 0 },
+  hyperevm: { HYPE: 0 },
+  ink: { ETH: 0 },
+  plasma: { XPL: 0 },
+  unichain: { ETH: 0 },
+  xlayer: { OKB: 0 },
 };
 
 const STEPS = [
@@ -269,6 +310,25 @@ function ChainIcon({ id, size }) {
   // making it look like the chain selector wasn't actually changing
   // anything, even though the underlying state genuinely was.
   if (id === "solana") return <SolanaLogoIcon size={s} fallback={solanaFallback} />;
+  // The 8 newly added chains — same RelayChainIcon runtime-fetch pattern as
+  // stable/robinhood above, using each chain's real, verified mainnet chain
+  // id (cross-checked against wagmi/chains — see src/wagmi.js). No
+  // hand-drawn icon exists for any of these yet, so the fallback is a
+  // generic labeled circle rather than a guessed brand shape.
+  const genericFallback = (label) => (
+    <svg width={sHand} height={sHand} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" fill="none" />
+      <text x="12" y="15" fontSize="7" fontWeight="700" textAnchor="middle" fill="currentColor">{label}</text>
+    </svg>
+  );
+  if (id === "arbitrum") return <RelayChainIcon chainId={42161} size={s} fallback={genericFallback("ARB")} />;
+  if (id === "avalanche") return <RelayChainIcon chainId={43114} size={s} fallback={genericFallback("AVAX")} />;
+  if (id === "abstract") return <RelayChainIcon chainId={2741} size={s} fallback={genericFallback("ABS")} />;
+  if (id === "hyperevm") return <RelayChainIcon chainId={999} size={s} fallback={genericFallback("HYPE")} />;
+  if (id === "ink") return <RelayChainIcon chainId={57073} size={s} fallback={genericFallback("INK")} />;
+  if (id === "plasma") return <RelayChainIcon chainId={9745} size={s} fallback={genericFallback("XPL")} />;
+  if (id === "unichain") return <RelayChainIcon chainId={130} size={s} fallback={genericFallback("UNI")} />;
+  if (id === "xlayer") return <RelayChainIcon chainId={196} size={s} fallback={genericFallback("OKB")} />;
   return robinhoodFallback;
 }
 
@@ -892,14 +952,23 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         // EVM path below (wagmi has no concept of Solana chains at all).
         const decimals = ASSET_ONCHAIN_DECIMALS[asset];
         const totalBaseUnits = parseUnits(amount, decimals);
+        const feeBaseUnits = totalBaseUnits / 100n; // 1%, same rate as the EVM-sourced path below
+        const transferBaseUnits = totalBaseUnits - feeBaseUnits;
 
         setStepIndex(0);
+        if (feeBaseUnits > 0n) {
+          await sendSolanaProtocolFee({
+            solanaAddress: account,
+            solanaProvider: solanaWallet.solanaProvider.current,
+            feeBaseUnits,
+          });
+        }
         const result = await executeSolanaSourcedTransfer({
           solanaAddress: account,
           solanaProvider: solanaWallet.solanaProvider.current,
           toChainId: MAINNET_CHAIN_IDS[to],
           toCurrency: currencyAddress(to, toAsset),
-          amountBaseUnits: totalBaseUnits.toString(),
+          amountBaseUnits: transferBaseUnits.toString(),
           // Real bug fix: previously defaulted to `account`, which for a
           // Solana-sourced transfer IS the Solana address — invalid as a
           // recipient on any EVM destination chain. Relay's own docs are

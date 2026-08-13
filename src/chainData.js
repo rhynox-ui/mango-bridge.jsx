@@ -19,9 +19,25 @@ export const MAINNET_CHAIN_IDS = {
   // Confirmed directly from Relay's own SDK documentation — Relay's own
   // internal identifier for Solana, not a real Solana concept.
   solana: 792703809,
+  // Native-asset-only additions, all chain ids cross-verified against
+  // wagmi/chains' own maintained definitions (see src/wagmi.js). No token
+  // contract addresses are verified for these yet, so only native-asset
+  // transfers are supported — see NATIVE_PLACEHOLDER_BY_CHAIN below.
+  arbitrum: 42161,
+  avalanche: 43114,
+  abstract: 2741,
+  hyperevm: 999,
+  ink: 57073,
+  plasma: 9745,
+  unichain: 130,
+  xlayer: 196,
 };
 
-export const NATIVE_SYMBOL = { ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", solana: "SOL" };
+export const NATIVE_SYMBOL = {
+  ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", solana: "SOL",
+  arbitrum: "ETH", avalanche: "AVAX", abstract: "ETH", hyperevm: "HYPE",
+  ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB",
+};
 
 // Verified mainnet contract addresses only — deliberately incomplete
 // where a combination hasn't been independently confirmed. See
@@ -57,6 +73,14 @@ const NATIVE_PLACEHOLDER_BY_CHAIN = {
   bnb: NATIVE_TOKEN_ADDRESS,
   robinhood: NATIVE_TOKEN_ADDRESS,
   solana: "11111111111111111111111111111111",
+  arbitrum: NATIVE_TOKEN_ADDRESS,
+  avalanche: NATIVE_TOKEN_ADDRESS,
+  abstract: NATIVE_TOKEN_ADDRESS,
+  hyperevm: NATIVE_TOKEN_ADDRESS,
+  ink: NATIVE_TOKEN_ADDRESS,
+  plasma: NATIVE_TOKEN_ADDRESS,
+  unichain: NATIVE_TOKEN_ADDRESS,
+  xlayer: NATIVE_TOKEN_ADDRESS,
 };
 
 export function currencyAddress(chainKey, assetSymbol) {
@@ -85,4 +109,8 @@ export const ASSET_ONCHAIN_DECIMALS = {
   WBTC: 8,
   USDT0: 18,
   SOL: 9,
+  AVAX: 18,
+  HYPE: 18,
+  XPL: 18,
+  OKB: 18,
 };

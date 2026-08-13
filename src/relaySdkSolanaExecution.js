@@ -80,6 +80,51 @@ function ensureClientInitialized() {
 // relaybridge.js tonight.
 const RELAY_SOLANA_CHAIN_ID = 792703809;
 
+// Protocol fee wallet for Solana-SOURCED transfers — a real Solana address,
+// separate from DEV_FEE_WALLET in relaybridge.js (that one is EVM-only and
+// cannot receive SOL). Same 1% rate as the EVM side, kept as its own visible
+// on-chain transfer rather than bundled into the Relay deposit, matching the
+// pattern sendRelayProtocolFee already uses for EVM-sourced transfers.
+export const DEV_FEE_WALLET_SOLANA = "CFqNwTuTkqkaVoNZmNE6q5TeV6CcNwGRns2NSEY72Fu2";
+
+/**
+ * Sends the 1% protocol fee as a native SOL transfer, signed by the same
+ * connected Solana wallet (OKX Connect) used for the transfer itself. Must
+ * be called BEFORE executeSolanaSourcedTransfer with the reduced remainder,
+ * same two-step pattern as sendRelayProtocolFee + getRelayQuote on the EVM
+ * side.
+ */
+export async function sendSolanaProtocolFee({ solanaAddress, solanaProvider, feeBaseUnits }) {
+  if (feeBaseUnits <= 0n) return null;
+
+  const { Connection, PublicKey, SystemProgram, Transaction } = await import("@solana/web3.js");
+  // Same public RPC endpoint used for the transfer execution below — the
+  // default public Solana RPC disables sendTransaction for most callers,
+  // confirmed as a real 403 earlier in this project.
+  const connection = new Connection("https://rpc.solanatracker.io/public", "confirmed");
+
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  const fromPubkey = new PublicKey(solanaAddress);
+  const transaction = new Transaction({
+    feePayer: fromPubkey,
+    recentBlockhash: blockhash,
+  }).add(
+    SystemProgram.transfer({
+      fromPubkey,
+      toPubkey: new PublicKey(DEV_FEE_WALLET_SOLANA),
+      lamports: feeBaseUnits,
+    })
+  );
+
+  // Same CAIP-2 identifier and signing call already confirmed working
+  // against OKX's installed solana-provider source, immediately below in
+  // executeSolanaSourcedTransfer.
+  const signed = await solanaProvider.signTransaction(transaction, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`);
+  const signature = await connection.sendRawTransaction(signed.serialize());
+  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
+  return signature;
+}
+
 /**
  * Executes a Solana-SOURCED transfer using Relay's official SDK and the
  * real, connected Solana wallet's actual sign-and-send capability (from

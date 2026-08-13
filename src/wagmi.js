@@ -1,5 +1,12 @@
 import { http } from "wagmi";
-import { sepolia, baseSepolia, bscTestnet, mainnet, base, bsc } from "wagmi/chains";
+import {
+  sepolia, baseSepolia, bscTestnet, mainnet, base, bsc,
+  // Real, verified chain definitions from wagmi/viem's own maintained chain
+  // list — checked against a live Node.js script confirming each id/native
+  // currency/RPC matches independent research, rather than hand-defining
+  // these via defineChain and risking a typo'd chain ID for a live chain.
+  arbitrum, avalanche, abstract, hyperEvm, ink, plasma, unichain, xLayer,
+} from "wagmi/chains";
 import { defineChain } from "viem";
 import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
 
@@ -75,9 +82,27 @@ export const CHAIN_KEY_TO_WAGMI_MAINNET = {
   bnb: bsc,
   robinhood: robinhoodMainnet,
   stable: stableMainnet,
+  // Native-asset-only additions — each routes exclusively through Relay
+  // (see chainData.js / getTransferKind()), not through CCTP or any other
+  // native bridge integration. No canonical-bridge or CCTP contract
+  // addresses were verified for these this session, so none are wired in;
+  // only the chain id / native currency / RPC needed for wallet connect +
+  // Relay routing, all sourced from wagmi's own maintained chain list.
+  arbitrum: arbitrum,
+  avalanche: avalanche,
+  abstract: abstract,
+  hyperevm: hyperEvm,
+  ink: ink,
+  plasma: plasma,
+  unichain: unichain,
+  xlayer: xLayer,
 };
 
-export const ALL_CHAINS = [sepolia, baseSepolia, bscTestnet, robinhoodTestnet, mainnet, base, bsc, robinhoodMainnet, stableMainnet];
+export const ALL_CHAINS = [
+  sepolia, baseSepolia, bscTestnet, robinhoodTestnet,
+  mainnet, base, bsc, robinhoodMainnet, stableMainnet,
+  arbitrum, avalanche, abstract, hyperEvm, ink, plasma, unichain, xLayer,
+];
 
 // Real Reown AppKit wiring, layered on top of this exact chain list and
 // project ID rather than replacing them — see src/appkit.js for the
