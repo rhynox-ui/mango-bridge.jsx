@@ -29,9 +29,28 @@ const CCTP_CHAINS_TESTNET = {
 // of mainnet launch. There is no real Arc mainnet CCTP domain or contract
 // address to point at yet. Add it once Circle actually flips that switch —
 // not before, and not by guessing.
+//
+// Avalanche, Arbitrum, and Unichain added after real verification: domain
+// IDs and native-USDC addresses came from @wormhole-foundation/sdk-base's
+// own circle.js constants (an already-installed production dependency of
+// this app, citing developers.circle.com/stablecoins/supported-domains
+// directly in its source comment) — and cross-checked against values
+// already live in THIS file for Ethereum/Base, which matched byte-for-byte
+// (domain 0/6 and both USDC addresses). TokenMessengerV2/MessageTransmitterV2
+// reuse the same MAINNET_SHARED_* addresses already used for Ethereum/Base:
+// CCTP V2 deploys identical bytecode at the identical address on every
+// supported EVM chain via CREATE2 (confirmed via Circle's own CCTP V2
+// technical guide), and this exact MessageTransmitterV2 address was
+// independently found labeled on both Etherscan and Arbiscan. HyperEVM,
+// Abstract, X Layer, and Plasma are deliberately NOT included — no
+// verified domain ID or contract address for any of them was found from a
+// reachable source this session.
 const CCTP_CHAINS_MAINNET = {
   ethereum: { domain: 0, usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", chainId: 1, tokenMessenger: MAINNET_SHARED_TOKEN_MESSENGER_V2, messageTransmitter: MAINNET_SHARED_MESSAGE_TRANSMITTER_V2 },
   base: { domain: 6, usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", chainId: 8453, tokenMessenger: MAINNET_SHARED_TOKEN_MESSENGER_V2, messageTransmitter: MAINNET_SHARED_MESSAGE_TRANSMITTER_V2 },
+  avalanche: { domain: 1, usdc: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", chainId: 43114, tokenMessenger: MAINNET_SHARED_TOKEN_MESSENGER_V2, messageTransmitter: MAINNET_SHARED_MESSAGE_TRANSMITTER_V2 },
+  arbitrum: { domain: 3, usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", chainId: 42161, tokenMessenger: MAINNET_SHARED_TOKEN_MESSENGER_V2, messageTransmitter: MAINNET_SHARED_MESSAGE_TRANSMITTER_V2 },
+  unichain: { domain: 10, usdc: "0x078D782b760474a361dDA0AF3839290b0EF57AD6", chainId: 130, tokenMessenger: MAINNET_SHARED_TOKEN_MESSENGER_V2, messageTransmitter: MAINNET_SHARED_MESSAGE_TRANSMITTER_V2 },
 };
 
 export function getCctpChains() {

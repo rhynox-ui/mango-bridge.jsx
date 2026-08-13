@@ -1669,7 +1669,7 @@ function DocsModal({ onClose, P }) {
             <li>Unichain</li>
             <li>X Layer</li>
           </ul>
-          <p className="mt-2">The eight chains above are native-asset-only (ETH, AVAX, HYPE, XPL, OKB respectively) — no CCTP integration exists for any of them yet. Ink and Unichain additionally have a real OP Stack canonical bridge for ETH, same protocol as Base (see "Supported Protocols" below); Arbitrum One, Avalanche, Abstract, HyperEVM, Plasma, and X Layer route through Relay only.</p>
+          <p className="mt-2">Each native asset (ETH, AVAX, HYPE, XPL, OKB) always routes through Relay. Beyond that: Ink and Unichain additionally have a real OP Stack canonical bridge for ETH, same protocol as Base (see "Supported Protocols" below); Avalanche, Arbitrum One, and Unichain additionally support USDC via Circle CCTP. Abstract, HyperEVM, X Layer, and Plasma have neither yet — Relay only.</p>
         </DocSection>
 
         <DocSection title="Supported Protocols" P={P}>
@@ -1691,7 +1691,7 @@ function DocsModal({ onClose, P }) {
             <li>High security</li>
             <li>Fast settlement</li>
           </ul>
-          <p className="mb-3"><span className="font-medium" style={{ color: P.textPrimary }}>Supported route:</span> Ethereum ↔ Base — Asset: USDC</p>
+          <p className="mb-3"><span className="font-medium" style={{ color: P.textPrimary }}>Supported routes:</span> USDC between any two of Ethereum, Base, Avalanche, Arbitrum One, and Unichain. Domain IDs and contract addresses for the newest three were verified against Circle's own CREATE2-deployed CCTP V2 contracts (identical TokenMessenger/MessageTransmitter address on every chain) before being wired in — not guessed.</p>
 
           <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>OP Stack canonical bridge — Base, Ink, Unichain</p>
           <p className="mb-2">Base, Ink, and Unichain are all OP Stack chains, so they share the exact same canonical bridge design (Base's official Coinbase-run bridge, Ink's own, and Unichain's own) for ETH between Ethereum and each of them. Each chain's bridge contract addresses were independently verified against Optimism's own superchain-registry before being wired in.</p>
