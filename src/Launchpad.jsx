@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
 import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2 } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
-import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getProtocolStats, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
+import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
 // Slippage tolerance at/above this shows an explicit warning in the trade
 // card — a wide tolerance should be a decision the user actually sees, not
@@ -1037,14 +1037,15 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
     boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
   });
 
-  // Real sorting/filtering against real fields — marketCapUsd, createdAt,
-  // priceChange24h (already shown on TokenCard), and now lastBuyAt too:
-  // getRealLaunches attaches a genuine per-token "most recent buy"
-  // timestamp, computed server-side from a real scan over every Swap event
-  // across every Mango pool (see api/token-activity.js's fetchAllSwapLogs)
-  // — not an indexer in the full sense, but real on-chain data, not a
-  // placeholder. Tokens never bought naturally sort last (lastBuyAt
-  // defaults to 0), not hidden. Every sort chip is real now.
+  // Real sorting/filtering against real fields (marketCapUsd, createdAt,
+  // priceChange24h — the last one already comes back real from
+  // getRealLaunches, same field TokenCard already displays, so "Top
+  // gainers" costs nothing new to compute). "Recent buys" still has no
+  // real data source — that needs an indexer or event-log aggregation
+  // across every pool, neither of which exist yet. Rather than silently do
+  // nothing or fake a sort order, selecting it shows an honest message
+  // instead of a list.
+  const hasRealDataForSort = sortChip !== "Recent buys";
 
   const now = Date.now();
   const rangeMs = rangeChip === "24h" ? 24 * 3600_000 : rangeChip === "7d" ? 7 * 24 * 3600_000 : Infinity;
@@ -1058,7 +1059,6 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
   const sorted = [...searched].sort((a, b) =>
     sortChip === "Newest" ? b.createdAt - a.createdAt
       : sortChip === "Top gainers" ? b.priceChange24h - a.priceChange24h
-      : sortChip === "Recent buys" ? (b.lastBuyAt || 0) - (a.lastBuyAt || 0)
       : b.marketCapUsd - a.marketCapUsd
   );
 
@@ -1096,6 +1096,11 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
       ) : fetchError ? (
         <div className="rounded-xl p-4 text-[12px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
           Couldn't reach the Registry: {fetchError}
+        </div>
+      ) : !hasRealDataForSort ? (
+        <div className="flex flex-col items-center text-center gap-2 py-16">
+          <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{sortChip} isn't available yet</div>
+          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 240 }}>This needs trade-history data this app doesn't track yet. Try Market cap, Newest, or Top gainers instead — all three are real.</div>
         </div>
       ) : sorted.length === 0 ? (
         <div className="flex flex-col items-center text-center gap-2 py-16">
@@ -1209,19 +1214,13 @@ function ProfilePage({ onSelectToken, P }) {
 function AnalyticsPage({ P }) {
   const [range, setRange] = useState("24h");
   const [launchCount, setLaunchCount] = useState(null);
-  const [stats, setStats] = useState(null);
-  const [statsError, setStatsError] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getRealLaunches(), getProtocolStats()])
-      .then(([real, protocolStats]) => {
-        if (cancelled) return;
-        setLaunchCount(real.length);
-        setStats(protocolStats);
-      })
-      .catch((err) => { if (!cancelled) setStatsError(err?.message || String(err)); })
+    getRealLaunches()
+      .then((real) => { if (!cancelled) setLaunchCount(real.length); })
+      .catch(() => { if (!cancelled) setLaunchCount(null); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
@@ -1232,12 +1231,6 @@ function AnalyticsPage({ P }) {
     border: active ? "none" : `1px solid ${P.panelBorder}`,
     boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
   });
-
-  // Same rough ETH->USD conversion used for illustrative purposes
-  // elsewhere in this file (TokenDetailView's trade-quote estimate) — not
-  // a live price feed, clearly labeled as an estimate below.
-  const ETH_USD_PRICE = 3120;
-  const volumeEth = stats ? (range === "24h" ? stats.volume24hEth : stats.totalVolumeEth) : null;
 
   return (
     <div>
@@ -1255,32 +1248,14 @@ function AnalyticsPage({ P }) {
         <div className="text-[26px] font-mono font-bold" style={{ color: P.textPrimary }}>{loading ? "…" : launchCount ?? "—"}</div>
       </div>
 
-      {/* Real — a genuine scan over every Swap event across every Mango
-          pool on the shared PoolManager (api/token-activity.js's
-          fetchProtocolStats), not an estimate. */}
+      {/* Trading volume and total creator fees paid out have no real data
+          source yet — computing them needs either an indexer or targeted
+          event-log aggregation across every pool, neither of which exist.
+          Shown honestly as unavailable rather than faked. */}
       <div className="rounded-2xl p-4 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-        <div className="text-[12px] mb-1" style={{ color: P.textSecondary }}>Trading volume ({range})</div>
-        {loading ? (
-          <div className="text-[26px] font-mono font-bold" style={{ color: P.textPrimary }}>…</div>
-        ) : statsError ? (
-          <div className="text-[13px]" style={{ color: "#D92D20" }}>Couldn't load: {statsError}</div>
-        ) : (
-          <div>
-            <span className="text-[26px] font-mono font-bold" style={{ color: P.textPrimary }}>{fmt(volumeEth, 4)} ETH</span>
-            <span className="text-[12px] ml-1.5" style={{ color: P.textMuted }}>(~${fmt(volumeEth * ETH_USD_PRICE, 0)})</span>
-          </div>
-        )}
+        <div className="text-[12px] mb-1" style={{ color: P.textSecondary }}>Trading volume</div>
+        <div className="text-[13px]" style={{ color: P.textMuted }}>Not available yet</div>
       </div>
-
-      {/* Total creator fees paid out deliberately still says "Not
-          available yet" — the hook's real fee rate depends on each
-          trade's buy/sell side AND whether that specific pool had already
-          graduated at the moment of that trade (1%/4%/1%, per README).
-          Reconstructing that accurately per historical trade needs either
-          a dedicated fee event from the hook (not confirmed to exist) or
-          replaying graduation state trade-by-trade — guessing at it would
-          risk a confidently-wrong number, not an honest estimate, so this
-          stays unavailable rather than faked. */}
       <div className="rounded-2xl p-4 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
         <div className="text-[12px] mb-1" style={{ color: P.textSecondary }}>Total creator fees paid out</div>
         <div className="text-[13px]" style={{ color: P.textMuted }}>Not available yet</div>

@@ -205,49 +205,6 @@ export async function fetchRealHolders(tokenAddress, limit = 50) {
     .slice(0, limit);
 }
 
-// Real, protocol-wide swap scan — same Swap event, same PoolManager, as
-// fetchRealTrades above, just WITHOUT the `id` filter, so this returns
-// every swap across every pool on Robinhood Chain's shared PoolManager, not
-// just one token's. Callers must cross-reference each log's `id` (poolId)
-// against the real launches list before trusting it belongs to a Mango
-// token — a shared PoolManager can host pools this app had no part in.
-//
-// Known, honest limitation: this scans full history with no cap, same as
-// fetchRealTrades/fetchRealHolders already do — fine for a young app with
-// modest trade counts, but a real cost/latency concern once volume grows
-// enough that this becomes a lot of blocks. Worth revisiting (a persisted
-// running total instead of a full rescan every cache window) if that day
-// comes.
-//
-// No getTransaction call here — neither caller (perPoolStats below, or
-// fetchProtocolStats) reads a per-swap trader address, only ethAmount/
-// isBuy/timestamp, so fetching it was pure wasted RPC load. getBlock is
-// deduped by block number for the same reason: many swaps share a block.
-async function fetchAllSwapLogs() {
-  const logs = await client.getLogs({
-    address: ROBINHOOD_POOL_MANAGER,
-    event: SWAP_EVENT_ABI[0],
-    fromBlock: 0n,
-    toBlock: "latest",
-  });
-
-  const blockNumbers = [...new Set(logs.map((log) => log.blockNumber))];
-  const blocks = await Promise.all(blockNumbers.map((bn) => client.getBlock({ blockNumber: bn })));
-  const timestampByBlock = new Map(blockNumbers.map((bn, i) => [bn, Number(blocks[i].timestamp) * 1000]));
-
-  return logs.map((log) => {
-    const isBuy = log.args.amount0 < 0n;
-    const ethAmount = isBuy ? -log.args.amount0 : log.args.amount0;
-    return {
-      poolId: log.args.id,
-      hash: log.transactionHash,
-      isBuy,
-      ethAmount: Number(ethAmount) / 1e18,
-      timestamp: timestampByBlock.get(log.blockNumber),
-    };
-  });
-}
-
 // Powers the Explore page's launch list — moved server-side specifically
 // so this genuinely expensive fetch (a Registry read per token, plus two
 // more per token for name/symbol) happens once per cache window instead
@@ -264,39 +221,11 @@ export async function fetchRealLaunches() {
   if (count === 0n) return [];
 
   const logoRegistry = await fetchLogoRegistry();
-  // Real per-pool volume/last-buy-time, from the same swap scan used for
-  // Analytics' protocol-wide numbers — computed once here and attached to
-  // each launch, powering the "Top gainers"... i.e. "Recent buys" Explore
-  // sort chip with genuine data instead of leaving it disabled.
-  //
-  // Deliberately non-fatal: the launch list itself (name, symbol, market
-  // cap, graduation status) is the essential data this endpoint exists
-  // for. Volume/last-buy-time is a nice-to-have enrichment on top of it.
-  // If the protocol-wide swap scan is slow or errors (RPC hiccup, or this
-  // growing past what fits in one request as volume increases — see the
-  // fetchAllSwapLogs comment), that must not take the whole Explore page
-  // down with it. Losing "Recent buys" sort data is a fine degradation;
-  // losing the ability to see any tokens at all is not.
-  let perPoolStats = {};
-  try {
-    const allSwaps = await fetchAllSwapLogs();
-    for (const swap of allSwaps) {
-      const key = swap.poolId.toLowerCase();
-      if (!perPoolStats[key]) perPoolStats[key] = { volumeEth: 0, lastBuyAt: 0 };
-      perPoolStats[key].volumeEth += Math.abs(swap.ethAmount);
-      if (swap.isBuy && swap.timestamp > perPoolStats[key].lastBuyAt) {
-        perPoolStats[key].lastBuyAt = swap.timestamp;
-      }
-    }
-  } catch (err) {
-    console.error("fetchAllSwapLogs failed, serving launches without volume/lastBuyAt:", err);
-  }
   // Previously a single sequential for-loop doing up to 4 awaited RPC
   // calls per launch, one at a time, completely unguarded — any single
   // flaky/reverting call anywhere in that chain (one bad token, one RPC
-  // hiccup) threw and killed the ENTIRE launches response, same class of
-  // bug as the swap-scan issue above just in a different spot, and likely
-  // a live cause of "Failed to load launches" on its own. Now: poolIds
+  // hiccup) threw and killed the ENTIRE launches response, and was a
+  // likely live cause of "Failed to load launches" on its own. Now: poolIds
   // and launch structs are fetched in parallel and each index is wrapped
   // so one bad entry is skipped (logged, not silently lost) instead of
   // taking every other launch down with it. Parallel also meaningfully
@@ -366,8 +295,6 @@ export async function fetchRealLaunches() {
           // Fall back silently — display-only, not a hard failure.
         }
 
-        const stats = perPoolStats[poolId.toLowerCase()] || { volumeEth: 0, lastBuyAt: 0 };
-
         return {
           poolId,
           name,
@@ -378,7 +305,6 @@ export async function fetchRealLaunches() {
           graduationThresholdUsd,
           graduated,
           launchedAt,
-          stats,
         };
       } catch (err) {
         console.error(`fetchRealLaunches: skipping launch index ${i}:`, err);
@@ -390,7 +316,7 @@ export async function fetchRealLaunches() {
   const launches = [];
   for (const r of launchResults) {
     if (!r) continue;
-    const { poolId, name, symbol, creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt, stats } = r;
+    const { poolId, name, symbol, creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt } = r;
     launches.push({
       id: poolId,
       poolId,
@@ -405,37 +331,10 @@ export async function fetchRealLaunches() {
       createdAt: Number(launchedAt) * 1000,
       holders: 0,
       priceChange24h: 0,
-      volumeEth: stats.volumeEth,
-      lastBuyAt: stats.lastBuyAt,
       hue: (symbol.charCodeAt(0) || 0) % 360,
     });
   }
   return launches;
-}
-
-// Real, protocol-wide volume — powers Analytics' "Trading volume" tile,
-// which previously said "Not available yet" for lack of exactly this.
-// Deliberately does NOT attempt "Total creator fees paid out" the same
-// way: the hook's actual fee rate depends on each trade's buy/sell side
-// AND whether that specific pool had already graduated at the moment of
-// that trade (1%/4%/1% per README's own documented schedule) — real
-// historical per-trade state this endpoint doesn't have without either a
-// dedicated fee event from the hook (not confirmed to exist) or replaying
-// graduation state trade-by-trade. Reconstructing that from cumulative
-// numbers alone risks a confidently-wrong figure, not an honestly-labeled
-// estimate — so that tile stays "Not available yet" rather than guessing.
-export async function fetchProtocolStats() {
-  const allSwaps = await fetchAllSwapLogs();
-  const dayMs = 24 * 3600 * 1000;
-  const now = Date.now();
-  let totalVolumeEth = 0;
-  let volume24hEth = 0;
-  for (const swap of allSwaps) {
-    const abs = Math.abs(swap.ethAmount);
-    totalVolumeEth += abs;
-    if (now - swap.timestamp <= dayMs) volume24hEth += abs;
-  }
-  return { totalVolumeEth, volume24hEth, tradeCount: allSwaps.length };
 }
 
 export default async function handler(request, response) {
@@ -472,17 +371,7 @@ export default async function handler(request, response) {
       return response.status(200).json({ data: fresh, cached: false });
     }
 
-    if (type === "protocol-stats") {
-      const cacheKey = "cache-protocol-stats.json";
-      const cached = await readCache(cacheKey);
-      if (cached) return response.status(200).json({ data: cached, cached: true });
-
-      const fresh = await fetchProtocolStats();
-      await writeCache(cacheKey, fresh);
-      return response.status(200).json({ data: fresh, cached: false });
-    }
-
-    return response.status(400).json({ error: "type must be 'trades', 'holders', 'launches', or 'protocol-stats'" });
+    return response.status(400).json({ error: "type must be 'trades', 'holders', or 'launches'" });
   } catch (error) {
     return response.status(500).json({ error: error.message });
   }
