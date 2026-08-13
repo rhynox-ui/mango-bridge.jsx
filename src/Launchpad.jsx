@@ -4,6 +4,11 @@ import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLin
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
 import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getProtocolStats, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
+// Slippage tolerance at/above this shows an explicit warning in the trade
+// card — a wide tolerance should be a decision the user actually sees, not
+// something that quietly happens because they dragged a slider.
+const HIGH_SLIPPAGE_THRESHOLD = 15;
+
 function CopyableAddress({ address, P, label }) {
   const [copied, setCopied] = useState(false);
   const short = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "";
@@ -586,11 +591,13 @@ function TokenDetailView({ token, onBack, P, theme }) {
   // Real, user-facing slippage tolerance — buyTokenReal/sellTokenReal
   // already accept this and use it to compute a genuine on-chain price
   // limit (getTradeQuote reads the pool's live spot price and derives
-  // sqrtPriceLimitX96 from it), but until now the UI never surfaced it or
-  // let anyone change it, so every trade silently used the function's
-  // hardcoded 5% default with no visibility. 5% stays the default; this
-  // just makes it real and adjustable instead of invisible.
-  const [slippagePercent, setSlippagePercent] = useState(5);
+  // sqrtPriceLimitX96 from it). Default raised from 5% to 10%: these are
+  // thin, pre-graduation bonding-curve pools, where a single trade can
+  // move the price enough that 5% tolerance means frequent, confusing
+  // reverts rather than real protection. A visible warning kicks in once
+  // tolerance goes to 15% or above (HIGH_SLIPPAGE_THRESHOLD below) so a
+  // wide tolerance is a decision the user actually sees, not a silent one.
+  const [slippagePercent, setSlippagePercent] = useState(10);
   const [customSlippage, setCustomSlippage] = useState("");
   const [showSlippageEditor, setShowSlippageEditor] = useState(false);
   const { address, isConnected } = useAccount();
@@ -859,13 +866,13 @@ function TokenDetailView({ token, onBack, P, theme }) {
       <div className="rounded-2xl p-3.5 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
         <div className="flex items-center justify-between mb-2">
           <span className="text-[10.5px]" style={{ color: P.textMuted }}>Slippage tolerance</span>
-          <button onClick={() => setShowSlippageEditor((v) => !v)} className="text-[11.5px] font-mono font-semibold" style={{ color: P.textPrimary }}>
+          <button onClick={() => setShowSlippageEditor((v) => !v)} className="text-[11.5px] font-mono font-semibold" style={{ color: slippagePercent >= HIGH_SLIPPAGE_THRESHOLD ? "#8A5A00" : P.textPrimary }}>
             {slippagePercent}% {showSlippageEditor ? "▴" : "▾"}
           </button>
         </div>
         {showSlippageEditor && (
-          <div className="flex gap-1.5 mb-2.5">
-            {[0.5, 1, 5].map((pct) => (
+          <div className="flex gap-1.5 mb-2" style={{ marginBottom: slippagePercent >= HIGH_SLIPPAGE_THRESHOLD ? 8 : 10 }}>
+            {[5, 10, 15].map((pct) => (
               <button
                 key={pct}
                 onClick={() => { setSlippagePercent(pct); setCustomSlippage(""); }}
@@ -893,6 +900,12 @@ function TokenDetailView({ token, onBack, P, theme }) {
                 style={{ color: P.textPrimary }}
               />
             </div>
+          </div>
+        )}
+        {showSlippageEditor && slippagePercent >= HIGH_SLIPPAGE_THRESHOLD && (
+          <div className="flex items-start gap-1.5 mb-2.5 px-2.5 py-2 rounded-lg text-[10.5px]" style={{ background: "#FCEFD9", border: "1px solid #F0D9A8", color: "#8A5A00" }}>
+            <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+            <span>High tolerance — at {slippagePercent}%, your trade can execute at a noticeably worse price than the pool's current price before it's rejected. Lower this if you want tighter protection.</span>
           </div>
         )}
         <div className="flex rounded-xl p-1 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>

@@ -222,7 +222,7 @@ function computePoolId(tokenAddress) {
 // zeroForOne=true pushes price down) has been reasoned through carefully,
 // but has not yet been confirmed by an actual real trade — that
 // confirmation only comes from trying it.
-export async function getTradeQuote({ tokenAddress, side, slippagePercent = 5 }) {
+export async function getTradeQuote({ tokenAddress, side, slippagePercent = 10 }) {
   const poolId = computePoolId(tokenAddress);
   const slot0 = await readContract(config, {
     address: STATE_VIEW_ADDRESS,
@@ -251,7 +251,7 @@ export async function getTradeQuote({ tokenAddress, side, slippagePercent = 5 })
 // separate transaction before the actual swap, same standard pattern every
 // DEX uses.
 // ============================================================================
-export async function buyTokenReal({ tokenAddress, ethAmount, recipient, slippagePercent = 5 }) {
+export async function buyTokenReal({ tokenAddress, ethAmount, recipient, slippagePercent = 10 }) {
   const { sqrtPriceLimitX96 } = await getTradeQuote({ tokenAddress, side: "buy", slippagePercent });
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600); // 10 minutes out
   const valueWei = BigInt(Math.round(parseFloat(ethAmount) * 1e18));
@@ -268,7 +268,7 @@ export async function buyTokenReal({ tokenAddress, ethAmount, recipient, slippag
   return { hash, receipt };
 }
 
-export async function sellTokenReal({ tokenAddress, tokenAmountWei, recipient, slippagePercent = 5 }) {
+export async function sellTokenReal({ tokenAddress, tokenAmountWei, recipient, slippagePercent = 10 }) {
   const { sqrtPriceLimitX96 } = await getTradeQuote({ tokenAddress, side: "sell", slippagePercent });
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
 
