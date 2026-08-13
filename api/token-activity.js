@@ -290,53 +290,90 @@ export async function fetchRealLaunches() {
   } catch (err) {
     console.error("fetchAllSwapLogs failed, serving launches without volume/lastBuyAt:", err);
   }
+  // Previously a single sequential for-loop doing up to 4 awaited RPC
+  // calls per launch, one at a time, completely unguarded — any single
+  // flaky/reverting call anywhere in that chain (one bad token, one RPC
+  // hiccup) threw and killed the ENTIRE launches response, same class of
+  // bug as the swap-scan issue above just in a different spot, and likely
+  // a live cause of "Failed to load launches" on its own. Now: poolIds
+  // and launch structs are fetched in parallel and each index is wrapped
+  // so one bad entry is skipped (logged, not silently lost) instead of
+  // taking every other launch down with it. Parallel also meaningfully
+  // cuts wall-clock time, which matters against a serverless function's
+  // execution time limit as the number of real launches grows.
+  const indices = Array.from({ length: Number(count) }, (_, i) => BigInt(i));
+  const launchResults = await Promise.all(
+    indices.map(async (i) => {
+      try {
+        const poolId = await client.readContract({
+          address: REGISTRY_ADDRESS,
+          abi: REGISTRY_ABI,
+          functionName: "allPoolIds",
+          args: [i],
+        });
+        const launchRaw = await client.readContract({
+          address: REGISTRY_ADDRESS,
+          abi: REGISTRY_ABI,
+          functionName: "launches",
+          args: [poolId],
+        });
+        const [creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt] = launchRaw;
+
+        // Real check, not a hardcoded list — skip anything whose actual
+        // pool isn't using the current hook. This automatically stays
+        // correct through future hook upgrades too, without needing this
+        // list maintained by hand each time.
+        if (computeCurrentHookPoolId(tokenAddress).toLowerCase() !== poolId.toLowerCase()) return null;
+
+        // Separate, explicit exclusion — these two are confirmed to be on
+        // the current Hook (verified via cast keccak against their real
+        // poolId), yet failed a real sell attempt. Root cause unclear —
+        // possibly a timing issue with an earlier Router version, possibly
+        // something else — deliberately not chased further tonight.
+        // Excluded by address specifically, not by the Hook-based rule
+        // above, since that rule genuinely doesn't apply to these two.
+        const KNOWN_PROBLEMATIC_TOKENS = new Set([
+          "0x353f7e2163a73bef1c996c0c58f2f11564838bbe",
+          "0x79f9ce00b64b96aac8f53c32d976b0e6a38a1e86",
+        ]);
+        if (KNOWN_PROBLEMATIC_TOKENS.has(tokenAddress.toLowerCase())) return null;
+
+        let name = "Unknown";
+        let symbol = "???";
+        try {
+          [name, symbol] = await Promise.all([
+            client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "name" }),
+            client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
+          ]);
+        } catch {
+          // Fall back silently — display-only, not a hard failure.
+        }
+
+        const stats = perPoolStats[poolId.toLowerCase()] || { volumeEth: 0, lastBuyAt: 0 };
+
+        return {
+          poolId,
+          name,
+          symbol,
+          creator,
+          tokenAddress,
+          cumulativeProtocolFeesUsd,
+          graduationThresholdUsd,
+          graduated,
+          launchedAt,
+          stats,
+        };
+      } catch (err) {
+        console.error(`fetchRealLaunches: skipping launch index ${i}:`, err);
+        return null;
+      }
+    })
+  );
+
   const launches = [];
-
-  for (let i = 0n; i < count; i++) {
-    const poolId = await client.readContract({
-      address: REGISTRY_ADDRESS,
-      abi: REGISTRY_ABI,
-      functionName: "allPoolIds",
-      args: [i],
-    });
-    const launchRaw = await client.readContract({
-      address: REGISTRY_ADDRESS,
-      abi: REGISTRY_ABI,
-      functionName: "launches",
-      args: [poolId],
-    });
-    const [creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt] = launchRaw;
-
-    // Real check, not a hardcoded list — skip anything whose actual pool
-    // isn't using the current hook. This automatically stays correct
-    // through future hook upgrades too, without needing this list
-    // maintained by hand each time.
-    if (computeCurrentHookPoolId(tokenAddress).toLowerCase() !== poolId.toLowerCase()) continue;
-
-    // Separate, explicit exclusion — these two are confirmed to be on the
-    // current Hook (verified via cast keccak against their real poolId),
-    // yet failed a real sell attempt. Root cause unclear — possibly a
-    // timing issue with an earlier Router version, possibly something
-    // else — deliberately not chased further tonight. Excluded by
-    // address specifically, not by the Hook-based rule above, since
-    // that rule genuinely doesn't apply to these two.
-    const KNOWN_PROBLEMATIC_TOKENS = new Set([
-      "0x353f7e2163a73bef1c996c0c58f2f11564838bbe",
-      "0x79f9ce00b64b96aac8f53c32d976b0e6a38a1e86",
-    ]);
-    if (KNOWN_PROBLEMATIC_TOKENS.has(tokenAddress.toLowerCase())) continue;
-
-    let name = "Unknown";
-    let symbol = "???";
-    try {
-      name = await client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "name" });
-      symbol = await client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" });
-    } catch {
-      // Fall back silently — display-only, not a hard failure.
-    }
-
-    const stats = perPoolStats[poolId.toLowerCase()] || { volumeEth: 0, lastBuyAt: 0 };
-
+  for (const r of launchResults) {
+    if (!r) continue;
+    const { poolId, name, symbol, creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt, stats } = r;
     launches.push({
       id: poolId,
       poolId,
