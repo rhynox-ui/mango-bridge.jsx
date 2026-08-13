@@ -25,7 +25,7 @@ Mango Protocol is a permissionless infrastructure suite for moving assets across
 - Unichain
 - X Layer
 
-The last eight are native-asset-only for now (ETH, AVAX, HYPE, XPL, and OKB respectively) — every route touching one of them goes through Relay, since no canonical bridge or CCTP integration has been verified for them yet. Chain id / native currency / block explorer for each came directly from `wagmi/chains`' own maintained definitions, not hand-typed.
+The last eight are native-asset-only for now (ETH, AVAX, HYPE, XPL, and OKB respectively) — no CCTP integration has been verified for any of them yet. Ink and Unichain additionally have a real OP Stack canonical bridge for ETH (see below); Arbitrum One, Avalanche, Abstract, HyperEVM, Plasma, and X Layer route through Relay only. Chain id / native currency / block explorer for each came directly from `wagmi/chains`' own maintained definitions, not hand-typed.
 
 ## Supported assets
 
@@ -40,10 +40,10 @@ For each transfer, the app picks the safest available mechanism for that specifi
 | Route | Protocol | Mechanism |
 |---|---|---|
 | Ethereum ↔ Base, USDC | [Circle CCTP](https://developers.circle.com/cctp) | Native burn-and-mint. Audited by ChainSecurity and OtterSec. |
-| Ethereum ↔ Base, ETH | [OP Stack canonical bridge](https://docs.base.org/base-chain/differences/eth-bridging) | Deposits are fast; withdrawals require Base's 7-day fraud-proof challenge period unless routed through Relay instead (see below). |
+| Ethereum ↔ Base/Ink/Unichain, ETH | [OP Stack canonical bridge](https://docs.base.org/base-chain/differences/eth-bridging) | Deposits are fast; withdrawals require a 7-day fraud-proof challenge period unless routed through Relay instead (see below). Ink and Unichain use their own bridge contracts, not Base's — each independently verified against Optimism's own superchain-registry before being wired in. |
 | Ethereum ↔ Robinhood Chain, ETH/USDC | [Arbitrum canonical bridge](https://docs.arbitrum.io/) | Same deposit/withdrawal pattern as Base — Robinhood Chain is built on Arbitrum Orbit. |
 | Ethereum ↔ BNB Chain, ETH | [Wormhole Token Bridge](https://wormhole.com/docs) | Lock-and-mint via guardian attestation, both directions. Destination asset is Wormhole-wrapped ETH, not native BNB. |
-| Base/Robinhood Chain → Ethereum, ETH; cross-asset swaps; everything else with a verified contract address on both sides (BNB, USDT, USDC, USDG, USDT0 across chains; Base↔Robinhood Chain direct; Stable); every Solana-involving route, both directions; every route touching Arbitrum One, Avalanche, Abstract, HyperEVM, Ink, Plasma, Unichain, or X Layer (native asset only) | [Relay Protocol](https://docs.relay.link) | Solver network — different trust model than the routes above (you're trusting Relay's solvers to fulfill, not a canonical audited bridge), but non-custodial and typically settles in under a minute. Preferred over the 7-day canonical withdrawal path where available. Solana-sourced transfers execute through Relay's own SDK, using Solana's native transaction format — a genuinely separate code path from the EVM-to-EVM routes above. |
+| Base/Ink/Unichain/Robinhood Chain → Ethereum, ETH; cross-asset swaps; everything else with a verified contract address on both sides (BNB, USDT, USDC, USDG, USDT0 across chains; Base↔Robinhood Chain direct; Stable); every Solana-involving route, both directions; every route touching Arbitrum One, Avalanche, Abstract, HyperEVM, Plasma, or X Layer (native asset only) | [Relay Protocol](https://docs.relay.link) | Solver network — different trust model than the routes above (you're trusting Relay's solvers to fulfill, not a canonical audited bridge), but non-custodial and typically settles in under a minute. Preferred over the 7-day canonical withdrawal path where available, including for Ink and Unichain. Solana-sourced transfers execute through Relay's own SDK, using Solana's native transaction format — a genuinely separate code path from the EVM-to-EVM routes above. |
 
 **A pair only routes through Relay if this app has an independently verified contract address for the asset on both chains.** No addresses are ever guessed — an unverified combination has no route offered, and the app checks live before you confirm rather than risk sending funds to the wrong contract.
 

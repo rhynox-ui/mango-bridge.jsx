@@ -671,23 +671,27 @@ function StatusPill({ status }) {
 
 const CCTP_STEP_INDEX = { network: 0, approve: 0, fee: 1, burn: 2, attest: 3, "network-dest": 4, mint: 4 };
 
-function getOpDepositSteps() {
+// l2Key names WHICH OP Stack chain this deposit targets — Base, Ink, or
+// Unichain all speak the exact same canonical-bridge protocol, just with
+// different L1 contract addresses (see opbridge.js), so one generic step
+// list covers all three; only the displayed chain name changes.
+function getOpDepositSteps(l2Key = "base") {
   return [
     { key: "fee", label: "Sending protocol fee" },
     { key: "build", label: "Preparing deposit" },
     { key: "deposit", label: `Depositing on ${CHAINS.ethereum.name}` },
     { key: "l1-confirm", label: `Confirming on ${CHAINS.ethereum.name}` },
-    { key: "l2-confirm", label: `Crediting on ${CHAINS.base.name}` },
+    { key: "l2-confirm", label: `Crediting on ${CHAINS[l2Key].name}` },
   ];
 }
 const OP_DEPOSIT_STEP_INDEX = { fee: 0, build: 1, deposit: 2, "l1-confirm": 3, "l2-confirm": 4 };
 
-function getOpWithdrawInitiateSteps() {
+function getOpWithdrawInitiateSteps(l2Key = "base") {
   return [
     { key: "fee", label: "Sending protocol fee" },
     { key: "build", label: "Preparing withdrawal" },
-    { key: "withdraw", label: `Submitting withdrawal on ${CHAINS.base.name}` },
-    { key: "l2-confirm", label: `Confirming on ${CHAINS.base.name}` },
+    { key: "withdraw", label: `Submitting withdrawal on ${CHAINS[l2Key].name}` },
+    { key: "l2-confirm", label: `Confirming on ${CHAINS[l2Key].name}` },
   ];
 }
 const OP_WITHDRAW_INITIATE_STEP_INDEX = { fee: 0, build: 1, withdraw: 2, "l2-confirm": 3 };
@@ -752,20 +756,28 @@ function getRelaySteps() {
 }
 const RELAY_STEP_INDEX = { build: 0, deposit: 1, fill: 2 };
 
+// OP Stack chains this app has a real, address-verified canonical bridge
+// for — Base originally, plus Ink and Unichain (both cross-checked against
+// Optimism's own superchain-registry; see opbridge.js). Every other OP
+// Stack-family chain added to this app (Abstract is ZK Stack, X Layer is
+// Polygon CDK — neither is actually OP Stack) stays relay-only until its
+// own canonical bridge is independently verified the same way.
+const OP_STACK_BRIDGE_CHAINS = ["base", "ink", "unichain"];
+
 function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
   const sameAsset = fromAssetSymbol === toAssetSymbol;
   if (sameAsset && isCctpSupportedPair(fromKey, toKey) && fromAssetSymbol === "USDC") return "cctp";
-  if (sameAsset && fromKey === "ethereum" && toKey === "base" && fromAssetSymbol === "ETH") return "op-deposit";
+  if (sameAsset && fromKey === "ethereum" && OP_STACK_BRIDGE_CHAINS.includes(toKey) && fromAssetSymbol === "ETH") return "op-deposit";
   if (sameAsset && fromKey === "ethereum" && toKey === "robinhood" && (fromAssetSymbol === "ETH" || fromAssetSymbol === "USDC")) return "arb-deposit";
   if (sameAsset && fromKey === "ethereum" && toKey === "bnb" && fromAssetSymbol === "ETH") return "wormhole";
-  // Withdrawal directions (Base/Robinhood Chain -> Ethereum) are ~7 days via
-  // the native canonical bridge, by fraud-proof design — that's not
-  // "fixable," it's how the security model works. But Relay can move ETH
-  // through this same pair in under a minute via its solver network, so
-  // prefer that when available and fall back to the slow canonical route
-  // only for what Relay can't handle.
-  if (sameAsset && fromKey === "base" && toKey === "ethereum" && fromAssetSymbol === "ETH" && canRelayHandle(fromKey, toKey, fromAssetSymbol, toAssetSymbol)) return "relay";
-  if (sameAsset && fromKey === "base" && toKey === "ethereum" && fromAssetSymbol === "ETH") return "op-withdraw";
+  // Withdrawal directions (Base/Ink/Unichain/Robinhood Chain -> Ethereum)
+  // are ~7 days via the native canonical bridge, by fraud-proof design —
+  // that's not "fixable," it's how the security model works. But Relay can
+  // move ETH through this same pair in under a minute via its solver
+  // network, so prefer that when available and fall back to the slow
+  // canonical route only for what Relay can't handle.
+  if (sameAsset && OP_STACK_BRIDGE_CHAINS.includes(fromKey) && toKey === "ethereum" && fromAssetSymbol === "ETH" && canRelayHandle(fromKey, toKey, fromAssetSymbol, toAssetSymbol)) return "relay";
+  if (sameAsset && OP_STACK_BRIDGE_CHAINS.includes(fromKey) && toKey === "ethereum" && fromAssetSymbol === "ETH") return "op-withdraw";
   if (sameAsset && fromKey === "robinhood" && toKey === "ethereum" && (fromAssetSymbol === "ETH" || fromAssetSymbol === "USDC") && canRelayHandle(fromKey, toKey, fromAssetSymbol, toAssetSymbol)) return "relay";
   if (sameAsset && fromKey === "robinhood" && toKey === "ethereum" && (fromAssetSymbol === "ETH" || fromAssetSymbol === "USDC")) return "arb-withdraw";
   if (sameAsset && fromKey === "bnb" && toKey === "ethereum" && fromAssetSymbol === "ETH") return "wormhole-reverse";
@@ -784,9 +796,13 @@ function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
 function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received, devFeeAmount, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated }) {
   const kind = getTransferKind(from, to, asset, toAsset);
   const isReal = kind !== "simulated";
+  // Which OP Stack chain this op-deposit/op-withdraw actually targets —
+  // "kind" alone can't say, since Base/Ink/Unichain all produce the same
+  // kind string. Deposits go TO the L2 (to), withdrawals come FROM it (from).
+  const opL2Key = kind === "op-deposit" ? to : kind === "op-withdraw" ? from : "base";
   const steps = kind === "cctp" ? CCTP_STEPS
-    : kind === "op-deposit" ? getOpDepositSteps()
-    : kind === "op-withdraw" ? getOpWithdrawInitiateSteps()
+    : kind === "op-deposit" ? getOpDepositSteps(opL2Key)
+    : kind === "op-withdraw" ? getOpWithdrawInitiateSteps(opL2Key)
     : kind === "arb-deposit" ? (asset === "USDC" ? getArbErc20DepositSteps() : getArbDepositSteps())
     : kind === "arb-withdraw" ? getArbWithdrawInitiateSteps()
     : kind === "wormhole" ? getWormholeSteps()
@@ -828,7 +844,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         onComplete(result.burnHash);
       } else if (kind === "op-deposit") {
         const result = await runOpDeposit({
-          account, amountHuman: amount,
+          account, amountHuman: amount, l2Key: opL2Key,
           onStep: (key) => { if (key !== "done") setStepIndex(OP_DEPOSIT_STEP_INDEX[key] ?? 0); },
         });
         setRealBurnHash(result.l1Hash);
@@ -838,7 +854,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         onComplete(result.l1Hash);
       } else if (kind === "op-withdraw") {
         const result = await initiateOpWithdrawal({
-          account, amountHuman: amount,
+          account, amountHuman: amount, l2Key: opL2Key,
           onStep: (step) => {
             if (typeof step === "object" && step.key === "hash-known") {
               setRealBurnHash(step.l2TxHash);
@@ -850,7 +866,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         setRealBurnHash(result.l2TxHash);
         setStepIndex(steps.length);
         setPhase("withdrawal-initiated");
-        onWithdrawalInitiated?.({ l2TxHash: result.l2TxHash, l2Timestamp: result.l2Timestamp, amount, account, chainType: "op" });
+        onWithdrawalInitiated?.({ l2TxHash: result.l2TxHash, l2Timestamp: result.l2Timestamp, amount, account, chainType: "op", l2Key: opL2Key });
       } else if (kind === "arb-deposit") {
         const depositFn = asset === "USDC" ? runArbErc20Deposit : runArbDeposit;
         const stepIndexMap = asset === "USDC" ? ARB_ERC20_DEPOSIT_STEP_INDEX : ARB_DEPOSIT_STEP_INDEX;
@@ -1034,8 +1050,8 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
             <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: isReal ? `${LIME}14` : "#1C212A", border: `1px solid ${isReal ? LIME + "40" : "#262C36"}`, color: isReal ? LIME : "#8B95A1" }}>
               <AlertTriangle size={14} className="shrink-0 mt-0.5" color={isReal ? LIME : "#F0B84D"} />
               {kind === "cctp" && "Real testnet transfer via Circle's CCTP. You'll be asked to approve and sign transactions."}
-              {kind === "op-deposit" && "Real testnet deposit via Base's official bridge contract. One transaction to sign."}
-              {kind === "op-withdraw" && "This only starts a real withdrawal. Base requires a 7-day challenge period — you'll need to come back later to prove and finalize it from the Withdrawals tab."}
+              {kind === "op-deposit" && `Real testnet deposit via ${CHAINS[opL2Key].name}'s official bridge contract. One transaction to sign.`}
+              {kind === "op-withdraw" && `This only starts a real withdrawal. ${CHAINS[opL2Key].name} requires a 7-day challenge period — you'll need to come back later to prove and finalize it from the Withdrawals tab.`}
               {kind === "arb-deposit" && asset === "USDC" && "Real testnet deposit via Robinhood Chain's Arbitrum bridge (standard ERC-20 gateway). This produces a bridged USDC representation — not CCTP-native USDC, and not Robinhood Chain's real native USDG stablecoin. Two transactions to sign (approve + deposit)."}
               {kind === "arb-deposit" && asset === "ETH" && "Real testnet deposit via Robinhood Chain's official Arbitrum bridge. One transaction to sign."}
               {kind === "arb-withdraw" && "This only starts a real withdrawal. Robinhood Chain requires a ~7-day challenge period — you'll need to come back later to finalize it from the Withdrawals tab. This integration is newer and less battle-tested than the Base one — start with a small amount."}
@@ -1239,13 +1255,23 @@ const WITHDRAWAL_STATUS_LABEL = {
   finalized: "Finalized",
 };
 
-const CHAIN_TYPE_LABEL = { op: "Base → Ethereum", arb: "Robinhood Chain → Ethereum" };
+// Real, resolved label for any OP Stack withdrawal — covers Base, Ink, and
+// Unichain (and stays correct automatically if another OP Stack chain's
+// canonical bridge is added later) rather than a fixed op/arb pair. Old
+// persisted withdrawal records predate l2Key and won't have one; those
+// default to "base", which is what they always meant before this existed.
+function opStackWithdrawalLabel(l2Key) {
+  const key = l2Key || "base";
+  return `${CHAINS[key]?.name || "Base"} → ${CHAINS.ethereum.name}`;
+}
+const CHAIN_TYPE_LABEL = { arb: "Robinhood Chain → Ethereum" };
 
 function WithdrawalRow({ w, onUpdate }) {
   const [checking, setChecking] = useState(false);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState("");
   const isArb = w.chainType === "arb";
+  const l2Key = w.l2Key || "base";
 
   async function checkStatus() {
     setChecking(true);
@@ -1253,7 +1279,7 @@ function WithdrawalRow({ w, onUpdate }) {
     try {
       const result = isArb
         ? await getArbWithdrawalStatus({ l2TxHash: w.l2TxHash })
-        : await getOpWithdrawalStatus({ l2TxHash: w.l2TxHash, l2Timestamp: w.l2Timestamp });
+        : await getOpWithdrawalStatus({ l2TxHash: w.l2TxHash, l2Timestamp: w.l2Timestamp, l2Key });
       onUpdate({ ...w, status: result.status, etaSeconds: result.etaSeconds, lastChecked: Date.now() });
     } catch (err) {
       setError(err?.message || String(err));
@@ -1266,7 +1292,7 @@ function WithdrawalRow({ w, onUpdate }) {
     setActing(true);
     setError("");
     try {
-      const { proveHash } = await proveOpWithdrawal({ l2TxHash: w.l2TxHash, l2Timestamp: w.l2Timestamp });
+      const { proveHash } = await proveOpWithdrawal({ l2TxHash: w.l2TxHash, l2Timestamp: w.l2Timestamp, l2Key });
       onUpdate({ ...w, proveHash, status: "waiting-to-finalize" });
     } catch (err) {
       setError(err?.message || String(err));
@@ -1281,7 +1307,7 @@ function WithdrawalRow({ w, onUpdate }) {
     try {
       const { finalizeHash } = isArb
         ? await finalizeArbWithdrawal({ l2TxHash: w.l2TxHash })
-        : await finalizeOpWithdrawal({ l2TxHash: w.l2TxHash });
+        : await finalizeOpWithdrawal({ l2TxHash: w.l2TxHash, l2Key });
       onUpdate({ ...w, finalizeHash, status: "finalized" });
     } catch (err) {
       setError(err?.message || String(err));
@@ -1295,7 +1321,7 @@ function WithdrawalRow({ w, onUpdate }) {
   return (
     <div className="px-4 py-3.5" style={{ borderTop: "1px solid #1A1E26" }}>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[13.5px] font-medium" style={{ color: "#F2F4F7" }}>{w.amount} ETH — {CHAIN_TYPE_LABEL[w.chainType] || "Base → Ethereum"}</span>
+        <span className="text-[13.5px] font-medium" style={{ color: "#F2F4F7" }}>{w.amount} ETH — {isArb ? CHAIN_TYPE_LABEL.arb : opStackWithdrawalLabel(l2Key)}</span>
         <span className="text-[11px]" style={{ color: "#4A515D" }}>{timeAgo(w.initiatedAt)}</span>
       </div>
       <div className="text-[12px] mb-2.5" style={{ color: "#8B95A1" }}>
@@ -1324,7 +1350,10 @@ function WithdrawalRow({ w, onUpdate }) {
 
 function TrackByHashForm({ onTracked }) {
   const [hash, setHash] = useState("");
-  const [chainType, setChainType] = useState("op");
+  // "arb" for Robinhood Chain, otherwise this IS the l2Key directly
+  // (base/ink/unichain) — trackWithdrawalByHash needs to know which OP
+  // Stack chain's client to look the transaction up against.
+  const [chainType, setChainType] = useState("base");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -1336,8 +1365,8 @@ function TrackByHashForm({ onTracked }) {
         const { l2TxHash } = await trackArbWithdrawalByHash({ l2TxHash: hash.trim() });
         onTracked({ id: Date.now(), l2TxHash, amount: "?", initiatedAt: Date.now(), status: "waiting-to-finalize", chainType: "arb" });
       } else {
-        const { l2TxHash, l2Timestamp } = await trackWithdrawalByHash({ l2TxHash: hash.trim() });
-        onTracked({ id: Date.now(), l2TxHash, l2Timestamp, amount: "?", initiatedAt: Date.now(), status: "waiting-to-prove", chainType: "op" });
+        const { l2TxHash, l2Timestamp } = await trackWithdrawalByHash({ l2TxHash: hash.trim(), l2Key: chainType });
+        onTracked({ id: Date.now(), l2TxHash, l2Timestamp, amount: "?", initiatedAt: Date.now(), status: "waiting-to-prove", chainType: "op", l2Key: chainType });
       }
       setHash("");
     } catch (err) {
@@ -1352,8 +1381,8 @@ function TrackByHashForm({ onTracked }) {
       <div className="text-[12.5px] font-medium mb-2" style={{ color: "#8B95A1" }}>
         Had a withdrawal succeed on-chain but not show up here? Track it by hash:
       </div>
-      <div className="flex gap-1 mb-2 p-1 rounded-lg w-fit" style={{ background: "#0E1116" }}>
-        {[{ id: "op", label: "Base" }, { id: "arb", label: "Robinhood Chain" }].map((c) => (
+      <div className="flex gap-1 mb-2 p-1 rounded-lg w-fit flex-wrap" style={{ background: "#0E1116" }}>
+        {[{ id: "base", label: "Base" }, { id: "ink", label: "Ink" }, { id: "unichain", label: "Unichain" }, { id: "arb", label: "Robinhood Chain" }].map((c) => (
           <button key={c.id} onClick={() => setChainType(c.id)} className="px-3 py-1 rounded-md text-[11.5px] font-medium" style={{ background: chainType === c.id ? "#1E232B" : "transparent", color: chainType === c.id ? "#F2F4F7" : "#5B6472" }}>
             {c.label}
           </button>
@@ -1640,7 +1669,7 @@ function DocsModal({ onClose, P }) {
             <li>Unichain</li>
             <li>X Layer</li>
           </ul>
-          <p className="mt-2">The eight chains above are currently native-asset-only (ETH, AVAX, HYPE, XPL, OKB respectively) — bridging routes through Relay, since no canonical bridge or CCTP integration exists for them yet in this app.</p>
+          <p className="mt-2">The eight chains above are native-asset-only (ETH, AVAX, HYPE, XPL, OKB respectively) — no CCTP integration exists for any of them yet. Ink and Unichain additionally have a real OP Stack canonical bridge for ETH, same protocol as Base (see "Supported Protocols" below); Arbitrum One, Avalanche, Abstract, HyperEVM, Plasma, and X Layer route through Relay only.</p>
         </DocSection>
 
         <DocSection title="Supported Protocols" P={P}>
@@ -1664,13 +1693,13 @@ function DocsModal({ onClose, P }) {
           </ul>
           <p className="mb-3"><span className="font-medium" style={{ color: P.textPrimary }}>Supported route:</span> Ethereum ↔ Base — Asset: USDC</p>
 
-          <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Base Bridge (OP Stack)</p>
-          <p className="mb-2">The Base Bridge is Coinbase's official canonical bridge for transferring ETH and supported assets between Ethereum and Base.</p>
+          <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>OP Stack canonical bridge — Base, Ink, Unichain</p>
+          <p className="mb-2">Base, Ink, and Unichain are all OP Stack chains, so they share the exact same canonical bridge design (Base's official Coinbase-run bridge, Ink's own, and Unichain's own) for ETH between Ethereum and each of them. Each chain's bridge contract addresses were independently verified against Optimism's own superchain-registry before being wired in.</p>
           <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Deposit Flow</p>
-          <p className="mb-2 font-mono text-[12px]">User → Ethereum Bridge Contract → Base Sequencer → Base Network</p>
+          <p className="mb-2 font-mono text-[12px]">User → Ethereum Bridge Contract → L2 Sequencer → L2 Network</p>
           <p className="mb-2">Deposits typically finalize within minutes.</p>
           <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Withdrawal Flow</p>
-          <p className="mb-2 font-mono text-[12px]">Base → Withdrawal Proof → 7-Day Challenge Period → Ethereum Release</p>
+          <p className="mb-2 font-mono text-[12px]">L2 → Withdrawal Proof → 7-Day Challenge Period → Ethereum Release</p>
           <p className="mb-3">The challenge period protects users against fraudulent state transitions. Where a faster route exists via Relay (below), Mango Bridge prefers it for this direction and reserves the canonical 7-day path as the fallback.</p>
 
           <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Arbitrum Canonical Bridge</p>
@@ -1735,7 +1764,7 @@ function DocsModal({ onClose, P }) {
                 </tr>
               </thead>
               <tbody>
-                {[["Circle CCTP", "Circle Attestation"], ["Base Bridge", "Ethereum + OP Stack"], ["Arbitrum Bridge", "Ethereum + Fraud Proofs"], ["Wormhole", "Guardian Network"], ["Relay Protocol", "Solver Network"]].map((row) => (
+                {[["Circle CCTP", "Circle Attestation"], ["OP Stack Bridge (Base, Ink, Unichain)", "Ethereum + Fraud Proofs"], ["Arbitrum Bridge", "Ethereum + Fraud Proofs"], ["Wormhole", "Guardian Network"], ["Relay Protocol", "Solver Network"]].map((row) => (
                   <tr key={row[0]} style={{ borderTop: `1px solid ${P.panelBorder}` }}>
                     <td className="px-3 py-2">{row[0]}</td>
                     <td className="px-3 py-2">{row[1]}</td>
@@ -1792,7 +1821,7 @@ function DocsModal({ onClose, P }) {
           <p className="mb-2">Mango routes transfers across Ethereum, Base, BNB Chain, Robinhood Chain, Stable, Solana, Arbitrum One, Avalanche, Abstract, HyperEVM, Ink, Plasma, Unichain, and X Layer, automatically selecting the safest available path for a given pair:</p>
           <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
             <li><span className="font-medium" style={{ color: P.textPrimary }}>Circle CCTP</span> for native USDC between Ethereum and Base — no wrapped tokens, burn-and-mint via Circle's own attestation service</li>
-            <li><span className="font-medium" style={{ color: P.textPrimary }}>OP Stack canonical bridge</span> for ETH between Ethereum and Base</li>
+            <li><span className="font-medium" style={{ color: P.textPrimary }}>OP Stack canonical bridge</span> for ETH between Ethereum and each of Base, Ink, and Unichain</li>
             <li><span className="font-medium" style={{ color: P.textPrimary }}>Arbitrum canonical bridge</span> for ETH and USDC between Ethereum and Robinhood Chain</li>
             <li><span className="font-medium" style={{ color: P.textPrimary }}>Wormhole</span> for ETH between Ethereum and BNB Chain, both directions</li>
             <li><span className="font-medium" style={{ color: P.textPrimary }}>Relay Protocol</span> for everything else with a verified contract on both sides — cross-asset swaps, any pair without a canonical bridge, and every Solana-involving route (both directions, with its own separate wallet requirement — see "Solana Support" above)</li>
@@ -2213,8 +2242,8 @@ export default function MangoBridge() {
   }
   function setMax() { if (spendableBalance !== null) setAmount(String(spendableBalance)); }
 
-  function handleWithdrawalInitiated({ l2TxHash, l2Timestamp, amount: amt, account: acct, chainType }) {
-    const entry = { id: Date.now(), l2TxHash, l2Timestamp, amount: amt, account: acct, initiatedAt: Date.now(), chainType, status: chainType === "arb" ? "waiting-to-finalize" : "waiting-to-prove" };
+  function handleWithdrawalInitiated({ l2TxHash, l2Timestamp, amount: amt, account: acct, chainType, l2Key }) {
+    const entry = { id: Date.now(), l2TxHash, l2Timestamp, amount: amt, account: acct, initiatedAt: Date.now(), chainType, l2Key, status: chainType === "arb" ? "waiting-to-finalize" : "waiting-to-prove" };
     const next = [entry, ...withdrawals];
     setWithdrawals(next);
     saveJSON("mango:withdrawals", next);
