@@ -326,7 +326,7 @@ function ChainIcon({ id, size }) {
   return robinhoodFallback;
 }
 
-function ChainBadge({ id, size = 18 }) {
+export function ChainBadge({ id, size = 18 }) {
   const c = CHAINS[id];
   if (!c) {
     // Defensive fallback: id could be a chain that no longer exists (e.g. a
