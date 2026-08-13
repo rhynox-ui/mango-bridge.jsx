@@ -205,6 +205,59 @@ export async function fetchRealHolders(tokenAddress, limit = 50) {
     .slice(0, limit);
 }
 
+// Real, protocol-wide swap scan — same Swap event, same PoolManager, as
+// fetchRealTrades above, just WITHOUT the `id` filter, so this returns
+// every swap across every pool on Robinhood Chain's shared PoolManager, not
+// just one token's.
+//
+// Deliberately isolated from fetchRealLaunches this time. Once already,
+// calling this from inside fetchRealLaunches let a slow/erroring scan take
+// the entire Explore token list down with it — wrapping that call in a
+// try/catch only handled it throwing quickly, not it simply running long
+// and eating into the same request's execution budget. This function is
+// now ONLY ever called from its own separate, separately-cached endpoint
+// (type=launch-stats / type=protocol-stats below), which the frontend
+// fetches independently, after the core launches list has already
+// rendered. If this is slow or fails, the worst case is a missing
+// "Recent buys" sort and a missing volume tile — never a broken Explore
+// page.
+//
+// Known, honest limitation: this scans full history with no cap, same as
+// fetchRealTrades/fetchRealHolders already do — fine for a young app with
+// modest trade counts, but a real cost/latency concern once volume grows
+// enough that this becomes a lot of blocks. Worth revisiting (a persisted
+// running total instead of a full rescan every cache window) if that day
+// comes.
+//
+// No getTransaction call here — no caller reads a per-swap trader address,
+// only ethAmount/isBuy/timestamp, so fetching it was pure wasted RPC load.
+// getBlock is deduped by block number for the same reason: many swaps
+// share a block.
+async function fetchAllSwapLogs() {
+  const logs = await client.getLogs({
+    address: ROBINHOOD_POOL_MANAGER,
+    event: SWAP_EVENT_ABI[0],
+    fromBlock: 0n,
+    toBlock: "latest",
+  });
+
+  const blockNumbers = [...new Set(logs.map((log) => log.blockNumber))];
+  const blocks = await Promise.all(blockNumbers.map((bn) => client.getBlock({ blockNumber: bn })));
+  const timestampByBlock = new Map(blockNumbers.map((bn, i) => [bn, Number(blocks[i].timestamp) * 1000]));
+
+  return logs.map((log) => {
+    const isBuy = log.args.amount0 < 0n;
+    const ethAmount = isBuy ? -log.args.amount0 : log.args.amount0;
+    return {
+      poolId: log.args.id,
+      hash: log.transactionHash,
+      isBuy,
+      ethAmount: Number(ethAmount) / 1e18,
+      timestamp: timestampByBlock.get(log.blockNumber),
+    };
+  });
+}
+
 // Powers the Explore page's launch list — moved server-side specifically
 // so this genuinely expensive fetch (a Registry read per token, plus two
 // more per token for name/symbol) happens once per cache window instead
@@ -337,6 +390,48 @@ export async function fetchRealLaunches() {
   return launches;
 }
 
+// Per-pool volume/last-buy-time, powering Explore's "Recent buys" sort.
+// Deliberately its own endpoint (see fetchAllSwapLogs's comment) — the
+// frontend fetches this separately from getRealLaunches, so it can never
+// block or break the core token list.
+export async function fetchLaunchStats() {
+  const allSwaps = await fetchAllSwapLogs();
+  const perPoolStats = {};
+  for (const swap of allSwaps) {
+    const key = swap.poolId.toLowerCase();
+    if (!perPoolStats[key]) perPoolStats[key] = { volumeEth: 0, lastBuyAt: 0 };
+    perPoolStats[key].volumeEth += Math.abs(swap.ethAmount);
+    if (swap.isBuy && swap.timestamp > perPoolStats[key].lastBuyAt) {
+      perPoolStats[key].lastBuyAt = swap.timestamp;
+    }
+  }
+  return perPoolStats;
+}
+
+// Real, protocol-wide volume — powers Analytics' "Trading volume" tile.
+// Deliberately does NOT attempt "Total creator fees paid out" the same
+// way: the hook's actual fee rate depends on each trade's buy/sell side
+// AND whether that specific pool had already graduated at the moment of
+// that trade (1%/4%/1% per README's own documented schedule) — real
+// historical per-trade state this endpoint doesn't have without either a
+// dedicated fee event from the hook (not confirmed to exist) or replaying
+// graduation state trade-by-trade. Reconstructing that from cumulative
+// numbers alone risks a confidently-wrong figure, not an honestly-labeled
+// estimate — so that tile stays "Not available yet" rather than guessing.
+export async function fetchProtocolStats() {
+  const allSwaps = await fetchAllSwapLogs();
+  const dayMs = 24 * 3600 * 1000;
+  const now = Date.now();
+  let totalVolumeEth = 0;
+  let volume24hEth = 0;
+  for (const swap of allSwaps) {
+    const abs = Math.abs(swap.ethAmount);
+    totalVolumeEth += abs;
+    if (now - swap.timestamp <= dayMs) volume24hEth += abs;
+  }
+  return { totalVolumeEth, volume24hEth, tradeCount: allSwaps.length };
+}
+
 export default async function handler(request, response) {
   const { type, poolId, tokenAddress } = request.query;
 
@@ -371,7 +466,31 @@ export default async function handler(request, response) {
       return response.status(200).json({ data: fresh, cached: false });
     }
 
-    return response.status(400).json({ error: "type must be 'trades', 'holders', or 'launches'" });
+    // Both below are fetched independently by the frontend, never as part
+    // of the "launches" request above — see fetchAllSwapLogs's comment for
+    // why that separation matters. A slow or failing RPC scan here only
+    // ever costs "Recent buys"/"Trading volume", never the token list.
+    if (type === "launch-stats") {
+      const cacheKey = "cache-launch-stats.json";
+      const cached = await readCache(cacheKey);
+      if (cached) return response.status(200).json({ data: cached, cached: true });
+
+      const fresh = await fetchLaunchStats();
+      await writeCache(cacheKey, fresh);
+      return response.status(200).json({ data: fresh, cached: false });
+    }
+
+    if (type === "protocol-stats") {
+      const cacheKey = "cache-protocol-stats.json";
+      const cached = await readCache(cacheKey);
+      if (cached) return response.status(200).json({ data: cached, cached: true });
+
+      const fresh = await fetchProtocolStats();
+      await writeCache(cacheKey, fresh);
+      return response.status(200).json({ data: fresh, cached: false });
+    }
+
+    return response.status(400).json({ error: "type must be 'trades', 'holders', 'launches', 'launch-stats', or 'protocol-stats'" });
   } catch (error) {
     return response.status(500).json({ error: error.message });
   }
