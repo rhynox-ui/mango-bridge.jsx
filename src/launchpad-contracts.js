@@ -592,27 +592,35 @@ export async function getRealLaunchCount() {
 // with it, a 30-second-old answer is reused across everyone, and only the
 // first request in that window does the real work.
 // ============================================================================
+// Surfaces the API's real error message (the handler's try/catch returns
+// { error: error.message }) instead of masking every failure behind the
+// same generic string regardless of cause — an RPC timeout, a reverted
+// call, and a genuine bug all used to read identically to whoever saw the
+// UI, making the server-side logging next to useless without direct log
+// access. Falls back to the generic message only if the body itself can't
+// be parsed (e.g. a non-JSON 502 from the platform, not from this handler).
+async function throwApiError(res, fallbackMessage) {
+  let message = fallbackMessage;
+  try {
+    const body = await res.json();
+    if (body?.error) message = body.error;
+  } catch {
+    // Body wasn't JSON (e.g. a platform-level error, not from this
+    // handler's own try/catch) - keep the fallback.
+  }
+  throw new Error(message);
+}
+
 export async function getRecentTrades({ poolId }) {
   const res = await fetch(`/api/token-activity?type=trades&poolId=${poolId}`);
-  if (!res.ok) throw new Error("Failed to load recent trades");
+  if (!res.ok) await throwApiError(res, "Failed to load recent trades");
   const { data } = await res.json();
   return data;
 }
 
 export async function getTokenHolders({ tokenAddress }) {
   const res = await fetch(`/api/token-activity?type=holders&tokenAddress=${tokenAddress}`);
-  if (!res.ok) throw new Error("Failed to load holders");
-  const { data } = await res.json();
-  return data;
-}
-
-// Real, protocol-wide trading volume — a genuine scan over every Swap
-// event across every Mango pool on Robinhood Chain's shared PoolManager,
-// not an estimate. See api/token-activity.js's fetchProtocolStats for why
-// this deliberately does NOT also cover "total creator fees paid out."
-export async function getProtocolStats() {
-  const res = await fetch("/api/token-activity?type=protocol-stats");
-  if (!res.ok) throw new Error("Failed to load protocol stats");
+  if (!res.ok) await throwApiError(res, "Failed to load holders");
   const { data } = await res.json();
   return data;
 }
@@ -652,7 +660,31 @@ export async function getLaunchProgress({ poolId }) {
 // that real work once; everyone after that just reads the saved result.
 export async function getRealLaunches() {
   const res = await fetch("/api/token-activity?type=launches");
-  if (!res.ok) throw new Error("Failed to load launches");
+  if (!res.ok) await throwApiError(res, "Failed to load launches");
+  const { data } = await res.json();
+  return data;
+}
+
+// Per-pool volume/last-buy-time, powering Explore's "Recent buys" sort.
+// Deliberately called separately from getRealLaunches, never Promise.all'd
+// together — a slow or failing scan here must never block or blank out
+// the core token list, only degrade "Recent buys" specifically. See
+// api/token-activity.js's fetchAllSwapLogs comment for the incident this
+// separation exists because of.
+export async function getLaunchStats() {
+  const res = await fetch("/api/token-activity?type=launch-stats");
+  if (!res.ok) await throwApiError(res, "Failed to load launch stats");
+  const { data } = await res.json();
+  return data;
+}
+
+// Real, protocol-wide trading volume — a genuine scan over every Swap
+// event across every Mango pool on Robinhood Chain's shared PoolManager,
+// not an estimate. See api/token-activity.js's fetchProtocolStats for why
+// this deliberately does NOT also cover "total creator fees paid out."
+export async function getProtocolStats() {
+  const res = await fetch("/api/token-activity?type=protocol-stats");
+  if (!res.ok) await throwApiError(res, "Failed to load protocol stats");
   const { data } = await res.json();
   return data;
 }

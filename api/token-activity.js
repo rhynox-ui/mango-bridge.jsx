@@ -208,16 +208,31 @@ export async function fetchRealHolders(tokenAddress, limit = 50) {
 // Real, protocol-wide swap scan — same Swap event, same PoolManager, as
 // fetchRealTrades above, just WITHOUT the `id` filter, so this returns
 // every swap across every pool on Robinhood Chain's shared PoolManager, not
-// just one token's. Callers must cross-reference each log's `id` (poolId)
-// against the real launches list before trusting it belongs to a Mango
-// token — a shared PoolManager can host pools this app had no part in.
+// just one token's.
+//
+// Deliberately isolated from fetchRealLaunches this time. Once already,
+// calling this from inside fetchRealLaunches let a slow/erroring scan take
+// the entire Explore token list down with it — wrapping that call in a
+// try/catch only handled it throwing quickly, not it simply running long
+// and eating into the same request's execution budget. This function is
+// now ONLY ever called from its own separate, separately-cached endpoint
+// (type=launch-stats / type=protocol-stats below), which the frontend
+// fetches independently, after the core launches list has already
+// rendered. If this is slow or fails, the worst case is a missing
+// "Recent buys" sort and a missing volume tile — never a broken Explore
+// page.
 //
 // Known, honest limitation: this scans full history with no cap, same as
 // fetchRealTrades/fetchRealHolders already do — fine for a young app with
 // modest trade counts, but a real cost/latency concern once volume grows
-// enough that this becomes a lot of blocks and per-log getTransaction/
-// getBlock calls. Worth revisiting (a persisted running total instead of
-// a full rescan every cache window) if that day comes — not a problem yet.
+// enough that this becomes a lot of blocks. Worth revisiting (a persisted
+// running total instead of a full rescan every cache window) if that day
+// comes.
+//
+// No getTransaction call here — no caller reads a per-swap trader address,
+// only ethAmount/isBuy/timestamp, so fetching it was pure wasted RPC load.
+// getBlock is deduped by block number for the same reason: many swaps
+// share a block.
 async function fetchAllSwapLogs() {
   const logs = await client.getLogs({
     address: ROBINHOOD_POOL_MANAGER,
@@ -226,24 +241,21 @@ async function fetchAllSwapLogs() {
     toBlock: "latest",
   });
 
-  return Promise.all(
-    logs.map(async (log) => {
-      const [tx, block] = await Promise.all([
-        client.getTransaction({ hash: log.transactionHash }),
-        client.getBlock({ blockNumber: log.blockNumber }),
-      ]);
-      const isBuy = log.args.amount0 < 0n;
-      const ethAmount = isBuy ? -log.args.amount0 : log.args.amount0;
-      return {
-        poolId: log.args.id,
-        hash: log.transactionHash,
-        isBuy,
-        trader: tx.from,
-        ethAmount: Number(ethAmount) / 1e18,
-        timestamp: Number(block.timestamp) * 1000,
-      };
-    })
-  );
+  const blockNumbers = [...new Set(logs.map((log) => log.blockNumber))];
+  const blocks = await Promise.all(blockNumbers.map((bn) => client.getBlock({ blockNumber: bn })));
+  const timestampByBlock = new Map(blockNumbers.map((bn, i) => [bn, Number(blocks[i].timestamp) * 1000]));
+
+  return logs.map((log) => {
+    const isBuy = log.args.amount0 < 0n;
+    const ethAmount = isBuy ? -log.args.amount0 : log.args.amount0;
+    return {
+      poolId: log.args.id,
+      hash: log.transactionHash,
+      isBuy,
+      ethAmount: Number(ethAmount) / 1e18,
+      timestamp: timestampByBlock.get(log.blockNumber),
+    };
+  });
 }
 
 // Powers the Explore page's launch list — moved server-side specifically
@@ -258,70 +270,106 @@ export async function fetchRealLaunches() {
     abi: REGISTRY_ABI,
     functionName: "totalLaunches",
   });
+  console.log(`fetchRealLaunches: Registry ${REGISTRY_ADDRESS} reports totalLaunches=${count}`);
   if (count === 0n) return [];
 
   const logoRegistry = await fetchLogoRegistry();
-  // Real per-pool volume/last-buy-time, from the same swap scan used for
-  // Analytics' protocol-wide numbers — computed once here and attached to
-  // each launch, powering the "Top gainers"... i.e. "Recent buys" Explore
-  // sort chip with genuine data instead of leaving it disabled.
-  const allSwaps = await fetchAllSwapLogs();
-  const perPoolStats = {};
-  for (const swap of allSwaps) {
-    const key = swap.poolId.toLowerCase();
-    if (!perPoolStats[key]) perPoolStats[key] = { volumeEth: 0, lastBuyAt: 0 };
-    perPoolStats[key].volumeEth += Math.abs(swap.ethAmount);
-    if (swap.isBuy && swap.timestamp > perPoolStats[key].lastBuyAt) {
-      perPoolStats[key].lastBuyAt = swap.timestamp;
-    }
-  }
+  // Previously a single sequential for-loop doing up to 4 awaited RPC
+  // calls per launch, one at a time, completely unguarded — any single
+  // flaky/reverting call anywhere in that chain (one bad token, one RPC
+  // hiccup) threw and killed the ENTIRE launches response, and was a
+  // likely live cause of "Failed to load launches" on its own. Now: poolIds
+  // and launch structs are fetched in parallel and each index is wrapped
+  // so one bad entry is skipped (logged, not silently lost) instead of
+  // taking every other launch down with it. Parallel also meaningfully
+  // cuts wall-clock time, which matters against a serverless function's
+  // execution time limit as the number of real launches grows.
+  const indices = Array.from({ length: Number(count) }, (_, i) => BigInt(i));
+  const launchResults = await Promise.all(
+    indices.map(async (i) => {
+      try {
+        const poolId = await client.readContract({
+          address: REGISTRY_ADDRESS,
+          abi: REGISTRY_ABI,
+          functionName: "allPoolIds",
+          args: [i],
+        });
+        const launchRaw = await client.readContract({
+          address: REGISTRY_ADDRESS,
+          abi: REGISTRY_ABI,
+          functionName: "launches",
+          args: [poolId],
+        });
+        const [creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt] = launchRaw;
+
+        // Real check, not a hardcoded list — skip anything whose actual
+        // pool isn't using the current hook. This automatically stays
+        // correct through future hook upgrades too, without needing this
+        // list maintained by hand each time.
+        //
+        // Logged on mismatch rather than silently dropped: this recompute
+        // assumes POOL_FEE=3000 and TICK_SPACING=60 for every launch, which
+        // has never been independently confirmed against the real deployed
+        // Factory. If that assumption is wrong, this filter would silently
+        // hide every real launch behind a generic empty "No tokens
+        // launched yet" — this log line is what actually shows whether
+        // that's happening, and if so, which parameter is off.
+        const expectedPoolId = computeCurrentHookPoolId(tokenAddress);
+        if (expectedPoolId.toLowerCase() !== poolId.toLowerCase()) {
+          console.warn(
+            `fetchRealLaunches: poolId mismatch for token ${tokenAddress} (index ${i}) - ` +
+            `registered poolId=${poolId}, computed (fee=${POOL_FEE}, tickSpacing=${TICK_SPACING}, hook=${CURRENT_HOOK_ADDRESS})=${expectedPoolId}. ` +
+            `Filtered out of Explore - if this token should be live, POOL_FEE/TICK_SPACING here likely doesn't match the real Factory.`
+          );
+          return null;
+        }
+
+        // Separate, explicit exclusion — these two are confirmed to be on
+        // the current Hook (verified via cast keccak against their real
+        // poolId), yet failed a real sell attempt. Root cause unclear —
+        // possibly a timing issue with an earlier Router version, possibly
+        // something else — deliberately not chased further tonight.
+        // Excluded by address specifically, not by the Hook-based rule
+        // above, since that rule genuinely doesn't apply to these two.
+        const KNOWN_PROBLEMATIC_TOKENS = new Set([
+          "0x353f7e2163a73bef1c996c0c58f2f11564838bbe",
+          "0x79f9ce00b64b96aac8f53c32d976b0e6a38a1e86",
+        ]);
+        if (KNOWN_PROBLEMATIC_TOKENS.has(tokenAddress.toLowerCase())) return null;
+
+        let name = "Unknown";
+        let symbol = "???";
+        try {
+          [name, symbol] = await Promise.all([
+            client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "name" }),
+            client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
+          ]);
+        } catch {
+          // Fall back silently — display-only, not a hard failure.
+        }
+
+        return {
+          poolId,
+          name,
+          symbol,
+          creator,
+          tokenAddress,
+          cumulativeProtocolFeesUsd,
+          graduationThresholdUsd,
+          graduated,
+          launchedAt,
+        };
+      } catch (err) {
+        console.error(`fetchRealLaunches: skipping launch index ${i}:`, err);
+        return null;
+      }
+    })
+  );
+
   const launches = [];
-
-  for (let i = 0n; i < count; i++) {
-    const poolId = await client.readContract({
-      address: REGISTRY_ADDRESS,
-      abi: REGISTRY_ABI,
-      functionName: "allPoolIds",
-      args: [i],
-    });
-    const launchRaw = await client.readContract({
-      address: REGISTRY_ADDRESS,
-      abi: REGISTRY_ABI,
-      functionName: "launches",
-      args: [poolId],
-    });
-    const [creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt] = launchRaw;
-
-    // Real check, not a hardcoded list — skip anything whose actual pool
-    // isn't using the current hook. This automatically stays correct
-    // through future hook upgrades too, without needing this list
-    // maintained by hand each time.
-    if (computeCurrentHookPoolId(tokenAddress).toLowerCase() !== poolId.toLowerCase()) continue;
-
-    // Separate, explicit exclusion — these two are confirmed to be on the
-    // current Hook (verified via cast keccak against their real poolId),
-    // yet failed a real sell attempt. Root cause unclear — possibly a
-    // timing issue with an earlier Router version, possibly something
-    // else — deliberately not chased further tonight. Excluded by
-    // address specifically, not by the Hook-based rule above, since
-    // that rule genuinely doesn't apply to these two.
-    const KNOWN_PROBLEMATIC_TOKENS = new Set([
-      "0x353f7e2163a73bef1c996c0c58f2f11564838bbe",
-      "0x79f9ce00b64b96aac8f53c32d976b0e6a38a1e86",
-    ]);
-    if (KNOWN_PROBLEMATIC_TOKENS.has(tokenAddress.toLowerCase())) continue;
-
-    let name = "Unknown";
-    let symbol = "???";
-    try {
-      name = await client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "name" });
-      symbol = await client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" });
-    } catch {
-      // Fall back silently — display-only, not a hard failure.
-    }
-
-    const stats = perPoolStats[poolId.toLowerCase()] || { volumeEth: 0, lastBuyAt: 0 };
-
+  for (const r of launchResults) {
+    if (!r) continue;
+    const { poolId, name, symbol, creator, tokenAddress, cumulativeProtocolFeesUsd, graduationThresholdUsd, graduated, launchedAt } = r;
     launches.push({
       id: poolId,
       poolId,
@@ -336,16 +384,31 @@ export async function fetchRealLaunches() {
       createdAt: Number(launchedAt) * 1000,
       holders: 0,
       priceChange24h: 0,
-      volumeEth: stats.volumeEth,
-      lastBuyAt: stats.lastBuyAt,
       hue: (symbol.charCodeAt(0) || 0) % 360,
     });
   }
   return launches;
 }
 
-// Real, protocol-wide volume — powers Analytics' "Trading volume" tile,
-// which previously said "Not available yet" for lack of exactly this.
+// Per-pool volume/last-buy-time, powering Explore's "Recent buys" sort.
+// Deliberately its own endpoint (see fetchAllSwapLogs's comment) — the
+// frontend fetches this separately from getRealLaunches, so it can never
+// block or break the core token list.
+export async function fetchLaunchStats() {
+  const allSwaps = await fetchAllSwapLogs();
+  const perPoolStats = {};
+  for (const swap of allSwaps) {
+    const key = swap.poolId.toLowerCase();
+    if (!perPoolStats[key]) perPoolStats[key] = { volumeEth: 0, lastBuyAt: 0 };
+    perPoolStats[key].volumeEth += Math.abs(swap.ethAmount);
+    if (swap.isBuy && swap.timestamp > perPoolStats[key].lastBuyAt) {
+      perPoolStats[key].lastBuyAt = swap.timestamp;
+    }
+  }
+  return perPoolStats;
+}
+
+// Real, protocol-wide volume — powers Analytics' "Trading volume" tile.
 // Deliberately does NOT attempt "Total creator fees paid out" the same
 // way: the hook's actual fee rate depends on each trade's buy/sell side
 // AND whether that specific pool had already graduated at the moment of
@@ -403,6 +466,20 @@ export default async function handler(request, response) {
       return response.status(200).json({ data: fresh, cached: false });
     }
 
+    // Both below are fetched independently by the frontend, never as part
+    // of the "launches" request above — see fetchAllSwapLogs's comment for
+    // why that separation matters. A slow or failing RPC scan here only
+    // ever costs "Recent buys"/"Trading volume", never the token list.
+    if (type === "launch-stats") {
+      const cacheKey = "cache-launch-stats.json";
+      const cached = await readCache(cacheKey);
+      if (cached) return response.status(200).json({ data: cached, cached: true });
+
+      const fresh = await fetchLaunchStats();
+      await writeCache(cacheKey, fresh);
+      return response.status(200).json({ data: fresh, cached: false });
+    }
+
     if (type === "protocol-stats") {
       const cacheKey = "cache-protocol-stats.json";
       const cached = await readCache(cacheKey);
@@ -413,7 +490,7 @@ export default async function handler(request, response) {
       return response.status(200).json({ data: fresh, cached: false });
     }
 
-    return response.status(400).json({ error: "type must be 'trades', 'holders', 'launches', or 'protocol-stats'" });
+    return response.status(400).json({ error: "type must be 'trades', 'holders', 'launches', 'launch-stats', or 'protocol-stats'" });
   } catch (error) {
     return response.status(500).json({ error: error.message });
   }

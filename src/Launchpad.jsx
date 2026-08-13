@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
 import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2 } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
-import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getProtocolStats, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
+import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getLaunchStats, getProtocolStats, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
 // Slippage tolerance at/above this shows an explicit warning in the trade
 // card — a wide tolerance should be a decision the user actually sees, not
@@ -1011,14 +1011,18 @@ function TokenDetailView({ token, onBack, P, theme }) {
 }
 
 function ExplorePage({ onSelectToken, refreshKey, P }) {
-  // Defaults to a chip genuinely backed by real data — "Recent buys" has
-  // no real data source yet (see below), so it's not a good default.
   const [sortChip, setSortChip] = useState("Market cap");
   const [rangeChip, setRangeChip] = useState("All");
   const [query, setQuery] = useState("");
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
+  // Per-poolId { volumeEth, lastBuyAt }, fetched entirely separately from
+  // the launches list below — see getLaunchStats's comment. Starts empty
+  // and fills in whenever it resolves; the list renders with real data
+  // either way, "Recent buys" just falls back to 0/never-bought ordering
+  // until (if) this arrives.
+  const [stats, setStats] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -1030,21 +1034,20 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
     return () => { cancelled = true; };
   }, [refreshKey]); // re-fetches whenever a launch succeeds, not just on mount
 
+  useEffect(() => {
+    let cancelled = false;
+    getLaunchStats()
+      .then((real) => { if (!cancelled) setStats(real); })
+      .catch(() => { /* Explore already works without this — degrade quietly. */ });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
   const chipStyle = (active) => ({
     background: active ? P.ctaBg : P.panel,
     color: active ? P.ctaText : P.textSecondary,
     border: active ? "none" : `1px solid ${P.panelBorder}`,
     boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
   });
-
-  // Real sorting/filtering against real fields — marketCapUsd, createdAt,
-  // priceChange24h (already shown on TokenCard), and now lastBuyAt too:
-  // getRealLaunches attaches a genuine per-token "most recent buy"
-  // timestamp, computed server-side from a real scan over every Swap event
-  // across every Mango pool (see api/token-activity.js's fetchAllSwapLogs)
-  // — not an indexer in the full sense, but real on-chain data, not a
-  // placeholder. Tokens never bought naturally sort last (lastBuyAt
-  // defaults to 0), not hidden. Every sort chip is real now.
 
   const now = Date.now();
   const rangeMs = rangeChip === "24h" ? 24 * 3600_000 : rangeChip === "7d" ? 7 * 24 * 3600_000 : Infinity;
@@ -1055,10 +1058,11 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
     ? rangeFiltered.filter((t) => t.name.toLowerCase().includes(q) || t.symbol.toLowerCase().includes(q))
     : rangeFiltered;
 
+  const lastBuyAt = (t) => stats[t.poolId?.toLowerCase()]?.lastBuyAt || 0;
   const sorted = [...searched].sort((a, b) =>
     sortChip === "Newest" ? b.createdAt - a.createdAt
       : sortChip === "Top gainers" ? b.priceChange24h - a.priceChange24h
-      : sortChip === "Recent buys" ? (b.lastBuyAt || 0) - (a.lastBuyAt || 0)
+      : sortChip === "Recent buys" ? lastBuyAt(b) - lastBuyAt(a)
       : b.marketCapUsd - a.marketCapUsd
   );
 
@@ -1209,20 +1213,30 @@ function ProfilePage({ onSelectToken, P }) {
 function AnalyticsPage({ P }) {
   const [range, setRange] = useState("24h");
   const [launchCount, setLaunchCount] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [statsError, setStatsError] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getRealLaunches(), getProtocolStats()])
-      .then(([real, protocolStats]) => {
-        if (cancelled) return;
-        setLaunchCount(real.length);
-        setStats(protocolStats);
-      })
-      .catch((err) => { if (!cancelled) setStatsError(err?.message || String(err)); })
+    getRealLaunches()
+      .then((real) => { if (!cancelled) setLaunchCount(real.length); })
+      .catch(() => { if (!cancelled) setLaunchCount(null); })
       .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Fetched independently from launch count above, deliberately not
+  // Promise.all'd together — a slow/failing protocol-wide scan must only
+  // cost the volume tile, never blank out the (unrelated, working) launch
+  // count too.
+  useEffect(() => {
+    let cancelled = false;
+    getProtocolStats()
+      .then((real) => { if (!cancelled) { setStats(real); setStatsError(null); } })
+      .catch((err) => { if (!cancelled) setStatsError(err?.message || String(err)); })
+      .finally(() => { if (!cancelled) setStatsLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
@@ -1257,10 +1271,11 @@ function AnalyticsPage({ P }) {
 
       {/* Real — a genuine scan over every Swap event across every Mango
           pool on the shared PoolManager (api/token-activity.js's
-          fetchProtocolStats), not an estimate. */}
+          fetchProtocolStats), fetched independently from the launch count
+          above so a failure here can't blank that tile out too. */}
       <div className="rounded-2xl p-4 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
         <div className="text-[12px] mb-1" style={{ color: P.textSecondary }}>Trading volume ({range})</div>
-        {loading ? (
+        {statsLoading ? (
           <div className="text-[26px] font-mono font-bold" style={{ color: P.textPrimary }}>…</div>
         ) : statsError ? (
           <div className="text-[13px]" style={{ color: "#D92D20" }}>Couldn't load: {statsError}</div>
