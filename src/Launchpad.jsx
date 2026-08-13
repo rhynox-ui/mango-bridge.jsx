@@ -583,6 +583,16 @@ function TokenActivityPanel({ token, P }) {
 function TokenDetailView({ token, onBack, P, theme }) {
   const [amount, setAmount] = useState("");
   const [side, setSide] = useState("buy");
+  // Real, user-facing slippage tolerance — buyTokenReal/sellTokenReal
+  // already accept this and use it to compute a genuine on-chain price
+  // limit (getTradeQuote reads the pool's live spot price and derives
+  // sqrtPriceLimitX96 from it), but until now the UI never surfaced it or
+  // let anyone change it, so every trade silently used the function's
+  // hardcoded 5% default with no visibility. 5% stays the default; this
+  // just makes it real and adjustable instead of invisible.
+  const [slippagePercent, setSlippagePercent] = useState(5);
+  const [customSlippage, setCustomSlippage] = useState("");
+  const [showSlippageEditor, setShowSlippageEditor] = useState(false);
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const [trading, setTrading] = useState(false);
@@ -719,8 +729,8 @@ function TokenDetailView({ token, onBack, P, theme }) {
     setTrading(true);
     try {
       const result = side === "buy"
-        ? await buyTokenReal({ tokenAddress: token.tokenAddress, ethAmount: amount, recipient: address })
-        : await sellTokenReal({ tokenAddress: token.tokenAddress, tokenAmountWei: BigInt(Math.round(parseFloat(amount) * 1e18)), recipient: address });
+        ? await buyTokenReal({ tokenAddress: token.tokenAddress, ethAmount: amount, recipient: address, slippagePercent })
+        : await sellTokenReal({ tokenAddress: token.tokenAddress, tokenAmountWei: BigInt(Math.round(parseFloat(amount) * 1e18)), recipient: address, slippagePercent });
       setTradeResult(result);
       await refreshProgress();
       await refetchEthBalance();
@@ -847,6 +857,44 @@ function TokenDetailView({ token, onBack, P, theme }) {
       </a>
 
       <div className="rounded-2xl p-3.5 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10.5px]" style={{ color: P.textMuted }}>Slippage tolerance</span>
+          <button onClick={() => setShowSlippageEditor((v) => !v)} className="text-[11.5px] font-mono font-semibold" style={{ color: P.textPrimary }}>
+            {slippagePercent}% {showSlippageEditor ? "▴" : "▾"}
+          </button>
+        </div>
+        {showSlippageEditor && (
+          <div className="flex gap-1.5 mb-2.5">
+            {[0.5, 1, 5].map((pct) => (
+              <button
+                key={pct}
+                onClick={() => { setSlippagePercent(pct); setCustomSlippage(""); }}
+                className="flex-1 py-1.5 rounded-lg text-[11px] font-medium"
+                style={{ background: slippagePercent === pct && !customSlippage ? P.ctaBg : P.pillBg, color: slippagePercent === pct && !customSlippage ? P.ctaText : P.textSecondary, border: `1px solid ${P.panelBorder}` }}
+              >
+                {pct}%
+              </button>
+            ))}
+            <div className="flex-1 flex items-center rounded-lg px-2" style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}>
+              <input
+                value={customSlippage}
+                onChange={(e) => {
+                  const v = e.target.value.replace(/[^0-9.]/g, "");
+                  setCustomSlippage(v);
+                  const n = parseFloat(v);
+                  // Real, sane bounds — a 0% tolerance would make every real
+                  // trade revert on the tiniest price move, and anything past
+                  // 50% stops being meaningful slippage protection at all.
+                  if (n > 0 && n <= 50) setSlippagePercent(n);
+                }}
+                placeholder="Custom %"
+                inputMode="decimal"
+                className="w-full py-1.5 text-[11px] bg-transparent outline-none"
+                style={{ color: P.textPrimary }}
+              />
+            </div>
+          </div>
+        )}
         <div className="flex rounded-xl p-1 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           <button
             onClick={() => setSide("buy")}
@@ -921,11 +969,15 @@ function TokenDetailView({ token, onBack, P, theme }) {
           </button>
         )}
         {/* Real call against the deployed Router — computes a live price
-            limit from StateView before submitting. minAmountOut is
-            currently left unset (accepts any output amount) pending a full
-            swap-simulation integration — the price limit itself still
-            provides real protection against a bad execution price, but
-            this is an honest, real gap, not hidden. */}
+            limit from StateView using the slippage % selected above, before
+            submitting. This genuinely bounds how far the pool's price can
+            move during the swap, and is now real, visible, and adjustable
+            instead of a hardcoded invisible 5%. minAmountOut itself is
+            still left unset (accepts any output amount at whatever price
+            the limit allows) pending a full swap-simulation integration —
+            for a thin-liquidity pool the actual output at that price limit
+            could still come in lower than the price alone suggests. Real,
+            honest gap, not hidden. */}
         {tradeError && (
           <div className="mt-2 rounded-lg p-3 text-[11.5px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
             <div className="font-medium mb-0.5">Trade failed</div>
