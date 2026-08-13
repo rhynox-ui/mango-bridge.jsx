@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
-import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle } from "lucide-react";
+import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2 } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
 import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
@@ -20,6 +20,26 @@ function CopyableAddress({ address, P, label }) {
       {label && <span>{label}: </span>}
       <span>{short}</span>
       {copied ? <Check size={11} color={LIME_DEEP} /> : <Copy size={11} />}
+    </button>
+  );
+}
+
+// Copies a real deep link to this exact token page — App.jsx reads
+// ?token=0x... on load and opens straight to it (see LaunchpadTab's
+// deepLinkTokenAddress handling), so this isn't a cosmetic link that drops
+// a visitor on the homepage; it genuinely opens the same token.
+function ShareTokenButton({ tokenAddress, P }) {
+  const [copied, setCopied] = useState(false);
+  function handleShare() {
+    const url = `${window.location.origin}${window.location.pathname}?token=${tokenAddress}`;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+  return (
+    <button onClick={handleShare} className="flex items-center gap-1.5 text-[12.5px]" style={{ color: P.textSecondary }}>
+      {copied ? <Check size={14} color={LIME_DEEP} /> : <Share2 size={14} />}
+      {copied ? "Link copied" : "Share"}
     </button>
   );
 }
@@ -726,9 +746,12 @@ function TokenDetailView({ token, onBack, P, theme }) {
 
   return (
     <div>
-      <button onClick={onBack} className="flex items-center gap-1.5 mb-3 text-[12.5px]" style={{ color: P.textSecondary }}>
-        <ArrowLeft size={14} /> Back
-      </button>
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={onBack} className="flex items-center gap-1.5 text-[12.5px]" style={{ color: P.textSecondary }}>
+          <ArrowLeft size={14} /> Back
+        </button>
+        <ShareTokenButton tokenAddress={token.tokenAddress} P={P} />
+      </div>
 
       {/* One compact header instead of two full-size cards — identity,
           graduation progress, stats, and addresses/socials all in one
@@ -1175,7 +1198,7 @@ function AnalyticsPage({ P }) {
   );
 }
 
-export function LaunchpadTab({ P, theme }) {
+export function LaunchpadTab({ P, theme, deepLinkTokenAddress }) {
   const { address, isConnected, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const [view, setView] = useState("explore");
@@ -1185,6 +1208,34 @@ export function LaunchpadTab({ P, theme }) {
   // re-fetch — without this, a launch made while already sitting on the
   // Explore page would leave the stale empty state showing.
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Resolves a real ?token=0x... deep link (see the Share button in
+  // TokenDetailView, and App.jsx for where this prop comes from) against
+  // the actual Registry-backed launch list — reuses getRealLaunches()
+  // rather than a dedicated single-token fetch, since there isn't one and
+  // this endpoint is already server-cached for 60s. Genuinely resolves to
+  // the real token or an honest "not found," never a silent fallback to
+  // the homepage.
+  const [resolvingDeepLink, setResolvingDeepLink] = useState(!!deepLinkTokenAddress);
+  const [deepLinkError, setDeepLinkError] = useState(null);
+  useEffect(() => {
+    if (!deepLinkTokenAddress) return;
+    let cancelled = false;
+    getRealLaunches()
+      .then((tokens) => {
+        if (cancelled) return;
+        const match = tokens.find((t) => t.tokenAddress.toLowerCase() === deepLinkTokenAddress.toLowerCase());
+        if (match) {
+          setSelectedToken(match);
+          setView("detail");
+        } else {
+          setDeepLinkError("That link's token doesn't match any launch on the Registry — it may be wrong, or on a different network.");
+        }
+      })
+      .catch((err) => { if (!cancelled) setDeepLinkError(err?.message || String(err)); })
+      .finally(() => { if (!cancelled) setResolvingDeepLink(false); });
+    return () => { cancelled = true; };
+  }, [deepLinkTokenAddress]);
 
   // Real network-switch prompt, one per connected address per visit to
   // this tab. Originally gated by a mount-only empty-deps effect (fire
@@ -1238,27 +1289,43 @@ export function LaunchpadTab({ P, theme }) {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-1">
-          <button onClick={() => setView("explore")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "explore" || view === "detail" ? P.pillBg : "transparent", color: view === "explore" || view === "detail" ? P.textPrimary : P.textMuted }}>Explore</button>
-          <button onClick={() => setView("profile")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "profile" ? P.pillBg : "transparent", color: view === "profile" ? P.textPrimary : P.textMuted }}>Profile</button>
-          <button onClick={() => setView("analytics")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "analytics" ? P.pillBg : "transparent", color: view === "analytics" ? P.textPrimary : P.textMuted }}>Stats</button>
+      {resolvingDeepLink ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-20 text-center">
+          <Rocket size={24} color={P.textMuted} />
+          <div className="text-[12.5px]" style={{ color: P.textMuted }}>Loading shared token…</div>
         </div>
-        {view !== "detail" && (
-          <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[12.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
-            <Plus size={14} /> Launch
-          </button>
-        )}
-      </div>
-
-      {view === "detail" && selectedToken ? (
-        <TokenDetailView token={selectedToken} onBack={() => setView("explore")} P={P} theme={theme} />
-      ) : view === "profile" ? (
-        <ProfilePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} />
-      ) : view === "analytics" ? (
-        <AnalyticsPage P={P} />
       ) : (
-        <ExplorePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} refreshKey={refreshKey} />
+        <>
+          {deepLinkError && (
+            <div className="flex items-center justify-between gap-2 mb-3 px-3.5 py-2.5 rounded-xl text-[12px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
+              <span>{deepLinkError}</span>
+              <button onClick={() => setDeepLinkError(null)} className="shrink-0"><X size={13} /></button>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1">
+              <button onClick={() => setView("explore")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "explore" || view === "detail" ? P.pillBg : "transparent", color: view === "explore" || view === "detail" ? P.textPrimary : P.textMuted }}>Explore</button>
+              <button onClick={() => setView("profile")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "profile" ? P.pillBg : "transparent", color: view === "profile" ? P.textPrimary : P.textMuted }}>Profile</button>
+              <button onClick={() => setView("analytics")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "analytics" ? P.pillBg : "transparent", color: view === "analytics" ? P.textPrimary : P.textMuted }}>Stats</button>
+            </div>
+            {view !== "detail" && (
+              <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[12.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
+                <Plus size={14} /> Launch
+              </button>
+            )}
+          </div>
+
+          {view === "detail" && selectedToken ? (
+            <TokenDetailView token={selectedToken} onBack={() => setView("explore")} P={P} theme={theme} />
+          ) : view === "profile" ? (
+            <ProfilePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} />
+          ) : view === "analytics" ? (
+            <AnalyticsPage P={P} />
+          ) : (
+            <ExplorePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} refreshKey={refreshKey} />
+          )}
+        </>
       )}
 
       {showCreate && (

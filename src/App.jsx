@@ -1975,7 +1975,13 @@ export default function MangoBridge() {
   const [toAssetIdx, setToAssetIdxRaw] = useState(0);
   function handleFromAssetChange(idx) { setFromAssetIdxRaw(idx); setAmount(""); }
   function handleToAssetChange(idx) { setToAssetIdxRaw(idx); } // don't clear amount — user is choosing what to receive, not resetting input
-  const [tab, setTab] = useState("bridge");
+  // Real deep-link support for a shared token page: ?token=0x... on load
+  // opens straight to Launchpad -> that token's detail view, instead of a
+  // Share button copying a link that silently drops you on the homepage.
+  // Read once at mount — a URL typed/opened fresh, not synced live as you
+  // navigate elsewhere in the app.
+  const [deepLinkTokenAddress] = useState(() => new URLSearchParams(window.location.search).get("token"));
+  const [tab, setTab] = useState(() => (deepLinkTokenAddress ? "launchpad" : "bridge"));
   const [historySubTab, setHistorySubTab] = useState("transfers");
   const [balances, setBalances] = useState(DEFAULT_BALANCES);
   const [history, setHistory] = useState([]);
@@ -2348,7 +2354,7 @@ export default function MangoBridge() {
           ) : tab === "portfolio" ? (
             <PortfolioTab address={address} connected={connected} P={P} />
           ) : tab === "launchpad" ? (
-            <LaunchpadTab P={P} theme={theme} />
+            <LaunchpadTab P={P} theme={theme} deepLinkTokenAddress={deepLinkTokenAddress} />
           ) : (
             <>
               {/* You send */}
