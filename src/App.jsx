@@ -32,7 +32,6 @@ import {
   Send,
   Rocket,
   Globe,
-  Scale,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
@@ -1673,7 +1672,16 @@ function DocsModal({ onClose, P }) {
             <li>Robinhood Chain</li>
             <li>Stable — Tether's own L1, native gas token USDT0</li>
             <li>Solana — genuinely different from every other chain here, not EVM-compatible. See "Solana Support" below for what that actually means for you.</li>
+            <li>Arbitrum One</li>
+            <li>Avalanche</li>
+            <li>Abstract</li>
+            <li>HyperEVM</li>
+            <li>Ink</li>
+            <li>Plasma</li>
+            <li>Unichain</li>
+            <li>X Layer</li>
           </ul>
+          <p className="mt-2">The eight chains above are currently native-asset-only (ETH, AVAX, HYPE, XPL, OKB respectively) — bridging routes through Relay, since no canonical bridge or CCTP integration exists for them yet in this app.</p>
         </DocSection>
 
         <DocSection title="Supported Protocols" P={P}>
@@ -1814,11 +1822,15 @@ function DocsModal({ onClose, P }) {
             <li>USDG — Global Dollar, Robinhood Chain's native stablecoin</li>
             <li>USDT0 — Stable's native gas token</li>
             <li>SOL — Solana's native asset</li>
+            <li>AVAX — Avalanche's native asset</li>
+            <li>HYPE — HyperEVM's native asset</li>
+            <li>XPL — Plasma's native asset</li>
+            <li>OKB — X Layer's native asset</li>
           </ul>
         </DocSection>
 
         <DocSection title="The Bridge" P={P}>
-          <p className="mb-2">Mango routes transfers across Ethereum, Base, BNB Chain, Robinhood Chain, Stable, and Solana, automatically selecting the safest available path for a given pair:</p>
+          <p className="mb-2">Mango routes transfers across Ethereum, Base, BNB Chain, Robinhood Chain, Stable, Solana, Arbitrum One, Avalanche, Abstract, HyperEVM, Ink, Plasma, Unichain, and X Layer, automatically selecting the safest available path for a given pair:</p>
           <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
             <li><span className="font-medium" style={{ color: P.textPrimary }}>Circle CCTP</span> for native USDC between Ethereum and Base — no wrapped tokens, burn-and-mint via Circle's own attestation service</li>
             <li><span className="font-medium" style={{ color: P.textPrimary }}>OP Stack canonical bridge</span> for ETH between Ethereum and Base</li>
@@ -1966,53 +1978,6 @@ function DocsModal({ onClose, P }) {
 // app had none at all: no ToS, no risk disclosure, nothing linking to one
 // anywhere in the UI, despite handling real user funds across five
 // different bridge trust models and an unaudited launchpad.
-function LegalModal({ onClose, P }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
-      <div className="w-full max-w-lg rounded-2xl p-6 max-h-[85vh] overflow-y-auto" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
-        <div className="flex items-center justify-between mb-5 sticky top-0 pb-2" style={{ background: P.bg }}>
-          <span className="font-display text-[19px] font-semibold" style={{ color: P.textPrimary }}>Terms &amp; Risk Disclosure</span>
-          <button onClick={onClose}><X size={18} color={P.textMuted} /></button>
-        </div>
-
-        <div className="mb-4 rounded-xl p-3.5 flex items-start gap-2.5" style={{ background: "#FCEFD9", border: "1px solid #F0D9A8" }}>
-          <AlertTriangle size={15} color="#8A5A00" className="mt-0.5 shrink-0" />
-          <p className="text-[12px]" style={{ color: "#8A5A00" }}>This is a plain-language summary, not legal advice, and has not been reviewed by a lawyer. It doesn't replace real legal counsel or a formal Terms of Service drafted for this business — treat it as an honest disclosure of real risk, not a binding contract.</p>
-        </div>
-
-        <DocSection title="No warranty" P={P}>
-          <p>Mango Protocol is provided "as is," with no guarantee it will be available, error-free, or fit for any particular purpose. Software has bugs. Blockchains reorg. RPC providers go down. Using this app means accepting that things can go wrong.</p>
-        </DocSection>
-
-        <DocSection title="You bear the risk of every transaction" P={P}>
-          <p className="mb-2">Mango is non-custodial — every transfer and trade is signed and submitted by your own wallet, directly against the underlying protocol's contracts. That also means Mango cannot reverse, refund, or recover a transaction once you've signed it, for any reason.</p>
-          <p>Different routes carry genuinely different trust models — see "Security Model" in the Docs for specifics. Canonical bridges rely on audited contracts; Wormhole relies on a guardian validator set; Relay relies on a solver network. Read what a route is before you confirm it.</p>
-        </DocSection>
-
-        <DocSection title="No formal audit" P={P}>
-          <p>No formal third-party security audit of this app's own integration code has been performed. Contract addresses used in production have been independently verified against official sources, but that is not a substitute for an audit. The Launchpad's contracts are deployed and verified on-chain (addresses in the Docs), but "verified on a block explorer" means the source code matches what's deployed — it does not mean audited for correctness.</p>
-        </DocSection>
-
-        <DocSection title="Market and smart contract risk" P={P}>
-          <ul className="list-disc ml-5 flex flex-col gap-0.5">
-            <li>Token prices, including tokens launched through the Launchpad, can go to zero. Nothing here is investment advice.</li>
-            <li>Smart contracts — Mango's own, and every third-party bridge/DEX contract a route touches — can contain bugs, however carefully reviewed.</li>
-            <li>Cross-chain routes depend on external infrastructure (RPC nodes, relayers, solver networks, guardian sets) Mango does not control and cannot guarantee the uptime or correctness of.</li>
-          </ul>
-        </DocSection>
-
-        <DocSection title="Eligibility" P={P}>
-          <p>You're responsible for knowing whether it's legal for you to use this app in your jurisdiction, including any tax obligations from bridging, trading, or launching tokens. Mango does not verify eligibility and makes no representation that use of this app is lawful in any particular location.</p>
-        </DocSection>
-
-        <DocSection title="Reporting an issue" P={P}>
-          <p>If you find a security issue, please report it responsibly rather than exploiting it — reach out via the X or Telegram links below.</p>
-        </DocSection>
-      </div>
-    </div>
-  );
-}
-
 export default function MangoBridge() {
   const [theme, setTheme] = useState("light");
   const [from, setFrom] = useState("base");
@@ -2029,7 +1994,6 @@ export default function MangoBridge() {
   const [withdrawals, setWithdrawals] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
-  const [showLegal, setShowLegal] = useState(false);
   const [showNetworkSelector, setShowNetworkSelector] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sendToOther, setSendToOther] = useState(false);
@@ -2601,13 +2565,6 @@ export default function MangoBridge() {
           >
             <BookOpen size={14} /> Docs
           </button>
-          <button
-            onClick={() => setShowLegal(true)}
-            className="flex items-center gap-1 px-2.5 py-2.5 rounded-full text-[11.5px] font-medium whitespace-nowrap shrink-0"
-            style={{ color: P.textSecondary }}
-          >
-            <Scale size={14} /> Terms
-          </button>
         </div>
       </div>
 
@@ -2626,7 +2583,6 @@ export default function MangoBridge() {
         />
       )}
       {showDocs && <DocsModal onClose={() => setShowDocs(false)} P={P} />}
-      {showLegal && <LegalModal onClose={() => setShowLegal(false)} P={P} />}
       {showWalletSelector && <WalletSelectorModal onClose={() => setShowWalletSelector(false)} P={P} solanaRelevant={isFromSolana || !!CHAINS[to]?.isSolana} />}
       {showNetworkSelector && <NetworkSelectorModal onClose={() => setShowNetworkSelector(false)} P={P} />}
     </div>
