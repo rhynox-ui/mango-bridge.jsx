@@ -215,9 +215,14 @@ export async function fetchRealHolders(tokenAddress, limit = 50) {
 // Known, honest limitation: this scans full history with no cap, same as
 // fetchRealTrades/fetchRealHolders already do — fine for a young app with
 // modest trade counts, but a real cost/latency concern once volume grows
-// enough that this becomes a lot of blocks and per-log getTransaction/
-// getBlock calls. Worth revisiting (a persisted running total instead of
-// a full rescan every cache window) if that day comes — not a problem yet.
+// enough that this becomes a lot of blocks. Worth revisiting (a persisted
+// running total instead of a full rescan every cache window) if that day
+// comes.
+//
+// No getTransaction call here — neither caller (perPoolStats below, or
+// fetchProtocolStats) reads a per-swap trader address, only ethAmount/
+// isBuy/timestamp, so fetching it was pure wasted RPC load. getBlock is
+// deduped by block number for the same reason: many swaps share a block.
 async function fetchAllSwapLogs() {
   const logs = await client.getLogs({
     address: ROBINHOOD_POOL_MANAGER,
@@ -226,24 +231,21 @@ async function fetchAllSwapLogs() {
     toBlock: "latest",
   });
 
-  return Promise.all(
-    logs.map(async (log) => {
-      const [tx, block] = await Promise.all([
-        client.getTransaction({ hash: log.transactionHash }),
-        client.getBlock({ blockNumber: log.blockNumber }),
-      ]);
-      const isBuy = log.args.amount0 < 0n;
-      const ethAmount = isBuy ? -log.args.amount0 : log.args.amount0;
-      return {
-        poolId: log.args.id,
-        hash: log.transactionHash,
-        isBuy,
-        trader: tx.from,
-        ethAmount: Number(ethAmount) / 1e18,
-        timestamp: Number(block.timestamp) * 1000,
-      };
-    })
-  );
+  const blockNumbers = [...new Set(logs.map((log) => log.blockNumber))];
+  const blocks = await Promise.all(blockNumbers.map((bn) => client.getBlock({ blockNumber: bn })));
+  const timestampByBlock = new Map(blockNumbers.map((bn, i) => [bn, Number(blocks[i].timestamp) * 1000]));
+
+  return logs.map((log) => {
+    const isBuy = log.args.amount0 < 0n;
+    const ethAmount = isBuy ? -log.args.amount0 : log.args.amount0;
+    return {
+      poolId: log.args.id,
+      hash: log.transactionHash,
+      isBuy,
+      ethAmount: Number(ethAmount) / 1e18,
+      timestamp: timestampByBlock.get(log.blockNumber),
+    };
+  });
 }
 
 // Powers the Explore page's launch list — moved server-side specifically
@@ -265,15 +267,28 @@ export async function fetchRealLaunches() {
   // Analytics' protocol-wide numbers — computed once here and attached to
   // each launch, powering the "Top gainers"... i.e. "Recent buys" Explore
   // sort chip with genuine data instead of leaving it disabled.
-  const allSwaps = await fetchAllSwapLogs();
-  const perPoolStats = {};
-  for (const swap of allSwaps) {
-    const key = swap.poolId.toLowerCase();
-    if (!perPoolStats[key]) perPoolStats[key] = { volumeEth: 0, lastBuyAt: 0 };
-    perPoolStats[key].volumeEth += Math.abs(swap.ethAmount);
-    if (swap.isBuy && swap.timestamp > perPoolStats[key].lastBuyAt) {
-      perPoolStats[key].lastBuyAt = swap.timestamp;
+  //
+  // Deliberately non-fatal: the launch list itself (name, symbol, market
+  // cap, graduation status) is the essential data this endpoint exists
+  // for. Volume/last-buy-time is a nice-to-have enrichment on top of it.
+  // If the protocol-wide swap scan is slow or errors (RPC hiccup, or this
+  // growing past what fits in one request as volume increases — see the
+  // fetchAllSwapLogs comment), that must not take the whole Explore page
+  // down with it. Losing "Recent buys" sort data is a fine degradation;
+  // losing the ability to see any tokens at all is not.
+  let perPoolStats = {};
+  try {
+    const allSwaps = await fetchAllSwapLogs();
+    for (const swap of allSwaps) {
+      const key = swap.poolId.toLowerCase();
+      if (!perPoolStats[key]) perPoolStats[key] = { volumeEth: 0, lastBuyAt: 0 };
+      perPoolStats[key].volumeEth += Math.abs(swap.ethAmount);
+      if (swap.isBuy && swap.timestamp > perPoolStats[key].lastBuyAt) {
+        perPoolStats[key].lastBuyAt = swap.timestamp;
+      }
     }
+  } catch (err) {
+    console.error("fetchAllSwapLogs failed, serving launches without volume/lastBuyAt:", err);
   }
   const launches = [];
 
