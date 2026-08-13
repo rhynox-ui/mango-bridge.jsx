@@ -260,6 +260,7 @@ export async function fetchRealLaunches() {
     abi: REGISTRY_ABI,
     functionName: "totalLaunches",
   });
+  console.log(`fetchRealLaunches: Registry ${REGISTRY_ADDRESS} reports totalLaunches=${count}`);
   if (count === 0n) return [];
 
   const logoRegistry = await fetchLogoRegistry();
@@ -323,7 +324,23 @@ export async function fetchRealLaunches() {
         // pool isn't using the current hook. This automatically stays
         // correct through future hook upgrades too, without needing this
         // list maintained by hand each time.
-        if (computeCurrentHookPoolId(tokenAddress).toLowerCase() !== poolId.toLowerCase()) return null;
+        //
+        // Logged on mismatch rather than silently dropped: this recompute
+        // assumes POOL_FEE=3000 and TICK_SPACING=60 for every launch, which
+        // has never been independently confirmed against the real deployed
+        // Factory. If that assumption is wrong, this filter would silently
+        // hide every real launch behind a generic empty "No tokens
+        // launched yet" — this log line is what actually shows whether
+        // that's happening, and if so, which parameter is off.
+        const expectedPoolId = computeCurrentHookPoolId(tokenAddress);
+        if (expectedPoolId.toLowerCase() !== poolId.toLowerCase()) {
+          console.warn(
+            `fetchRealLaunches: poolId mismatch for token ${tokenAddress} (index ${i}) - ` +
+            `registered poolId=${poolId}, computed (fee=${POOL_FEE}, tickSpacing=${TICK_SPACING}, hook=${CURRENT_HOOK_ADDRESS})=${expectedPoolId}. ` +
+            `Filtered out of Explore - if this token should be live, POOL_FEE/TICK_SPACING here likely doesn't match the real Factory.`
+          );
+          return null;
+        }
 
         // Separate, explicit exclusion — these two are confirmed to be on
         // the current Hook (verified via cast keccak against their real
