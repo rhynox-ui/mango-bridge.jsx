@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
-import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2, Clock } from "lucide-react";
+import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2 } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
 import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getLaunchStats, getProtocolStats, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
@@ -1386,8 +1386,7 @@ export function LaunchpadTab({ P, theme, deepLinkTokenAddress, launchpadNetwork 
           second picker duplicated in this file. launchpadNetwork is just
           passed down as a prop. */}
       {launchpadNetwork === "solana" ? (
-        <div className="flex flex-col items-center text-center gap-2 py-20">
-          <Clock size={26} color={P.textMuted} />
+        <div className="flex flex-col items-center text-center py-20">
           <div className="text-[16px] font-semibold" style={{ color: P.textPrimary }}>Coming soon</div>
         </div>
       ) : (
