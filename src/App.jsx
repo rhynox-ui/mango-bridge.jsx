@@ -1492,10 +1492,18 @@ function DocSection({ title, children, P }) {
   );
 }
 
-function NetworkSelectorModal({ onClose, P }) {
+// One shared modal, not a separate picker per tab — which networks it
+// offers depends on which tab opened it. Bridge (and every other tab)
+// gets the full real chain list, unchanged. Launchpad only ever works on
+// two networks, so it gets exactly those two here instead of a second,
+// duplicate selector living inside Launchpad.jsx itself.
+function NetworkSelectorModal({ onClose, P, tab, launchpadNetwork, setLaunchpadNetwork }) {
   const { switchChain } = useSwitchChain();
   const { chainId: connectedChainId, isConnected } = useAccount();
-  const chains = getChains();
+  const isLaunchpad = tab === "launchpad";
+  const chains = isLaunchpad
+    ? { robinhood: getChains().robinhood, solana: getChains().solana }
+    : getChains();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
@@ -1522,12 +1530,31 @@ function NetworkSelectorModal({ onClose, P }) {
         >
           {Object.values(chains).map((chain) => {
             const wagmiChain = getWagmiChain(chain.id);
-            const isActive = isConnected && connectedChainId === wagmiChain.id;
+            // Launchpad's two entries are a display-mode toggle (which
+            // network's launchpad you're looking at), not a real wallet
+            // connection check — Solana isn't wagmi-switchable at all
+            // (getWagmiChain returns id: undefined for it, see
+            // networkMode.js), so "active" has to mean something
+            // different here than it does for Bridge's real chain list.
+            const isActive = isLaunchpad
+              ? launchpadNetwork === chain.id
+              : isConnected && connectedChainId === wagmiChain.id;
             return (
               <button
                 key={chain.id}
                 onClick={() => {
-                  if (isConnected) switchChain({ chainId: wagmiChain.id });
+                  if (isLaunchpad) {
+                    setLaunchpadNetwork(chain.id);
+                    // Robinhood Chain is a real, tradeable network here —
+                    // still worth actually switching the wallet to it.
+                    // Solana isn't (no wagmi chain to switch to, and
+                    // picking it just shows the coming-soon panel).
+                    if (chain.id === "robinhood" && isConnected) {
+                      switchChain({ chainId: wagmiChain.id });
+                    }
+                  } else if (isConnected) {
+                    switchChain({ chainId: wagmiChain.id });
+                  }
                   onClose();
                 }}
                 className="flex items-center justify-between px-3.5 py-3 rounded-xl shrink-0"
@@ -1982,6 +2009,11 @@ export default function MangoBridge() {
   // navigate elsewhere in the app.
   const [deepLinkTokenAddress] = useState(() => new URLSearchParams(window.location.search).get("token"));
   const [tab, setTab] = useState(() => (deepLinkTokenAddress ? "launchpad" : "bridge"));
+  // Which network's launchpad is showing — Robinhood Chain (real, working)
+  // or Solana (coming soon). Selected via the same shared
+  // NetworkSelectorModal the rest of the app already uses, not a second
+  // picker living inside Launchpad.jsx.
+  const [launchpadNetwork, setLaunchpadNetwork] = useState("robinhood");
   const [historySubTab, setHistorySubTab] = useState("transfers");
   const [balances, setBalances] = useState(DEFAULT_BALANCES);
   const [history, setHistory] = useState([]);
@@ -2354,7 +2386,7 @@ export default function MangoBridge() {
           ) : tab === "portfolio" ? (
             <PortfolioTab address={address} connected={connected} P={P} />
           ) : tab === "launchpad" ? (
-            <LaunchpadTab P={P} theme={theme} deepLinkTokenAddress={deepLinkTokenAddress} />
+            <LaunchpadTab P={P} theme={theme} deepLinkTokenAddress={deepLinkTokenAddress} launchpadNetwork={launchpadNetwork} />
           ) : (
             <>
               {/* You send */}
@@ -2578,7 +2610,15 @@ export default function MangoBridge() {
       )}
       {showDocs && <DocsModal onClose={() => setShowDocs(false)} P={P} />}
       {showWalletSelector && <WalletSelectorModal onClose={() => setShowWalletSelector(false)} P={P} solanaRelevant={isFromSolana || !!CHAINS[to]?.isSolana} />}
-      {showNetworkSelector && <NetworkSelectorModal onClose={() => setShowNetworkSelector(false)} P={P} />}
+      {showNetworkSelector && (
+        <NetworkSelectorModal
+          onClose={() => setShowNetworkSelector(false)}
+          P={P}
+          tab={tab}
+          launchpadNetwork={launchpadNetwork}
+          setLaunchpadNetwork={setLaunchpadNetwork}
+        />
+      )}
     </div>
   );
 }

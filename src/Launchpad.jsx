@@ -1304,16 +1304,12 @@ function AnalyticsPage({ P }) {
   );
 }
 
-export function LaunchpadTab({ P, theme, deepLinkTokenAddress }) {
+export function LaunchpadTab({ P, theme, deepLinkTokenAddress, launchpadNetwork }) {
   const { address, isConnected, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const [view, setView] = useState("explore");
   const [selectedToken, setSelectedToken] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
-  // Which chain's launchpad is showing. Solana has no real launchpad here
-  // yet (see the "coming soon" panel below) — this just lets people see
-  // it's planned without it pretending to be live.
-  const [launchpadChain, setLaunchpadChain] = useState("robinhood");
   // Bumped after a successful launch to force ExplorePage to actually
   // re-fetch — without this, a launch made while already sitting on the
   // Explore page would leave the stale empty state showing.
@@ -1382,19 +1378,14 @@ export function LaunchpadTab({ P, theme, deepLinkTokenAddress }) {
 
   const onWrongNetwork = isConnected && chainId !== ROBINHOOD_CHAIN_ID;
 
-  const chainChipStyle = (active) => ({
-    background: active ? P.pillBg : "transparent",
-    color: active ? P.textPrimary : P.textMuted,
-  });
-
   return (
     <div className="px-4 pb-24">
-      <div className="flex items-center gap-1 mb-3">
-        <button onClick={() => setLaunchpadChain("robinhood")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={chainChipStyle(launchpadChain === "robinhood")}>Robinhood Chain</button>
-        <button onClick={() => setLaunchpadChain("solana")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={chainChipStyle(launchpadChain === "solana")}>Solana</button>
-      </div>
-
-      {launchpadChain === "solana" ? (
+      {/* Which network's launchpad shows here is picked from the same
+          shared network selector the rest of the app uses (the globe
+          button in the header, App.jsx's NetworkSelectorModal) — not a
+          second picker duplicated in this file. launchpadNetwork is just
+          passed down as a prop. */}
+      {launchpadNetwork === "solana" ? (
         <div className="flex flex-col items-center text-center gap-2 py-20">
           <Clock size={26} color={P.textMuted} />
           <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Solana launchpad coming soon</div>
