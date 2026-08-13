@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
-import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2 } from "lucide-react";
+import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2, Clock } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
 import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getLaunchStats, getProtocolStats, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
@@ -1304,7 +1304,7 @@ function AnalyticsPage({ P }) {
   );
 }
 
-export function LaunchpadTab({ P, theme, deepLinkTokenAddress }) {
+export function LaunchpadTab({ P, theme, deepLinkTokenAddress, launchpadNetwork }) {
   const { address, isConnected, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const [view, setView] = useState("explore");
@@ -1380,63 +1380,76 @@ export function LaunchpadTab({ P, theme, deepLinkTokenAddress }) {
 
   return (
     <div className="px-4 pb-24">
-      {onWrongNetwork && switchRejected && (
-        <div className="flex items-center justify-between gap-3 mb-3 px-3.5 py-2.5 rounded-xl" style={{ background: "#FCEFD9", border: "1px solid #F0D9A8" }}>
-          <span className="flex items-center gap-2 text-[12px]" style={{ color: "#8A5A00" }}>
-            <AlertTriangle size={13} /> Launchpad runs on Robinhood Chain — switch your wallet to continue.
-          </span>
-          <button
-            onClick={() => switchChainAsync({ chainId: ROBINHOOD_CHAIN_ID }).then(() => setSwitchRejected(false)).catch(() => setSwitchRejected(true))}
-            className="text-[12px] font-semibold px-3 py-1.5 rounded-lg shrink-0"
-            style={{ background: "#8A5A00", color: "#FFFFFF" }}
-          >
-            Switch
-          </button>
-        </div>
-      )}
-
-      {resolvingDeepLink ? (
-        <div className="flex flex-col items-center justify-center gap-2 py-20 text-center">
-          <Rocket size={24} color={P.textMuted} />
-          <div className="text-[12.5px]" style={{ color: P.textMuted }}>Loading shared token…</div>
+      {/* Which network's launchpad shows here is picked from the same
+          shared network selector the rest of the app uses (the globe
+          button in the header, App.jsx's NetworkSelectorModal) — not a
+          second picker duplicated in this file. launchpadNetwork is just
+          passed down as a prop. */}
+      {launchpadNetwork === "solana" ? (
+        <div className="flex flex-col items-center text-center gap-2 py-20">
+          <Clock size={26} color={P.textMuted} />
+          <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Solana launchpad coming soon</div>
+          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 260 }}>Same fee split as Robinhood Chain — 1% buys, 4%/1% sells pre/post graduation, 70/30 creator/protocol. We're still figuring out the right on-chain design since Solana has no direct equivalent to Uniswap's hooks.</div>
         </div>
       ) : (
         <>
-          {deepLinkError && (
-            <div className="flex items-center justify-between gap-2 mb-3 px-3.5 py-2.5 rounded-xl text-[12px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
-              <span>{deepLinkError}</span>
-              <button onClick={() => setDeepLinkError(null)} className="shrink-0"><X size={13} /></button>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1">
-              <button onClick={() => setView("explore")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "explore" || view === "detail" ? P.pillBg : "transparent", color: view === "explore" || view === "detail" ? P.textPrimary : P.textMuted }}>Explore</button>
-              <button onClick={() => setView("profile")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "profile" ? P.pillBg : "transparent", color: view === "profile" ? P.textPrimary : P.textMuted }}>Profile</button>
-              <button onClick={() => setView("analytics")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "analytics" ? P.pillBg : "transparent", color: view === "analytics" ? P.textPrimary : P.textMuted }}>Stats</button>
-            </div>
-            {view !== "detail" && (
-              <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[12.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
-                <Plus size={14} /> Launch
+          {onWrongNetwork && switchRejected && (
+            <div className="flex items-center justify-between gap-3 mb-3 px-3.5 py-2.5 rounded-xl" style={{ background: "#FCEFD9", border: "1px solid #F0D9A8" }}>
+              <span className="flex items-center gap-2 text-[12px]" style={{ color: "#8A5A00" }}>
+                <AlertTriangle size={13} /> Launchpad runs on Robinhood Chain — switch your wallet to continue.
+              </span>
+              <button
+                onClick={() => switchChainAsync({ chainId: ROBINHOOD_CHAIN_ID }).then(() => setSwitchRejected(false)).catch(() => setSwitchRejected(true))}
+                className="text-[12px] font-semibold px-3 py-1.5 rounded-lg shrink-0"
+                style={{ background: "#8A5A00", color: "#FFFFFF" }}
+              >
+                Switch
               </button>
-            )}
-          </div>
-
-          {view === "detail" && selectedToken ? (
-            <TokenDetailView token={selectedToken} onBack={() => setView("explore")} P={P} theme={theme} />
-          ) : view === "profile" ? (
-            <ProfilePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} />
-          ) : view === "analytics" ? (
-            <AnalyticsPage P={P} />
-          ) : (
-            <ExplorePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} refreshKey={refreshKey} />
+            </div>
           )}
-        </>
-      )}
 
-      {showCreate && (
-        <CreateLaunchModal
-          onClose={() => setShowCreate(false)}
+          {resolvingDeepLink ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-20 text-center">
+              <Rocket size={24} color={P.textMuted} />
+              <div className="text-[12.5px]" style={{ color: P.textMuted }}>Loading shared token…</div>
+            </div>
+          ) : (
+            <>
+              {deepLinkError && (
+                <div className="flex items-center justify-between gap-2 mb-3 px-3.5 py-2.5 rounded-xl text-[12px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
+                  <span>{deepLinkError}</span>
+                  <button onClick={() => setDeepLinkError(null)} className="shrink-0"><X size={13} /></button>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setView("explore")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "explore" || view === "detail" ? P.pillBg : "transparent", color: view === "explore" || view === "detail" ? P.textPrimary : P.textMuted }}>Explore</button>
+                  <button onClick={() => setView("profile")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "profile" ? P.pillBg : "transparent", color: view === "profile" ? P.textPrimary : P.textMuted }}>Profile</button>
+                  <button onClick={() => setView("analytics")} className="px-2.5 py-1 text-[12px] font-medium rounded-full" style={{ background: view === "analytics" ? P.pillBg : "transparent", color: view === "analytics" ? P.textPrimary : P.textMuted }}>Stats</button>
+                </div>
+                {view !== "detail" && (
+                  <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[12.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
+                    <Plus size={14} /> Launch
+                  </button>
+                )}
+              </div>
+
+              {view === "detail" && selectedToken ? (
+                <TokenDetailView token={selectedToken} onBack={() => setView("explore")} P={P} theme={theme} />
+              ) : view === "profile" ? (
+                <ProfilePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} />
+              ) : view === "analytics" ? (
+                <AnalyticsPage P={P} />
+              ) : (
+                <ExplorePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} refreshKey={refreshKey} />
+              )}
+            </>
+          )}
+
+          {showCreate && (
+            <CreateLaunchModal
+              onClose={() => setShowCreate(false)}
           onLaunchSuccess={(result, { name, symbol }) => {
             setRefreshKey((k) => k + 1);
             // Real fix for "doesn't navigate after launch" — build a
@@ -1465,7 +1478,9 @@ export function LaunchpadTab({ P, theme, deepLinkTokenAddress }) {
             }
           }}
           P={P}
-        />
+            />
+          )}
+        </>
       )}
     </div>
   );
