@@ -2074,13 +2074,17 @@ export default function MangoBridge() {
   const [fromChainBalances, setFromChainBalances] = useState({});
   const [balancesLoading, setBalancesLoading] = useState(false);
 
-  const refreshFromChainBalances = useCallback(async () => {
+  // forceFresh bypasses multiAssetBalances.js's short-lived cache — used
+  // right after a transaction completes, where a just-spent/just-received
+  // balance must be genuinely re-read, not served from a few-seconds-old
+  // cached value.
+  const refreshFromChainBalances = useCallback(async (forceFresh = false) => {
     if (!connected) { setFromChainBalances({}); return; }
     setBalancesLoading(true);
     try {
       const real = isFromSolana
-        ? await fetchSolanaBalance({ solanaAddress: activeSolanaAddress })
-        : await fetchAllEvmBalances({ chainKey: from, nativeSymbol: NATIVE_SYMBOL_BY_CHAIN[from], address });
+        ? await fetchSolanaBalance({ solanaAddress: activeSolanaAddress, forceFresh })
+        : await fetchAllEvmBalances({ chainKey: from, nativeSymbol: NATIVE_SYMBOL_BY_CHAIN[from], address, forceFresh });
       setFromChainBalances(real);
     } finally {
       setBalancesLoading(false);
@@ -2273,6 +2277,13 @@ export default function MangoBridge() {
     setBalances(newBalances);
     setHistory(newHistory);
     persist(newBalances, newHistory);
+    // Real fix: the asset dropdown's live balance display previously only
+    // ever refreshed on wallet connect, chain switch, or opening the
+    // dropdown — never after a transaction actually completed, so it
+    // silently went stale the moment a trade landed. forceFresh bypasses
+    // the short-lived cache so this reads the genuinely-updated balance,
+    // not a value cached from just before the transaction.
+    refreshFromChainBalances(true);
   }
   function resetHistory() {
     setHistory([]);
@@ -2285,6 +2296,10 @@ export default function MangoBridge() {
     const next = [entry, ...withdrawals];
     setWithdrawals(next);
     saveJSON("mango:withdrawals", next);
+    // The source chain's balance is genuinely debited the moment this
+    // initiating transaction lands, even though the destination side
+    // takes days to arrive — same staleness fix as handleComplete above.
+    refreshFromChainBalances(true);
   }
   function handleWithdrawalTracked(entry) {
     const next = [entry, ...withdrawals];
