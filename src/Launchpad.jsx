@@ -378,6 +378,28 @@ function TradeRowSkeleton({ P }) {
   );
 }
 
+// Real, derived-only concentration signal — no new API call, just a sum
+// over the same holders array already fetched for the list below.
+// Thresholds (green <20%, amber 20-50%, red >50%) match the same
+// amber/red risk-color convention already used elsewhere in this app
+// (wrong-network banners) rather than inventing a new one.
+function HolderConcentrationBar({ holders, P }) {
+  const top10Pct = holders.slice(0, 10).reduce((sum, h) => sum + (h.percentOfSupply || 0), 0);
+  const color = top10Pct > 50 ? "#D92D20" : top10Pct > 20 ? "#8A5A00" : LIME_DEEP;
+  const trackColor = top10Pct > 50 ? "#D92D2015" : top10Pct > 20 ? "#FCEFD9" : `${LIME}1A`;
+  return (
+    <div className="mb-3 pb-3" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11.5px] font-medium" style={{ color: P.textSecondary }}>Top 10 holders</span>
+        <span className="text-[12px] font-mono font-semibold" style={{ color }}>{top10Pct.toFixed(1)}%</span>
+      </div>
+      <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: trackColor }}>
+        <div className="h-full rounded-full" style={{ width: `${Math.min(top10Pct, 100)}%`, background: color }} />
+      </div>
+    </div>
+  );
+}
+
 function TokenActivityPanel({ token, P }) {
   const [tab, setTab] = useState("trades");
   const [trades, setTrades] = useState(null);
@@ -469,6 +491,7 @@ function TokenActivityPanel({ token, P }) {
         <div className="text-center py-8 text-[12.5px]" style={{ color: P.textMuted }}>No holders yet.</div>
       ) : (
         <div className="max-h-[360px] overflow-y-auto flex flex-col">
+          <HolderConcentrationBar holders={holders} P={P} />
           {holders.map((h, i) => (
             <a
               key={h.address}

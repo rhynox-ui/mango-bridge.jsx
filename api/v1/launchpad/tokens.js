@@ -9,6 +9,7 @@
 // wouldn't reliably persist — the shared Blob store is the real cache.
 
 import { fetchRealLaunches, readCache, writeCache, LAUNCHES_CACHE_TTL_MS } from "../../token-activity.js";
+import { checkRateLimit } from "../../rateLimit.js";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -17,6 +18,8 @@ export default async function handler(request, response) {
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });
   }
+
+  if (!(await checkRateLimit(request, response, { name: "launchpad-tokens", limit: 30 }))) return;
 
   try {
     const cacheKey = "cache-launches.json";

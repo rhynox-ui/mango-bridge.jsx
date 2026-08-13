@@ -7,6 +7,7 @@
 // bridge itself supports.
 
 import { MAINNET_CHAIN_IDS, NATIVE_SYMBOL, TOKEN_ADDRESSES } from "../../../src/chainData.js";
+import { checkRateLimit } from "../../rateLimit.js";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -15,6 +16,8 @@ export default async function handler(request, response) {
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });
   }
+
+  if (!(await checkRateLimit(request, response, { name: "bridge-chains", limit: 60 }))) return;
 
   const chains = Object.keys(MAINNET_CHAIN_IDS).map((chainKey) => {
     const assets = [NATIVE_SYMBOL[chainKey]];

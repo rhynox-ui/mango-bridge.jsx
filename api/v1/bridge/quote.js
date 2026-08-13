@@ -16,6 +16,7 @@
 // chainData.js instead.
 
 import { MAINNET_CHAIN_IDS, currencyAddress, ASSET_ONCHAIN_DECIMALS } from "../../../src/chainData.js";
+import { checkRateLimit } from "../../rateLimit.js";
 
 const RELAY_QUOTE_URL = "https://api.relay.link/quote/v2";
 
@@ -26,6 +27,8 @@ export default async function handler(request, response) {
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });
   }
+
+  if (!(await checkRateLimit(request, response, { name: "bridge-quote", limit: 15 }))) return;
 
   const { from, to, fromAsset, toAsset, amount, userAddress, recipient } = request.query;
 

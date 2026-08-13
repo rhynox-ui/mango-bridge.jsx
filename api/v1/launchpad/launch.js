@@ -9,6 +9,7 @@
 // `data`, and `value`, and send it through your own wallet.
 
 import { encodeFunctionData, isAddress } from "viem";
+import { checkRateLimit } from "../../rateLimit.js";
 
 const LAUNCHPAD_FACTORY_ADDRESS = "0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E912A"; // points at Hook v4
 const ROBINHOOD_CHAIN_ID = 4663;
@@ -34,6 +35,8 @@ export default async function handler(request, response) {
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });
   }
+
+  if (!(await checkRateLimit(request, response, { name: "launchpad-launch", limit: 20 }))) return;
 
   const { name, symbol, creator, devBuyEth } = request.query;
 

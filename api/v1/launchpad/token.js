@@ -6,6 +6,7 @@
 // shared Blob cache as the app's own token detail page.
 
 import { fetchRealLaunches, fetchRealTrades, fetchRealHolders, readCache, writeCache, LAUNCHES_CACHE_TTL_MS } from "../../token-activity.js";
+import { checkRateLimit } from "../../rateLimit.js";
 
 const CACHE_TTL_MS = 30_000;
 
@@ -16,6 +17,8 @@ export default async function handler(request, response) {
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });
   }
+
+  if (!(await checkRateLimit(request, response, { name: "launchpad-token", limit: 20 }))) return;
 
   const { address } = request.query;
   if (!address) {

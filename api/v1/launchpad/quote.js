@@ -16,6 +16,7 @@
 // at execution time.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, parseAbiParameters } from "viem";
+import { checkRateLimit } from "../../rateLimit.js";
 
 const LAUNCHPAD_HOOK_ADDRESS = "0x6df44617b8C13AB961dCe5097F9375AE6BE09044";
 const STATE_VIEW_ADDRESS = "0xF3334192D15450CdD385c8B70e03f9A6bD9E673b";
@@ -57,6 +58,8 @@ export default async function handler(request, response) {
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });
   }
+
+  if (!(await checkRateLimit(request, response, { name: "launchpad-quote", limit: 20 }))) return;
 
   const { tokenAddress, side, slippagePercent } = request.query;
 

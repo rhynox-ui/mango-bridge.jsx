@@ -41,7 +41,7 @@ For each transfer, the app picks the safest available mechanism for that specifi
 
 Solana isn't EVM-compatible — a genuinely different blockchain architecture, not just another chain in the same list as the rest. Two real, concrete consequences:
 
-- **Two separate wallets, not one.** Any route touching Solana — as source or destination — needs both an EVM wallet (Browser Wallet or WalletConnect) and a separate Solana wallet, connected via OKX Connect. The app prompts directly for whichever one is still missing, right in the bridge form.
+- **Two separate wallets, not one.** Any route touching Solana — as source or destination — needs both an EVM wallet (connected via Reown AppKit — MetaMask, Coinbase Wallet, Trust Wallet, WalletConnect, and hundreds more) and a separate Solana wallet (OKX Connect, or Phantom/Solflare/Coinbase/Trust via AppKit's own Solana adapter). The app prompts directly for whichever one is still missing, right in the bridge form.
 - **A different execution path.** Solana-sourced transfers sign and submit through Relay's own official SDK (`@relayprotocol/relay-sdk` + `@relayprotocol/relay-svm-wallet-adapter`), using Solana's real transaction format — not the wagmi-based signing used for every EVM-to-EVM route. Both directions are supported: Solana → EVM and EVM → Solana.
 
 ## Fees
@@ -110,10 +110,12 @@ Mango never takes custody of user funds at any point, on either the bridge or th
 
 - **React + Vite**, Tailwind CSS
 - **wagmi / viem** for EVM wallet connection and most on-chain calls
+- **Reown AppKit** (`@reown/appkit` + `@reown/appkit-adapter-wagmi` + `@reown/appkit-adapter-solana`) for the actual wallet-connect modal — a full, searchable directory of EVM wallets, layered on top of the same wagmi config above rather than replacing it, plus most of the non-OKX Solana wallet options (Phantom, Solflare, Coinbase, Trust)
 - **ethers v5** specifically for the Arbitrum integration (`@arbitrum/sdk` expects ethers v5 objects internally, not v6 — different chain-ID representations between the two versions caused a real bug during development, documented in `src/arbbridge.js`)
 - **@wormhole-foundation/sdk** for the Wormhole integration
 - **@web3icons/react** for real, official chain/token logos — static imports only, confirmed against the library's own documented examples one at a time (its dynamic lookup entry point requires a `<Suspense>` boundary this app doesn't have, and caused a real production crash before this was caught)
-- **@okxconnect/universal-provider + @okxconnect/solana-provider** for Solana wallet connection — genuinely separate from wagmi, since Solana isn't EVM
+- **@okxconnect/universal-provider + @okxconnect/solana-provider** for OKX's own Solana wallet connection — genuinely separate from both wagmi and AppKit's Solana adapter, since Solana isn't EVM and OKX's execution path is the only one proven against a real Solana-sourced transfer so far (see `src/SolanaWalletContext.jsx`)
+- **@solana/wallet-adapter-wallets** for the other Solana wallet adapters AppKit's SolanaAdapter connects through
 - **@relayprotocol/relay-sdk + @relayprotocol/relay-svm-wallet-adapter** for Solana-sourced transfer execution specifically — Solana transactions can't go through the same wagmi-based signing used for every EVM route
 - **vite-plugin-node-polyfills** — `@solana/web3.js` expects Node's `Buffer` global, which browsers don't provide natively
 
@@ -129,7 +131,9 @@ npm run dev
 ```
 src/
   App.jsx                     — main UI, routing logic, transaction flow
-  wagmi.js                    — chain definitions and wallet config
+  wagmi.js                    — chain definitions and wallet config (builds the wagmi Config via AppKit's WagmiAdapter)
+  appkit.js                   — Reown AppKit wiring: the wallet-connect modal, mainnet-only network list, Solana adapter
+  chainData.js                 — pure, platform-agnostic chain/currency data shared by the frontend and api/v1's serverless functions
   networkMode.js               — network mode (mainnet-only)
   cctp.js                      — Circle CCTP integration
   opbridge.js                  — Base (OP Stack) bridge integration
@@ -137,7 +141,7 @@ src/
   wormholebridge.js            — Wormhole integration (both directions)
   relaybridge.js                — Relay Protocol integration (EVM routes + recipient/currency resolution shared with the Solana path)
   relaySdkSolanaExecution.js   — Solana-sourced transfer execution via Relay's own SDK
-  SolanaWalletContext.jsx      — shared Solana connection state (OKX Connect), used across the app
+  SolanaWalletContext.jsx      — shared Solana connection state (OKX Connect specifically), used across the app
   SolanaConnect.jsx            — isolated Solana connection test page, reachable at ?test=solana
   multiAssetBalances.js        — real, live balance fetching for every asset on the current chain, EVM + Solana
   Launchpad.jsx                — token launch and trading UI
@@ -147,10 +151,18 @@ api/
   token-activity.js            — server-side, cached launch/trade/holder data, filtered to only Hook-verified launches
   blob-upload.js                — logo upload handling
   logo-registry.js              — logo URL registry
+  v1/
+    launchpad/tokens.js, token.js, quote.js, launch.js  — public REST endpoints; see API.md
+    bridge/chains.js, quote.js                          — public REST endpoints; see API.md
+
+sdk/
+  mango-sdk.js                 — thin JS client for the api/v1 endpoints above
 
 contracts/
   MangoLaunchFactory.sol, MangoLaunchHook.sol, MangoLaunchRegistry.sol, MangoLaunchRouter.sol, MangoLaunchToken.sol — see "The Launchpad" above for live addresses and version history
 ```
+
+See `API.md` for the full public REST API reference and `sdk/mango-sdk.js` for the accompanying JS client.
 
 ---
 
