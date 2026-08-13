@@ -400,6 +400,49 @@ function HolderConcentrationBar({ holders, P }) {
   );
 }
 
+// Real, live embedded chart via DexScreener's own documented embed mode
+// (?embed=1) — confirmed DexScreener genuinely indexes Robinhood Chain
+// under the "robinhood" slug (dexscreener.com/robinhood), same chain slug
+// already used by the "View chart" external link below. theme is passed
+// through from the app's own light/dark toggle so the embed actually
+// matches instead of always forcing one look.
+//
+// Gated on hasTrades rather than always attempting the iframe: this app's
+// marketCapUsd is literally the sum of accrued trading fees (see
+// CreateLaunchModal/TokenDetailView comments elsewhere in this file), so
+// $0 means zero trades ever happened, by construction — not an estimate.
+// A pair DexScreener has never seen a swap for won't have a chart to show,
+// so this shows the same honest "no trades yet" language used everywhere
+// else in this file instead of embedding a guaranteed-empty iframe.
+function DexScreenerChart({ tokenAddress, hasTrades, theme, P }) {
+  const [loaded, setLoaded] = useState(false);
+  if (!hasTrades) {
+    return (
+      <div className="rounded-2xl p-4 mb-3 flex flex-col items-center justify-center text-center gap-1.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, height: 260 }}>
+        <BarChart3 size={22} color={P.textMuted} />
+        <div className="text-[12.5px] font-medium" style={{ color: P.textPrimary }}>No trades yet</div>
+        <div className="text-[11px]" style={{ color: P.textMuted, maxWidth: 220 }}>The chart appears here once the first trade happens.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-2xl overflow-hidden mb-3 relative" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, height: 380 }}>
+      {!loaded && (
+        <div className="absolute inset-0 flex items-center justify-center text-[12px]" style={{ color: P.textMuted }}>
+          Loading chart…
+        </div>
+      )}
+      <iframe
+        title="Token chart"
+        src={`https://dexscreener.com/robinhood/${tokenAddress}?embed=1&theme=${theme === "dark" ? "dark" : "light"}&trades=0&info=0`}
+        style={{ width: "100%", height: "100%", border: "none", opacity: loaded ? 1 : 0 }}
+        onLoad={() => setLoaded(true)}
+        loading="lazy"
+      />
+    </div>
+  );
+}
+
 function TokenActivityPanel({ token, P }) {
   const [tab, setTab] = useState("trades");
   const [trades, setTrades] = useState(null);
@@ -517,7 +560,7 @@ function TokenActivityPanel({ token, P }) {
   );
 }
 
-function TokenDetailView({ token, onBack, P }) {
+function TokenDetailView({ token, onBack, P, theme }) {
   const [amount, setAmount] = useState("");
   const [side, setSide] = useState("buy");
   const { address, isConnected } = useAccount();
@@ -766,6 +809,8 @@ function TokenDetailView({ token, onBack, P }) {
         </div>
       </div>
 
+      <DexScreenerChart tokenAddress={token.tokenAddress} hasTrades={liveProgress.marketCapUsd > 0} theme={theme} P={P} />
+
       <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
         <div className="flex rounded-xl p-1 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           <button
@@ -870,6 +915,7 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
   // no real data source yet (see below), so it's not a good default.
   const [sortChip, setSortChip] = useState("Market cap");
   const [rangeChip, setRangeChip] = useState("All");
+  const [query, setQuery] = useState("");
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
@@ -891,19 +937,29 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
     boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
   });
 
-  // Real sorting/filtering against real fields (marketCapUsd, createdAt).
-  // "Volume" and "Recent buys" have no real data source — computing either
-  // needs either an indexer or event-log aggregation across every pool,
-  // neither of which exist yet. Rather than silently do nothing or fake a
-  // sort order, selecting them shows an honest message instead of a list.
-  const hasRealDataForSort = sortChip === "Market cap" || sortChip === "Newest";
+  // Real sorting/filtering against real fields (marketCapUsd, createdAt,
+  // priceChange24h — the last one already comes back real from
+  // getRealLaunches, same field TokenCard already displays, so "Top
+  // gainers" costs nothing new to compute). "Recent buys" still has no
+  // real data source — that needs an indexer or event-log aggregation
+  // across every pool, neither of which exist yet. Rather than silently do
+  // nothing or fake a sort order, selecting it shows an honest message
+  // instead of a list.
+  const hasRealDataForSort = sortChip !== "Recent buys";
 
   const now = Date.now();
   const rangeMs = rangeChip === "24h" ? 24 * 3600_000 : rangeChip === "7d" ? 7 * 24 * 3600_000 : Infinity;
   const rangeFiltered = tokens.filter((t) => now - t.createdAt <= rangeMs);
 
-  const sorted = [...rangeFiltered].sort((a, b) =>
-    sortChip === "Newest" ? b.createdAt - a.createdAt : b.marketCapUsd - a.marketCapUsd
+  const q = query.trim().toLowerCase();
+  const searched = q
+    ? rangeFiltered.filter((t) => t.name.toLowerCase().includes(q) || t.symbol.toLowerCase().includes(q))
+    : rangeFiltered;
+
+  const sorted = [...searched].sort((a, b) =>
+    sortChip === "Newest" ? b.createdAt - a.createdAt
+      : sortChip === "Top gainers" ? b.priceChange24h - a.priceChange24h
+      : b.marketCapUsd - a.marketCapUsd
   );
 
   return (
@@ -913,8 +969,19 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
         <div className="text-[12px]" style={{ color: P.textMuted }}>Tokens still climbing toward graduation.</div>
       </div>
 
-      <div className="flex gap-1 mt-3 mb-2 overflow-x-auto w-full pr-4" style={{ scrollbarWidth: "none" }}>
-        {["Market cap", "Newest", "Recent buys", "Volume"].map((c) => (
+      <div className="relative mt-3 mb-2.5">
+        <Search size={14} color={P.textMuted} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by name or ticker"
+          className="w-full pl-8 pr-3 py-2 rounded-full text-[12.5px]"
+          style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}
+        />
+      </div>
+
+      <div className="flex gap-1 mb-2 overflow-x-auto w-full pr-4" style={{ scrollbarWidth: "none" }}>
+        {["Market cap", "Newest", "Top gainers", "Recent buys"].map((c) => (
           <button key={c} onClick={() => setSortChip(c)} className="px-2.5 py-1.5 rounded-full text-[11px] font-medium whitespace-nowrap shrink-0" style={chipStyle(sortChip === c)}>{c}</button>
         ))}
       </div>
@@ -933,13 +1000,17 @@ function ExplorePage({ onSelectToken, refreshKey, P }) {
       ) : !hasRealDataForSort ? (
         <div className="flex flex-col items-center text-center gap-2 py-16">
           <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{sortChip} isn't available yet</div>
-          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 240 }}>This needs trade-history data this app doesn't track yet. Try Market cap or Newest instead — both are real.</div>
+          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 240 }}>This needs trade-history data this app doesn't track yet. Try Market cap, Newest, or Top gainers instead — all three are real.</div>
         </div>
       ) : sorted.length === 0 ? (
         <div className="flex flex-col items-center text-center gap-2 py-16">
           <Rocket size={26} color={P.textMuted} />
-          <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{tokens.length === 0 ? "No tokens launched yet" : "No tokens in this range"}</div>
-          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 220 }}>{tokens.length === 0 ? "This is real — reading directly from the Registry contract. Be the first to launch one." : "Try a wider time range."}</div>
+          <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>
+            {tokens.length === 0 ? "No tokens launched yet" : q ? `No tokens match "${query.trim()}"` : "No tokens in this range"}
+          </div>
+          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 220 }}>
+            {tokens.length === 0 ? "This is real — reading directly from the Registry contract. Be the first to launch one." : q ? "Try a different name or ticker." : "Try a wider time range."}
+          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-2.5">
@@ -1092,7 +1163,7 @@ function AnalyticsPage({ P }) {
   );
 }
 
-export function LaunchpadTab({ P }) {
+export function LaunchpadTab({ P, theme }) {
   const { address, isConnected, chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
   const [view, setView] = useState("explore");
@@ -1169,7 +1240,7 @@ export function LaunchpadTab({ P }) {
       </div>
 
       {view === "detail" && selectedToken ? (
-        <TokenDetailView token={selectedToken} onBack={() => setView("explore")} P={P} />
+        <TokenDetailView token={selectedToken} onBack={() => setView("explore")} P={P} theme={theme} />
       ) : view === "profile" ? (
         <ProfilePage onSelectToken={(t) => { setSelectedToken(t); setView("detail"); }} P={P} />
       ) : view === "analytics" ? (

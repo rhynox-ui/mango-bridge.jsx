@@ -2348,7 +2348,7 @@ export default function MangoBridge() {
           ) : tab === "portfolio" ? (
             <PortfolioTab address={address} connected={connected} P={P} />
           ) : tab === "launchpad" ? (
-            <LaunchpadTab P={P} />
+            <LaunchpadTab P={P} theme={theme} />
           ) : (
             <>
               {/* You send */}
