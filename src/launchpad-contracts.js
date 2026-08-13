@@ -496,6 +496,17 @@ export async function getTokenHolders({ tokenAddress }) {
   return data;
 }
 
+// Real, protocol-wide trading volume — a genuine scan over every Swap
+// event across every Mango pool on Robinhood Chain's shared PoolManager,
+// not an estimate. See api/token-activity.js's fetchProtocolStats for why
+// this deliberately does NOT also cover "total creator fees paid out."
+export async function getProtocolStats() {
+  const res = await fetch("/api/token-activity?type=protocol-stats");
+  if (!res.ok) throw new Error("Failed to load protocol stats");
+  const { data } = await res.json();
+  return data;
+}
+
 // ============================================================================
 // Real-time progress refresh — used right after a trade completes, so the
 // graduation bar and market cap reflect the trade that just happened
