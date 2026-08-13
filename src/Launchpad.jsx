@@ -1388,8 +1388,7 @@ export function LaunchpadTab({ P, theme, deepLinkTokenAddress, launchpadNetwork 
       {launchpadNetwork === "solana" ? (
         <div className="flex flex-col items-center text-center gap-2 py-20">
           <Clock size={26} color={P.textMuted} />
-          <div className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Solana launchpad coming soon</div>
-          <div className="text-[12px]" style={{ color: P.textMuted, maxWidth: 260 }}>Same fee split as Robinhood Chain — 1% buys, 4%/1% sells pre/post graduation, 70/30 creator/protocol. We're still figuring out the right on-chain design since Solana has no direct equivalent to Uniswap's hooks.</div>
+          <div className="text-[16px] font-semibold" style={{ color: P.textPrimary }}>Coming soon</div>
         </div>
       ) : (
         <>
