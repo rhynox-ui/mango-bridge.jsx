@@ -365,14 +365,14 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
 
 function TradeRowSkeleton({ P }) {
   return (
-    <div className="flex items-center justify-between py-2.5" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
+    <div className="flex items-center justify-between py-2" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
       <div className="flex flex-col gap-1.5">
-        <div className="w-24 h-4 rounded" style={{ background: P.pillBg }} />
-        <div className="w-16 h-3 rounded" style={{ background: P.pillBg }} />
+        <div className="w-24 h-3.5 rounded" style={{ background: P.pillBg }} />
+        <div className="w-16 h-2.5 rounded" style={{ background: P.pillBg }} />
       </div>
       <div className="flex flex-col items-end gap-1.5">
-        <div className="w-12 h-3 rounded" style={{ background: P.pillBg }} />
-        <div className="w-16 h-3 rounded" style={{ background: P.pillBg }} />
+        <div className="w-12 h-2.5 rounded" style={{ background: P.pillBg }} />
+        <div className="w-16 h-2.5 rounded" style={{ background: P.pillBg }} />
       </div>
     </div>
   );
@@ -388,10 +388,10 @@ function HolderConcentrationBar({ holders, P }) {
   const color = top10Pct > 50 ? "#D92D20" : top10Pct > 20 ? "#8A5A00" : LIME_DEEP;
   const trackColor = top10Pct > 50 ? "#D92D2015" : top10Pct > 20 ? "#FCEFD9" : `${LIME}1A`;
   return (
-    <div className="mb-3 pb-3" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
+    <div className="mb-2.5 pb-2.5" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[11.5px] font-medium" style={{ color: P.textSecondary }}>Top 10 holders</span>
-        <span className="text-[12px] font-mono font-semibold" style={{ color }}>{top10Pct.toFixed(1)}%</span>
+        <span className="text-[11px] font-medium" style={{ color: P.textSecondary }}>Top 10 holders</span>
+        <span className="text-[11.5px] font-mono font-semibold" style={{ color }}>{top10Pct.toFixed(1)}%</span>
       </div>
       <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: trackColor }}>
         <div className="h-full rounded-full" style={{ width: `${Math.min(top10Pct, 100)}%`, background: color }} />
@@ -475,18 +475,18 @@ function TokenActivityPanel({ token, P }) {
   }, [token.tokenAddress]);
 
   return (
-    <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-      <div className="flex rounded-xl p-1 mb-3" style={{ background: P.pillBg }}>
+    <div className="rounded-2xl p-3.5 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+      <div className="flex rounded-xl p-1 mb-2.5" style={{ background: P.pillBg }}>
         <button
           onClick={() => setTab("trades")}
-          className="flex-1 py-2 rounded-lg text-[12.5px] font-semibold"
+          className="flex-1 py-1.5 rounded-lg text-[12px] font-semibold"
           style={{ background: tab === "trades" ? P.panel : "transparent", color: tab === "trades" ? P.textPrimary : P.textSecondary }}
         >
           Recent Trades
         </button>
         <button
           onClick={() => setTab("holders")}
-          className="flex-1 py-2 rounded-lg text-[12.5px] font-semibold"
+          className="flex-1 py-1.5 rounded-lg text-[12px] font-semibold"
           style={{ background: tab === "holders" ? P.panel : "transparent", color: tab === "holders" ? P.textPrimary : P.textSecondary }}
         >
           Holders
@@ -497,30 +497,30 @@ function TokenActivityPanel({ token, P }) {
         trades === null ? (
           <div>{[1, 2, 3, 4].map((i) => <TradeRowSkeleton key={i} P={P} />)}</div>
         ) : tradesError ? (
-          <div className="text-center py-6 text-[12px]" style={{ color: "#D92D20" }}>Couldn't load trades: {tradesError}</div>
+          <div className="text-center py-5 text-[11.5px]" style={{ color: "#D92D20" }}>Couldn't load trades: {tradesError}</div>
         ) : trades.length === 0 ? (
-          <div className="text-center py-8 text-[12.5px]" style={{ color: P.textMuted }}>No trades yet — be the first.</div>
+          <div className="text-center py-6 text-[12px]" style={{ color: P.textMuted }}>No trades yet — be the first.</div>
         ) : (
-          <div className="max-h-[360px] overflow-y-auto flex flex-col">
+          <div className="max-h-[300px] overflow-y-auto flex flex-col">
             {trades.map((t) => (
               <a
                 key={t.hash}
                 href={`https://robinhoodchain.blockscout.com/tx/${t.hash}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-between py-2.5"
+                className="flex items-center justify-between py-2"
                 style={{ borderBottom: `1px solid ${P.panelBorder}` }}
               >
                 <div>
                   <div className="flex items-center gap-1.5">
                     <span style={{ color: t.isBuy ? LIME_DEEP : "#D92D20" }}>{t.isBuy ? "↗" : "↘"}</span>
-                    <span className="text-[14px] font-bold font-mono" style={{ color: P.textPrimary }}>{fmt(t.tokenAmount, 0)} {token.symbol}</span>
+                    <span className="text-[13px] font-bold font-mono" style={{ color: P.textPrimary }}>{fmt(t.tokenAmount, 0)} {token.symbol}</span>
                   </div>
-                  <div className="text-[11px] font-mono" style={{ color: P.textMuted }}>{t.trader.slice(0, 6)}...{t.trader.slice(-4)}</div>
+                  <div className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{t.trader.slice(0, 6)}...{t.trader.slice(-4)}</div>
                 </div>
                 <div className="text-right">
-                  <div className="text-[11px]" style={{ color: P.textMuted }}>{timeAgo(t.timestamp)}</div>
-                  <div className="text-[12px] font-mono" style={{ color: P.textSecondary }}>{t.ethAmount.toFixed(5)} ETH</div>
+                  <div className="text-[10.5px]" style={{ color: P.textMuted }}>{timeAgo(t.timestamp)}</div>
+                  <div className="text-[11.5px] font-mono" style={{ color: P.textSecondary }}>{t.ethAmount.toFixed(5)} ETH</div>
                 </div>
               </a>
             ))}
@@ -529,11 +529,11 @@ function TokenActivityPanel({ token, P }) {
       ) : holders === null ? (
         <div>{[1, 2, 3, 4].map((i) => <TradeRowSkeleton key={i} P={P} />)}</div>
       ) : holdersError ? (
-        <div className="text-center py-6 text-[12px]" style={{ color: "#D92D20" }}>Couldn't load holders: {holdersError}</div>
+        <div className="text-center py-5 text-[11.5px]" style={{ color: "#D92D20" }}>Couldn't load holders: {holdersError}</div>
       ) : holders.length === 0 ? (
-        <div className="text-center py-8 text-[12.5px]" style={{ color: P.textMuted }}>No holders yet.</div>
+        <div className="text-center py-6 text-[12px]" style={{ color: P.textMuted }}>No holders yet.</div>
       ) : (
-        <div className="max-h-[360px] overflow-y-auto flex flex-col">
+        <div className="max-h-[300px] overflow-y-auto flex flex-col">
           <HolderConcentrationBar holders={holders} P={P} />
           {holders.map((h, i) => (
             <a
@@ -541,16 +541,16 @@ function TokenActivityPanel({ token, P }) {
               href={`https://robinhoodchain.blockscout.com/address/${h.address}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-between py-2.5"
+              className="flex items-center justify-between py-2"
               style={{ borderBottom: `1px solid ${P.panelBorder}` }}
             >
               <div className="flex items-center gap-2.5">
-                <span className="text-[11px] font-mono w-5" style={{ color: P.textMuted }}>#{i + 1}</span>
-                <span className="text-[12.5px] font-mono" style={{ color: P.textPrimary }}>{h.address.slice(0, 6)}...{h.address.slice(-4)}</span>
+                <span className="text-[10.5px] font-mono w-5" style={{ color: P.textMuted }}>#{i + 1}</span>
+                <span className="text-[12px] font-mono" style={{ color: P.textPrimary }}>{h.address.slice(0, 6)}...{h.address.slice(-4)}</span>
               </div>
               <div className="text-right">
-                <div className="text-[12.5px] font-mono font-semibold" style={{ color: P.textPrimary }}>{fmt(h.balance, 0)}</div>
-                <div className="text-[11px]" style={{ color: P.textMuted }}>{h.percentOfSupply.toFixed(2)}%</div>
+                <div className="text-[12px] font-mono font-semibold" style={{ color: P.textPrimary }}>{fmt(h.balance, 0)}</div>
+                <div className="text-[10.5px]" style={{ color: P.textMuted }}>{h.percentOfSupply.toFixed(2)}%</div>
               </div>
             </a>
           ))}
@@ -726,113 +726,125 @@ function TokenDetailView({ token, onBack, P, theme }) {
 
   return (
     <div>
-      <button onClick={onBack} className="flex items-center gap-1.5 mb-4 text-[13px]" style={{ color: P.textSecondary }}>
-        <ArrowLeft size={15} /> Back
+      <button onClick={onBack} className="flex items-center gap-1.5 mb-3 text-[12.5px]" style={{ color: P.textSecondary }}>
+        <ArrowLeft size={14} /> Back
       </button>
 
-      <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-        <div className="flex items-center gap-3 mb-3">
-          <div className="relative">
-            <TokenAvatar name={token.name} hue={token.hue} address={token.tokenAddress} logoUrl={localLogoUrl || token.logoUrl} size={52} />
+      {/* One compact header instead of two full-size cards — identity,
+          graduation progress, stats, and addresses/socials all in one
+          panel with thin dividers between sections. The chart is the
+          actual point of this page now; this just needs to orient you
+          before you get there, not compete with it for space. */}
+      <div className="rounded-2xl p-3.5 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+        <div className="flex items-center gap-2.5">
+          <div className="relative shrink-0">
+            <TokenAvatar name={token.name} hue={token.hue} address={token.tokenAddress} logoUrl={localLogoUrl || token.logoUrl} size={42} />
             {isCreator && (
               <button
                 onClick={() => editFileInputRef.current?.click()}
                 disabled={editingLogo}
-                className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center"
+                className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center"
                 style={{ background: P.ctaBg, border: `2px solid ${P.panel}` }}
                 title="Update logo"
               >
-                <Plus size={11} color={P.ctaText} />
+                <Plus size={9} color={P.ctaText} />
               </button>
             )}
             <input ref={editFileInputRef} type="file" accept="image/*" onChange={handleLogoUpdate} className="hidden" />
           </div>
-          <div className="min-w-0">
-            <div className="text-[18px] font-display font-semibold" style={{ color: P.textPrimary }}>{token.name}</div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[15px] font-display font-semibold truncate" style={{ color: P.textPrimary }}>{token.name}</span>
+              <span className="text-[11.5px] font-mono shrink-0" style={{ color: P.textMuted }}>${token.symbol}</span>
+            </div>
             {!isCreator && (
-              <div className="text-[10px] mt-0.5" style={{ color: P.textMuted }}>
+              <div className="text-[9.5px] mt-0.5 truncate" style={{ color: P.textMuted }}>
                 {address ? "Connected wallet isn't this token's creator — logo edit unavailable" : "Connect the creator's wallet to edit this token's logo"}
               </div>
             )}
-            <div className="text-[12.5px] font-mono" style={{ color: P.textMuted }}>${token.symbol}</div>
           </div>
-        </div>
-        {logoUpdateStep && (
-          <div className="rounded-lg p-3 mb-2 text-[12.5px] font-medium" style={{ background: `${LIME}15`, border: `1px solid ${LIME}40`, color: LIME_DEEP }}>
-            {logoUpdateStep}
-          </div>
-        )}
-        {logoUpdateError && (
-          <div className="rounded-lg p-3 mb-2 text-[12.5px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
-            <div className="font-semibold mb-0.5">Logo update failed</div>
-            <div>{logoUpdateError}</div>
-          </div>
-        )}
-        <div className="flex flex-col gap-1 pt-2" style={{ borderTop: `1px solid ${P.panelBorder}` }}>
-          <CopyableAddress address={token.tokenAddress} P={P} label="Contract" />
-          <CopyableAddress address={token.creator} P={P} label="Creator" />
-        </div>
-        <a
-          href={`https://dexscreener.com/robinhood/${token.tokenAddress}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1.5 mt-3 py-2 rounded-full text-[12px] font-medium"
-          style={{ background: P.pillBg, color: P.textPrimary, border: `1px solid ${P.panelBorder}` }}
-        >
-          View chart on DexScreener <ExternalLink size={12} />
-        </a>
-        {(token.x || token.tg) && (
-          <div className="flex gap-1.5 mt-2">
-            {token.x && <span className="text-[10.5px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>𝕏 @{token.x}</span>}
-            {token.tg && <span className="text-[10.5px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>✈ {token.tg}</span>}
-          </div>
-        )}
-      </div>
-
-      <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-        <GraduationBar current={liveProgress.marketCapUsd} threshold={liveProgress.graduationThresholdUsd} P={P} />
-        <div className="flex items-center gap-4 mt-3 pt-3" style={{ borderTop: `1px solid ${P.panelBorder}` }}>
-          <div>
-            <div className="text-[10.5px]" style={{ color: P.textMuted }}>Market cap</div>
-            <div className="text-[13px] font-mono font-semibold" style={{ color: P.textPrimary }}>${fmt(liveProgress.marketCapUsd, 0)}</div>
-          </div>
-          <div>
-            <div className="text-[10.5px]" style={{ color: P.textMuted }}>Holders</div>
-            <div className="text-[13px] font-mono font-semibold" style={{ color: P.textPrimary }}>{token.holders}</div>
-          </div>
-          <div>
-            <div className="text-[10.5px]" style={{ color: P.textMuted }}>24h</div>
-            <div className="text-[13px] font-mono font-semibold" style={{ color: token.priceChange24h >= 0 ? LIME_DEEP : "#D92D20" }}>
+          <div className="text-right shrink-0">
+            <div className="text-[9.5px]" style={{ color: P.textMuted }}>24h</div>
+            <div className="text-[12px] font-mono font-semibold" style={{ color: token.priceChange24h >= 0 ? LIME_DEEP : "#D92D20" }}>
               {token.priceChange24h >= 0 ? "+" : ""}{fmt(token.priceChange24h, 1)}%
             </div>
           </div>
         </div>
+
+        {logoUpdateStep && (
+          <div className="rounded-lg p-2.5 mt-2.5 text-[11.5px] font-medium" style={{ background: `${LIME}15`, border: `1px solid ${LIME}40`, color: LIME_DEEP }}>
+            {logoUpdateStep}
+          </div>
+        )}
+        {logoUpdateError && (
+          <div className="rounded-lg p-2.5 mt-2.5 text-[11.5px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
+            <div className="font-semibold mb-0.5">Logo update failed</div>
+            <div>{logoUpdateError}</div>
+          </div>
+        )}
+
+        <div className="mt-2.5 pt-2.5" style={{ borderTop: `1px solid ${P.panelBorder}` }}>
+          <GraduationBar current={liveProgress.marketCapUsd} threshold={liveProgress.graduationThresholdUsd} P={P} size="small" />
+        </div>
+
+        <div className="flex items-center gap-4 mt-2.5 pt-2.5" style={{ borderTop: `1px solid ${P.panelBorder}` }}>
+          <div>
+            <div className="text-[9.5px]" style={{ color: P.textMuted }}>Market cap</div>
+            <div className="text-[12px] font-mono font-semibold" style={{ color: P.textPrimary }}>${fmt(liveProgress.marketCapUsd, 0)}</div>
+          </div>
+          <div>
+            <div className="text-[9.5px]" style={{ color: P.textMuted }}>Holders</div>
+            <div className="text-[12px] font-mono font-semibold" style={{ color: P.textPrimary }}>{token.holders}</div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 mt-2.5 pt-2.5 flex-wrap" style={{ borderTop: `1px solid ${P.panelBorder}` }}>
+          <div className="flex flex-col gap-0.5">
+            <CopyableAddress address={token.tokenAddress} P={P} label="Contract" />
+            <CopyableAddress address={token.creator} P={P} label="Creator" />
+          </div>
+          {(token.x || token.tg) && (
+            <div className="flex gap-1.5">
+              {token.x && <span className="text-[10px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>𝕏 @{token.x}</span>}
+              {token.tg && <span className="text-[10px] px-2 py-0.5 rounded-md" style={{ background: P.pillBg, color: P.textSecondary }}>✈ {token.tg}</span>}
+            </div>
+          )}
+        </div>
       </div>
 
       <DexScreenerChart tokenAddress={token.tokenAddress} hasTrades={liveProgress.marketCapUsd > 0} theme={theme} P={P} />
+      <a
+        href={`https://dexscreener.com/robinhood/${token.tokenAddress}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center justify-center gap-1 mb-2.5 text-[11px] font-medium"
+        style={{ color: P.textMuted, marginTop: -6 }}
+      >
+        Open full chart on DexScreener <ExternalLink size={10} />
+      </a>
 
-      <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-        <div className="flex rounded-xl p-1 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+      <div className="rounded-2xl p-3.5 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+        <div className="flex rounded-xl p-1 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           <button
             onClick={() => setSide("buy")}
-            className="flex-1 py-2 rounded-lg text-[13px] font-semibold"
+            className="flex-1 py-1.5 rounded-lg text-[12.5px] font-semibold"
             style={{ background: side === "buy" ? P.ctaBg : "transparent", color: side === "buy" ? P.ctaText : P.textSecondary }}
           >
             Buy
           </button>
           <button
             onClick={() => setSide("sell")}
-            className="flex-1 py-2 rounded-lg text-[13px] font-semibold"
+            className="flex-1 py-1.5 rounded-lg text-[12.5px] font-semibold"
             style={{ background: side === "sell" ? "#D92D20" : "transparent", color: side === "sell" ? "#fff" : P.textSecondary }}
           >
             Sell
           </button>
         </div>
-        <div className="rounded-lg px-3 py-2.5 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <div className="rounded-lg px-3 py-2 mb-2.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           <div className="flex items-center justify-between mb-0.5 gap-2">
-            <span className="text-[10.5px] shrink-0" style={{ color: P.textMuted }}>Amount {side === "buy" ? "(ETH)" : `(${token.symbol})`}</span>
+            <span className="text-[10px] shrink-0" style={{ color: P.textMuted }}>Amount {side === "buy" ? "(ETH)" : `(${token.symbol})`}</span>
             {isConnected && (
-              <span className="text-[10.5px] font-mono truncate" style={{ color: P.textMuted }}>
+              <span className="text-[10px] font-mono truncate" style={{ color: P.textMuted }}>
                 {side === "buy"
                   ? ethBalanceLoading ? "Loading…" : `Balance: ${parseFloat(ethBalanceData?.formatted || "0").toFixed(4)} ETH`
                   : tokenBalanceLoading ? "Loading…" : `Balance: ${fmt(Number(tokenBalance) / 1e18, 0)} ${token.symbol}`}
@@ -844,16 +856,16 @@ function TokenDetailView({ token, onBack, P, theme }) {
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0"
             inputMode="decimal"
-            className="w-full text-[22px] font-display bg-transparent outline-none"
+            className="w-full text-[19px] font-display bg-transparent outline-none"
             style={{ color: P.textPrimary }}
           />
         </div>
-        <div className="flex gap-1.5 mb-3">
+        <div className="flex gap-1.5 mb-2.5">
           {[25, 50, 100].map((pct) => (
             <button
               key={pct}
               onClick={() => setPercentAmount(pct)}
-              className="flex-1 py-1.5 rounded-lg text-[11.5px] font-medium"
+              className="flex-1 py-1 rounded-lg text-[11px] font-medium"
               style={{ background: P.pillBg, color: P.textSecondary, border: `1px solid ${P.panelBorder}` }}
             >
               {pct}%
@@ -861,9 +873,9 @@ function TokenDetailView({ token, onBack, P, theme }) {
           ))}
         </div>
         {amtNum > 0 && (
-          <div className="rounded-lg px-3 py-2.5 mb-3 flex items-center justify-between" style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}>
-            <span className="text-[11px]" style={{ color: P.textMuted }}>You'll receive (estimate)</span>
-            <span className="text-[13px] font-mono font-semibold" style={{ color: P.textPrimary }}>
+          <div className="rounded-lg px-3 py-2 mb-2.5 flex items-center justify-between" style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}>
+            <span className="text-[10.5px]" style={{ color: P.textMuted }}>You'll receive (estimate)</span>
+            <span className="text-[12.5px] font-mono font-semibold" style={{ color: P.textPrimary }}>
               {side === "buy"
                 ? `${fmt(tokensReceived, 0)} ${token.symbol}`
                 : `${ethReceived.toFixed(5)} ETH`}
@@ -872,14 +884,14 @@ function TokenDetailView({ token, onBack, P, theme }) {
           </div>
         )}
         {!isConnected ? (
-          <div className="text-center py-3 rounded-full font-display font-semibold text-[14px]" style={{ background: P.pillBg, color: P.textMuted }}>
+          <div className="text-center py-2.5 rounded-full font-display font-semibold text-[13.5px]" style={{ background: P.pillBg, color: P.textMuted }}>
             Connect a wallet to trade
           </div>
         ) : (
           <button
             onClick={handleTrade}
             disabled={!amount || trading}
-            className="w-full py-3 rounded-full font-display font-semibold text-[14px]"
+            className="w-full py-2.5 rounded-full font-display font-semibold text-[13.5px]"
             style={{ background: amount && !trading ? (side === "buy" ? P.ctaBg : "#D92D20") : P.pillBg, color: amount && !trading ? (side === "buy" ? P.ctaText : "#fff") : P.textMuted }}
           >
             {trading ? "Trading…" : `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}`}
