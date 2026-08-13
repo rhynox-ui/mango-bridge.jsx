@@ -1,4 +1,15 @@
-import { NetworkEthereum, NetworkBase, NetworkBinanceSmartChain, TokenETH, TokenUSDC, TokenUSDT, TokenBNB } from "@web3icons/react";
+import {
+  NetworkEthereum, NetworkBase, NetworkBinanceSmartChain, TokenETH, TokenUSDC, TokenUSDT, TokenBNB,
+  // Confirmed real, static exports via a live server-render check of this
+  // exact installed package version — same verification bar as the
+  // original four above, not a search-result guess (see the note further
+  // down about why a previous attempt at TokenWBTC/NetworkStablechain was
+  // reverted: NetworkStablechain genuinely doesn't exist, but this batch
+  // was independently re-checked and every name below does).
+  TokenWBTC, TokenAVAX, TokenHYPE, TokenXPL, TokenOKB,
+  NetworkArbitrumOne, NetworkAvalanche, NetworkAbstract, NetworkHyperEvm, NetworkInk, NetworkPlasma, NetworkUnichain, NetworkXLayer,
+  NetworkStable, NetworkRobinhood,
+} from "@web3icons/react";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { parseUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
@@ -278,25 +289,22 @@ function ChainIcon({ id, size }) {
   if (id === "ethereum") return <NetworkEthereum variant="branded" size={s} />;
   if (id === "base") return <NetworkBase variant="branded" size={s} />;
   if (id === "bnb") return <NetworkBinanceSmartChain variant="branded" size={s} />;
+  // Real, confirmed static exports (same live server-render verification as
+  // the asset icons above) — NetworkStable/NetworkRobinhood genuinely exist
+  // even though an earlier attempt at "NetworkStablechain" (wrong name) did
+  // not, and all 8 newly added chains' network icons are confirmed real
+  // too. No runtime API fetch needed for any of these now.
+  if (id === "stable") return <NetworkStable variant="branded" size={s} />;
+  if (id === "robinhood") return <NetworkRobinhood variant="branded" size={s} />;
+  if (id === "arbitrum") return <NetworkArbitrumOne variant="branded" size={s} />;
+  if (id === "avalanche") return <NetworkAvalanche variant="branded" size={s} />;
+  if (id === "abstract") return <NetworkAbstract variant="branded" size={s} />;
+  if (id === "hyperevm") return <NetworkHyperEvm variant="branded" size={s} />;
+  if (id === "ink") return <NetworkInk variant="branded" size={s} />;
+  if (id === "plasma") return <NetworkPlasma variant="branded" size={s} />;
+  if (id === "unichain") return <NetworkUnichain variant="branded" size={s} />;
+  if (id === "xlayer") return <NetworkXLayer variant="branded" size={s} />;
   const sHand = size * 0.56;
-  const stableFallback = (
-    <svg width={sHand} height={sHand} viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" fill="none" />
-      <path d="M7 13c1-2 3-2 4 0s3 2 4 0" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" />
-    </svg>
-  );
-  const robinhoodFallback = (
-    <svg width={sHand} height={sHand} viewBox="0 0 24 24" fill="none">
-      <path d="M12 3l7 6-7 12-7-12 7-6z" fill="currentColor" opacity="0.85" />
-      <path d="M12 3l7 6h-14l7-6z" fill="currentColor" />
-    </svg>
-  );
-  // Both use Relay's own /chains API for a real icon where available — a
-  // runtime fetch, not a build-time import, so it can never break the build
-  // the way guessing @web3icons/react's export names did. Falls back to the
-  // existing hand-drawn versions cleanly if Relay doesn't have one.
-  if (id === "stable") return <RelayChainIcon chainId={988} size={s} fallback={stableFallback} />;
-  if (id === "robinhood") return <RelayChainIcon chainId={4663} size={s} fallback={robinhoodFallback} />;
   const solanaFallback = (
     <svg width={sHand} height={sHand} viewBox="0 0 24 24" fill="none">
       <path d="M4 6.5L7 4h13l-3 2.5H4z" fill="currentColor" opacity="0.9" />
@@ -309,25 +317,12 @@ function ChainIcon({ id, size }) {
   // making it look like the chain selector wasn't actually changing
   // anything, even though the underlying state genuinely was.
   if (id === "solana") return <SolanaLogoIcon size={s} fallback={solanaFallback} />;
-  // The 8 newly added chains — same RelayChainIcon runtime-fetch pattern as
-  // stable/robinhood above, using each chain's real, verified mainnet chain
-  // id (cross-checked against wagmi/chains — see src/wagmi.js). No
-  // hand-drawn icon exists for any of these yet, so the fallback is a
-  // generic labeled circle rather than a guessed brand shape.
-  const genericFallback = (label) => (
+  const robinhoodFallback = (
     <svg width={sHand} height={sHand} viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" fill="none" />
-      <text x="12" y="15" fontSize="7" fontWeight="700" textAnchor="middle" fill="currentColor">{label}</text>
+      <path d="M12 3l7 6-7 12-7-12 7-6z" fill="currentColor" opacity="0.85" />
+      <path d="M12 3l7 6h-14l7-6z" fill="currentColor" />
     </svg>
   );
-  if (id === "arbitrum") return <RelayChainIcon chainId={42161} size={s} fallback={genericFallback("ARB")} />;
-  if (id === "avalanche") return <RelayChainIcon chainId={43114} size={s} fallback={genericFallback("AVAX")} />;
-  if (id === "abstract") return <RelayChainIcon chainId={2741} size={s} fallback={genericFallback("ABS")} />;
-  if (id === "hyperevm") return <RelayChainIcon chainId={999} size={s} fallback={genericFallback("HYPE")} />;
-  if (id === "ink") return <RelayChainIcon chainId={57073} size={s} fallback={genericFallback("INK")} />;
-  if (id === "plasma") return <RelayChainIcon chainId={9745} size={s} fallback={genericFallback("XPL")} />;
-  if (id === "unichain") return <RelayChainIcon chainId={130} size={s} fallback={genericFallback("UNI")} />;
-  if (id === "xlayer") return <RelayChainIcon chainId={196} size={s} fallback={genericFallback("OKB")} />;
   return robinhoodFallback;
 }
 
@@ -343,14 +338,19 @@ function ChainBadge({ id, size = 18 }) {
       </span>
     );
   }
-  // Real fix, same reasoning across all four: ethereum/base/bnb (via
-  // @web3icons/react's "branded" variant) and Solana (icons.sol.new) are
-  // all complete, self-contained badge icons with their own color/shape
-  // already baked in - wrapping any of them in another background circle
-  // created a visible double-circle effect. Only the hand-drawn
-  // fallbacks (stable, robinhood, and Solana's own fallback) genuinely
-  // need the wrapping for contrast, since those are simple line-art.
-  const SELF_CONTAINED_BADGE_CHAINS = ["ethereum", "base", "bnb", "solana"];
+  // Real fix, same reasoning across all of these: every chain below renders
+  // via @web3icons/react's "branded" variant (or, for Solana, its own
+  // official logomark from icons.sol.new) — all complete, self-contained
+  // badge icons with their own color/shape already baked in. Wrapping any
+  // of them in another background circle created a visible double-circle
+  // effect. Only the plain hand-drawn robinhood-arrow fallback (used for a
+  // chain id ChainIcon doesn't otherwise recognize) genuinely needs the
+  // wrapping for contrast, since that's simple line-art with no color of
+  // its own.
+  const SELF_CONTAINED_BADGE_CHAINS = [
+    "ethereum", "base", "bnb", "solana", "stable", "robinhood",
+    "arbitrum", "avalanche", "abstract", "hyperevm", "ink", "plasma", "unichain", "xlayer",
+  ];
   if (SELF_CONTAINED_BADGE_CHAINS.includes(id)) {
     return (
       <span className="flex items-center justify-center rounded-full shrink-0 overflow-hidden" style={{ width: size, height: size }}>
@@ -476,56 +476,6 @@ function HandDrawnAssetGlyph({ symbol, size, color }) {
   );
 }
 
-// Fetched once, cached at module scope — Relay's own /chains API returns a
-// logoURI per chain (confirmed via their own docs examples, e.g.
-// "https://assets.relay.link/icons/1/light.png" for Ethereum). This is
-// runtime data, not a build-time import, so unlike the icon-library attempts
-// earlier, a wrong or missing icon here can never break the build — it just
-// falls back to the hand-drawn version, same as everything else.
-let relayChainsCache = null;
-let relayChainsPromise = null;
-async function getRelayChainIconUrl(chainId) {
-  if (!relayChainsCache) {
-    if (!relayChainsPromise) {
-      relayChainsPromise = fetch("https://api.relay.link/chains")
-        .then((r) => r.json())
-        .then((data) => { relayChainsCache = data?.chains || []; return relayChainsCache; })
-        .catch(() => { relayChainsCache = []; return relayChainsCache; });
-    }
-    await relayChainsPromise;
-  }
-  const chain = relayChainsCache.find((c) => c.id === chainId);
-  // Real bug fix: this previously read the native CURRENCY's icon
-  // (chain.currency.metadata.logoURI), which for many chains is just a
-  // generic ETH mark reused across dozens of L2s — not distinctive to the
-  // chain itself. chain.iconUrl is Relay's own actual per-chain icon,
-  // confirmed present directly in their /chains response (e.g. Robinhood
-  // Chain's own real icon, not a reused ETH logo).
-  return chain?.iconUrl || chain?.currency?.metadata?.logoURI || null;
-}
-
-function RelayChainIcon({ chainId, size, fallback }) {
-  const [url, setUrl] = useState(undefined); // undefined = loading, null = not found, string = found
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    getRelayChainIconUrl(chainId).then((u) => { if (!cancelled) setUrl(u); });
-    return () => { cancelled = true; };
-  }, [chainId]);
-
-  if (url === undefined || url === null || failed) return fallback;
-  return (
-    <img
-      src={url}
-      alt=""
-      width={size}
-      height={size}
-      style={{ width: size, height: size, objectFit: "contain" }}
-      onError={() => setFailed(true)}
-    />
-  );
-}
-
 function USDGIcon({ size, color }) {
   const [failed, setFailed] = useState(false);
   if (failed) return <HandDrawnAssetGlyph symbol="USDG" size={size} color={color} />;
@@ -564,27 +514,13 @@ function SolanaLogoIcon({ size, fallback }) {
   );
 }
 
-// Real, confirmed URL — found directly in Relay's own /chains response,
-// under Stable chain's featuredTokens entry for USDT0. Not guessed.
-function USDT0Icon({ size, color }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return <HandDrawnAssetGlyph symbol="USDT0" size={size} color={color} />;
-  return (
-    <img
-      // Real, confirmed URL from USDT0's own official media kit
-      // (docs.usdt0.to/resources/mediakit) — explicitly labeled "Icon —
-      // simplified symbol for smaller form factors," unlike the earlier
-      // navbar logo, which risked being a full wordmark rather than an
-      // icon-only mark.
-      src="https://docs.usdt0.to/downloads/usdt0/Symbol_USDT0_Secondary.svg"
-      alt="USDT0"
-      width={size}
-      height={size}
-      style={{ width: size, height: size, objectFit: "contain", borderRadius: "50%" }}
-      onError={() => setFailed(true)}
-    />
-  );
-}
+// USDT0's icon previously loaded from docs.usdt0.to as a live <img>, with a
+// hand-drawn fallback on error — removed after confirming that domain is
+// now blocked at the network egress level (a direct fetch attempt against
+// it returns EGRESS_BLOCKED), which matches what was reported live: no
+// icon rendering at all. AssetIcon now goes straight to the hand-drawn
+// USDT0 glyph in HandDrawnAssetGlyph below — always renders, no external
+// dependency to go stale or get blocked again.
 
 function AssetIcon({ symbol, size = 18 }) {
   const asset = ASSETS.find((a) => a.symbol === symbol);
@@ -602,18 +538,24 @@ function AssetIcon({ symbol, size = 18 }) {
     );
   }
 
-  if (symbol === "USDT0") {
-    return (
-      <span className="flex items-center justify-center rounded-full shrink-0 overflow-hidden" style={{ width: size, height: size }}>
-        <USDT0Icon size={size} color={color} />
-      </span>
-    );
-  }
-
   if (symbol === "SOL") {
     return (
       <span className="flex items-center justify-center rounded-full shrink-0 overflow-hidden" style={{ width: size, height: size }}>
         <SolanaLogoIcon size={size} fallback={<HandDrawnAssetGlyph symbol="SOL" size={size} color={color} />} />
+      </span>
+    );
+  }
+
+  // Real, confirmed OKX brand icon — the only one of this whole batch that
+  // doesn't ship a "branded" variant (confirmed via a live server-render
+  // check: requesting "branded" throws "Icon TokenOKB does not have
+  // variant branded. Available variants: mono"). mono is just an outline
+  // that reads currentColor, so it needs the same tinted-circle wrapper
+  // the hand-drawn fallbacks use rather than rendering standalone.
+  if (symbol === "OKB") {
+    return (
+      <span className="flex items-center justify-center rounded-full shrink-0" style={{ width: size, height: size, background: `${color}22`, color, border: `1px solid ${color}55` }}>
+        <TokenOKB variant="mono" size={size * 0.56} />
       </span>
     );
   }
@@ -623,12 +565,14 @@ function AssetIcon({ symbol, size = 18 }) {
   // lookup. The dynamic /dynamic entry point requires a <Suspense> boundary
   // to function at all, which this app didn't have, and it crashed the app
   // on every load as a result — a real production issue, not a hypothetical
-  // one. A separate attempt to add TokenWBTC and NetworkStablechain caused a
-  // real BUILD failure ("NetworkStablechain is not exported") — reverted
-  // both until each is independently confirmed via an actual successful
-  // build, not just a search-result guess. WBTC, USDG, USDT0, and anything
-  // else not in this confirmed set use the hand-drawn fallback.
-  const STATIC_ICONS = { ETH: TokenETH, USDC: TokenUSDC, USDT: TokenUSDT, BNB: TokenBNB };
+  // one. A previous attempt to add TokenWBTC alongside NetworkStablechain
+  // caused a real BUILD failure — but that failure was NetworkStablechain
+  // ("is not exported"), not TokenWBTC; re-checked independently this
+  // session via a live server-render of the actual installed package
+  // (see the import comment above), confirming TokenWBTC/AVAX/HYPE/XPL all
+  // genuinely exist and render. USDG, USDT0, and anything else not in this
+  // confirmed set use the hand-drawn fallback.
+  const STATIC_ICONS = { ETH: TokenETH, USDC: TokenUSDC, USDT: TokenUSDT, BNB: TokenBNB, WBTC: TokenWBTC, AVAX: TokenAVAX, HYPE: TokenHYPE, XPL: TokenXPL };
   if (STATIC_ICONS[symbol]) {
     const Icon = STATIC_ICONS[symbol];
     return (
@@ -1526,12 +1470,27 @@ function NetworkSelectorModal({ onClose, P }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
-      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
-        <div className="flex items-center justify-between mb-4">
+      {/* Real fix: with 14 networks now supported, a flat list at ~52px a row
+          runs past 700px tall — on mobile that pushed the modal itself off
+          screen and forced a page-level scroll instead of a contained one.
+          Only the list in the middle scrolls now; the header and footer
+          note stay fixed, and the scrollbar itself is thin/subtle rather
+          than the browser default, with native momentum scrolling on iOS. */}
+      <style>{`
+        .mango-network-scroll::-webkit-scrollbar { width: 5px; }
+        .mango-network-scroll::-webkit-scrollbar-track { background: transparent; }
+        .mango-network-scroll::-webkit-scrollbar-thumb { background: ${P.textMuted}55; border-radius: 999px; }
+        .mango-network-scroll { scrollbar-width: thin; scrollbar-color: ${P.textMuted}55 transparent; -webkit-overflow-scrolling: touch; }
+      `}</style>
+      <div className="w-full max-w-sm rounded-2xl p-5 flex flex-col" style={{ background: P.bg, border: `1px solid ${P.panelBorder}`, maxHeight: "min(80vh, 560px)" }}>
+        <div className="flex items-center justify-between mb-4 shrink-0">
           <span className="font-display text-[16px] font-semibold" style={{ color: P.textPrimary }}>Select Network</span>
           <button onClick={onClose}><X size={18} color={P.textMuted} /></button>
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div
+          className="mango-network-scroll flex flex-col gap-1.5 overflow-y-auto pr-1 -mr-1"
+          style={{ maxHeight: "min(60vh, 440px)" }}
+        >
           {Object.values(chains).map((chain) => {
             const wagmiChain = getWagmiChain(chain.id);
             const isActive = isConnected && connectedChainId === wagmiChain.id;
@@ -1542,11 +1501,11 @@ function NetworkSelectorModal({ onClose, P }) {
                   if (isConnected) switchChain({ chainId: wagmiChain.id });
                   onClose();
                 }}
-                className="flex items-center justify-between px-3.5 py-3 rounded-xl"
+                className="flex items-center justify-between px-3.5 py-3 rounded-xl shrink-0"
                 style={{ background: isActive ? P.pillBg : "transparent", border: `1px solid ${isActive ? P.panelBorder : "transparent"}` }}
               >
                 <div className="flex items-center gap-2.5">
-                  <span className="w-2 h-2 rounded-full" style={{ background: chain.color }} />
+                  <ChainBadge id={chain.id} size={26} />
                   <span className="text-[13.5px] font-medium" style={{ color: P.textPrimary }}>{chain.name}</span>
                 </div>
                 {isActive && <Check size={15} color={LIME_DEEP} />}
@@ -1555,7 +1514,7 @@ function NetworkSelectorModal({ onClose, P }) {
           })}
         </div>
         {!isConnected && (
-          <div className="text-[11px] mt-3 text-center" style={{ color: P.textMuted }}>Connect a wallet to switch networks.</div>
+          <div className="text-[11px] mt-3 text-center shrink-0" style={{ color: P.textMuted }}>Connect a wallet to switch networks.</div>
         )}
       </div>
     </div>
