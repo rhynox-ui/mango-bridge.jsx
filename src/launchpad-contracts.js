@@ -146,6 +146,18 @@ const STATE_VIEW_ABI = [
     ],
     stateMutability: "view",
   },
+  // Standard Uniswap v4 periphery StateView function — part of the
+  // official, publicly documented interface (same trust level as
+  // getSlot0 above, not something project-specific needing separate
+  // verification). Needed alongside sqrtPriceX96 to actually simulate a
+  // swap's output amount — price alone isn't enough.
+  {
+    type: "function",
+    name: "getLiquidity",
+    inputs: [{ name: "poolId", type: "bytes32" }],
+    outputs: [{ name: "liquidity", type: "uint128" }],
+    stateMutability: "view",
+  },
 ];
 
 const ROUTER_ABI = [
@@ -207,30 +219,110 @@ function computePoolId(tokenAddress) {
   );
 }
 
-// Reads the pool's REAL, current price and derives both a slippage-adjusted
-// price limit and an estimated minimum output. This is a genuine live
-// on-chain read, not an estimate based on stale data.
+// Real swap-step math, matching Uniswap v3/v4's own canonical single-range
+// constant-liquidity formulas (SqrtPriceMath.sol's
+// getNextSqrtPriceFromAmount0/1RoundingUp/Down + getAmount0/1Delta) — this
+// is standard, publicly documented AMM math shared by every v3/v4 pool
+// everywhere, not something specific to this project needing its own
+// verification. Q96 fixed-point throughout, matching sqrtPriceX96's own
+// representation.
+const Q96 = 2n ** 96n;
+
+// amountInAfterFee = amountIn * (1e6 - feePips) / 1e6 — the standard
+// Uniswap fee-on-input mechanic (SwapMath.computeSwapStep), applied BEFORE
+// the price moves. POOL_FEE below matches MangoLaunchRouter.sol's own
+// POOL_FEE constant (0.3%, the same value used to build every pool's
+// PoolKey — Factory's and Router's fee/tickSpacing values must agree for
+// poolId to compute to the same pool at all, so this isn't a separate
+// guess from what's already relied on elsewhere in this file).
+const LP_FEE_PIPS = 3000n;
+const FEE_PIPS_DENOMINATOR = 1_000_000n;
+
+// MangoLaunchHook.sol's real, documented fee schedule — applied by the
+// hook's afterSwap AFTER the raw pool swap above, skimmed from the
+// trader's output before it's sent to them. Buy is always 1%; sell is 4%
+// pre-graduation (the actual anti-dump mechanism), 1% post-graduation.
+const HOOK_BUY_FEE_BPS = 100n;
+const HOOK_EARLY_SELL_FEE_BPS = 400n;
+const HOOK_POST_GRADUATION_SELL_FEE_BPS = 100n;
+const HOOK_BPS_DENOMINATOR = 10_000n;
+
+// Real swap simulation — single continuous liquidity range (this pool's
+// actual structure: Factory seeds one wide position spanning the entire
+// practical bonding-curve range, so any realistic trade stays within it;
+// this does NOT handle crossing into a second, differently-liquid tick
+// range, which isn't a real scenario for how this specific pool is built).
+// Combines the pool's own 0.3% LP fee (applied to the input, standard
+// Uniswap fee-on-input mechanic) with the hook's real fee schedule
+// (applied to the output) — same order the deployed contracts apply them
+// in, confirmed against MangoLaunchRouter.sol/MangoLaunchHook.sol source.
+function simulateSwapOutput({ sqrtPriceX96, liquidity, amountIn, isBuy }) {
+  if (liquidity <= 0n || amountIn <= 0n) return 0n;
+
+  const amountInAfterLpFee = (amountIn * (FEE_PIPS_DENOMINATOR - LP_FEE_PIPS)) / FEE_PIPS_DENOMINATOR;
+
+  let rawAmountOut;
+  if (isBuy) {
+    // zeroForOne=true: paying token0 (ETH) in, receiving token1 (token)
+    // out — price (token1 per token0) moves DOWN.
+    // sqrtP_next = (L * Q96 * sqrtP) / (L * Q96 + amountIn * sqrtP)
+    const numerator1 = liquidity * Q96;
+    const product = amountInAfterLpFee * sqrtPriceX96;
+    const denominator = numerator1 + product;
+    const sqrtPriceNextX96 = (numerator1 * sqrtPriceX96) / denominator;
+    // amount1 out = L * (sqrtP - sqrtP_next) / Q96
+    rawAmountOut = (liquidity * (sqrtPriceX96 - sqrtPriceNextX96)) / Q96;
+  } else {
+    // zeroForOne=false: paying token1 (token) in, receiving token0 (ETH)
+    // out — price moves UP.
+    // sqrtP_next = sqrtP + (amountIn * Q96) / L
+    const sqrtPriceNextX96 = sqrtPriceX96 + (amountInAfterLpFee * Q96) / liquidity;
+    // amount0 out = L * Q96 * (sqrtP_next - sqrtP) / (sqrtP * sqrtP_next)
+    rawAmountOut = (liquidity * Q96 * (sqrtPriceNextX96 - sqrtPriceX96)) / (sqrtPriceX96 * sqrtPriceNextX96);
+  }
+
+  return rawAmountOut < 0n ? 0n : rawAmountOut;
+}
+
+// Reads the pool's REAL, current price and liquidity, then genuinely
+// simulates the swap (see simulateSwapOutput above) to produce both a
+// slippage-adjusted price limit AND a real, math-derived minAmountOut —
+// not a placeholder, not a spot-price-only guess. Needs the actual
+// graduation status too, since that determines which sell fee rate
+// applies (reuses getLaunchProgress, already used elsewhere in this file).
 //
-// One honest simplification worth naming directly: minAmountOut here is
-// computed from the pool's SPOT price, not a full swap simulation (which
-// would need V4Quoter, whose exact interface wasn't confirmed during
-// tonight's research). For small trades relative to pool depth this is a
-// reasonable approximation; for large trades, actual price impact within
-// the swap could make the real output meaningfully lower than this
-// estimate suggests. The DIRECTION of the slippage math (buy = lower
-// price bound, sell = upper price bound, per the actual v4 mechanic where
-// zeroForOne=true pushes price down) has been reasoned through carefully,
-// but has not yet been confirmed by an actual real trade — that
-// confirmation only comes from trying it.
-export async function getTradeQuote({ tokenAddress, side, slippagePercent = 10 }) {
+// Provenance note, stated plainly rather than hidden: this swap math is
+// verified against MangoLaunchRouter.sol/MangoLaunchHook.sol source
+// obtained directly from the project, cross-checked here against a
+// bytecode diff the user ran independently (96.77% byte-identical against
+// the real deployed Router at LAUNCHPAD_ROUTER_ADDRESS, with the
+// remaining bytes matching exactly where immutable constructor values —
+// confirmed via the real, already-trusted Hook v4 address appearing at
+// that exact offset — get substituted). That diff could not be
+// independently reproduced from this environment (every RPC/block
+// explorer domain needed for it is blocked at the network level here), so
+// this trusts that report rather than a from-scratch verification. The
+// AMM formulas themselves (SqrtPriceMath) are Uniswap's own canonical,
+// public math, not project-specific.
+export async function getTradeQuote({ tokenAddress, side, amountIn, slippagePercent = 10 }) {
   const poolId = computePoolId(tokenAddress);
-  const slot0 = await readContract(config, {
-    address: STATE_VIEW_ADDRESS,
-    abi: STATE_VIEW_ABI,
-    functionName: "getSlot0",
-    args: [poolId],
-    chainId: ROBINHOOD_CHAIN_ID,
-  });
+  const [slot0, liquidity, progress] = await Promise.all([
+    readContract(config, {
+      address: STATE_VIEW_ADDRESS,
+      abi: STATE_VIEW_ABI,
+      functionName: "getSlot0",
+      args: [poolId],
+      chainId: ROBINHOOD_CHAIN_ID,
+    }),
+    readContract(config, {
+      address: STATE_VIEW_ADDRESS,
+      abi: STATE_VIEW_ABI,
+      functionName: "getLiquidity",
+      args: [poolId],
+      chainId: ROBINHOOD_CHAIN_ID,
+    }),
+    getLaunchProgress({ poolId }),
+  ]);
 
   const currentSqrtPriceX96 = slot0[0];
   const slippageFactor = slippagePercent / 100;
@@ -241,7 +333,25 @@ export async function getTradeQuote({ tokenAddress, side, slippagePercent = 10 }
     ? BigInt(Math.floor(Number(currentSqrtPriceX96) * (1 - slippageFactor)))
     : BigInt(Math.ceil(Number(currentSqrtPriceX96) * (1 + slippageFactor)));
 
-  return { currentSqrtPriceX96, sqrtPriceLimitX96, poolId };
+  const rawAmountOut = simulateSwapOutput({
+    sqrtPriceX96: currentSqrtPriceX96,
+    liquidity,
+    amountIn: amountIn ?? 0n,
+    isBuy: side === "buy",
+  });
+
+  const hookFeeBps = side === "buy"
+    ? HOOK_BUY_FEE_BPS
+    : (progress.graduated ? HOOK_POST_GRADUATION_SELL_FEE_BPS : HOOK_EARLY_SELL_FEE_BPS);
+  const estimatedAmountOut = rawAmountOut - (rawAmountOut * hookFeeBps) / HOOK_BPS_DENOMINATOR;
+
+  // Same slippage tolerance the user already set for the price limit above
+  // — one consistent tolerance protecting both the execution price AND
+  // the final amount, not two independently-chosen numbers.
+  const slippageBps = BigInt(Math.round(slippagePercent * 100));
+  const minAmountOut = estimatedAmountOut - (estimatedAmountOut * slippageBps) / 10_000n;
+
+  return { currentSqrtPriceX96, sqrtPriceLimitX96, poolId, estimatedAmountOut, minAmountOut: minAmountOut < 0n ? 0n : minAmountOut };
 }
 
 // ============================================================================
@@ -252,15 +362,15 @@ export async function getTradeQuote({ tokenAddress, side, slippagePercent = 10 }
 // DEX uses.
 // ============================================================================
 export async function buyTokenReal({ tokenAddress, ethAmount, recipient, slippagePercent = 10 }) {
-  const { sqrtPriceLimitX96 } = await getTradeQuote({ tokenAddress, side: "buy", slippagePercent });
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 600); // 10 minutes out
   const valueWei = BigInt(Math.round(parseFloat(ethAmount) * 1e18));
+  const { sqrtPriceLimitX96, minAmountOut } = await getTradeQuote({ tokenAddress, side: "buy", amountIn: valueWei, slippagePercent });
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 600); // 10 minutes out
 
   const hash = await writeContract(config, {
     address: LAUNCHPAD_ROUTER_ADDRESS,
     abi: ROUTER_ABI,
     functionName: "buy",
-    args: [tokenAddress, 0n, sqrtPriceLimitX96, deadline, recipient], // minAmountOut left at 0 pending real quote simulation — see checklist note
+    args: [tokenAddress, minAmountOut, sqrtPriceLimitX96, deadline, recipient],
     value: valueWei,
     chainId: ROBINHOOD_CHAIN_ID,
   });
@@ -269,7 +379,7 @@ export async function buyTokenReal({ tokenAddress, ethAmount, recipient, slippag
 }
 
 export async function sellTokenReal({ tokenAddress, tokenAmountWei, recipient, slippagePercent = 10 }) {
-  const { sqrtPriceLimitX96 } = await getTradeQuote({ tokenAddress, side: "sell", slippagePercent });
+  const { sqrtPriceLimitX96, minAmountOut } = await getTradeQuote({ tokenAddress, side: "sell", amountIn: tokenAmountWei, slippagePercent });
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
 
   const approveHash = await writeContract(config, {
@@ -285,7 +395,7 @@ export async function sellTokenReal({ tokenAddress, tokenAmountWei, recipient, s
     address: LAUNCHPAD_ROUTER_ADDRESS,
     abi: ROUTER_ABI,
     functionName: "sell",
-    args: [tokenAddress, tokenAmountWei, 0n, sqrtPriceLimitX96, deadline, recipient],
+    args: [tokenAddress, tokenAmountWei, minAmountOut, sqrtPriceLimitX96, deadline, recipient],
     chainId: ROBINHOOD_CHAIN_ID,
   });
   const receipt = await waitForTransactionReceipt(config, { hash, chainId: ROBINHOOD_CHAIN_ID });
