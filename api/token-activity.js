@@ -205,41 +205,51 @@ export async function fetchRealHolders(tokenAddress, limit = 50) {
     .slice(0, limit);
 }
 
-// Real, protocol-wide swap scan — same Swap event, same PoolManager, as
-// fetchRealTrades above, just WITHOUT the `id` filter, so this returns
-// every swap across every pool on Robinhood Chain's shared PoolManager, not
-// just one token's.
+// Real swap scan, scoped to ONLY the given poolIds — one getLogs call per
+// known Mango pool, run in parallel, instead of a single unfiltered scan
+// of the entire shared PoolManager.
 //
-// Deliberately isolated from fetchRealLaunches this time. Once already,
-// calling this from inside fetchRealLaunches let a slow/erroring scan take
-// the entire Explore token list down with it — wrapping that call in a
-// try/catch only handled it throwing quickly, not it simply running long
-// and eating into the same request's execution budget. This function is
-// now ONLY ever called from its own separate, separately-cached endpoint
-// (type=launch-stats / type=protocol-stats below), which the frontend
-// fetches independently, after the core launches list has already
-// rendered. If this is slow or fails, the worst case is a missing
-// "Recent buys" sort and a missing volume tile — never a broken Explore
-// page.
+// This used to be one unfiltered `getLogs({ address: ROBINHOOD_POOL_MANAGER
+// })` call with no `id` filter, on the theory that filtering per-pool
+// would mean N round trips instead of one. That was a real bug, not just
+// an inefficiency: PoolManager is Uniswap v4's shared singleton — ANY
+// protocol's pools live at that same address, not just Mango's — so an
+// unfiltered scan was silently counting other protocols' swap volume as
+// Mango's own "Trading volume," and it broke outright in production once
+// the RPC's own result-size cap (10,000 logs) was hit by that combined,
+// unrelated activity: "logs matched by query exceeds limit of 10000" —
+// with an app that had all of 2 real launches at the time, which could
+// not plausibly have produced 10k+ of its own swaps. Scoping to known
+// poolIds fixes both: each pool's own log volume is nowhere near the cap
+// for an app this size, and only real Mango launches are ever counted.
 //
-// Known, honest limitation: this scans full history with no cap, same as
-// fetchRealTrades/fetchRealHolders already do — fine for a young app with
-// modest trade counts, but a real cost/latency concern once volume grows
-// enough that this becomes a lot of blocks. Worth revisiting (a persisted
-// running total instead of a full rescan every cache window) if that day
-// comes.
+// Deliberately isolated from fetchRealLaunches (a separate concern) — see
+// getKnownPoolIds below, and the launch-stats/protocol-stats endpoint
+// comments for why calling this must stay independent of the core
+// launches list's own request.
 //
 // No getTransaction call here — no caller reads a per-swap trader address,
 // only ethAmount/isBuy/timestamp, so fetching it was pure wasted RPC load.
 // getBlock is deduped by block number for the same reason: many swaps
 // share a block.
-async function fetchAllSwapLogs() {
-  const logs = await client.getLogs({
-    address: ROBINHOOD_POOL_MANAGER,
-    event: SWAP_EVENT_ABI[0],
-    fromBlock: 0n,
-    toBlock: "latest",
-  });
+//
+// Next real scaling concern, once it actually arrives: a single pool
+// itself matching more than 10,000 swaps would hit the same RPC cap
+// again, just per-pool instead of protocol-wide — that needs pagination
+// (fromBlock/toBlock chunking) when it happens, not before.
+async function fetchAllSwapLogs(poolIds) {
+  const logsPerPool = await Promise.all(
+    poolIds.map((poolId) =>
+      client.getLogs({
+        address: ROBINHOOD_POOL_MANAGER,
+        event: SWAP_EVENT_ABI[0],
+        args: { id: poolId },
+        fromBlock: 0n,
+        toBlock: "latest",
+      })
+    )
+  );
+  const logs = logsPerPool.flat();
 
   const blockNumbers = [...new Set(logs.map((log) => log.blockNumber))];
   const blocks = await Promise.all(blockNumbers.map((bn) => client.getBlock({ blockNumber: bn })));
@@ -256,6 +266,18 @@ async function fetchAllSwapLogs() {
       timestamp: timestampByBlock.get(log.blockNumber),
     };
   });
+}
+
+// Reuses the same cached launches list the "launches" endpoint already
+// maintains (see LAUNCHES_CACHE_TTL_MS) rather than re-scanning the
+// Registry from scratch on every stats request — a real, unnecessary
+// Registry read otherwise, since launch-stats/protocol-stats are fetched
+// independently and often around the same time as the launches list
+// itself.
+async function getKnownPoolIds() {
+  const cached = await readCache("cache-launches.json", LAUNCHES_CACHE_TTL_MS);
+  const launches = cached || (await fetchRealLaunches());
+  return launches.map((l) => l.poolId);
 }
 
 // Powers the Explore page's launch list — moved server-side specifically
@@ -395,7 +417,8 @@ export async function fetchRealLaunches() {
 // frontend fetches this separately from getRealLaunches, so it can never
 // block or break the core token list.
 export async function fetchLaunchStats() {
-  const allSwaps = await fetchAllSwapLogs();
+  const poolIds = await getKnownPoolIds();
+  const allSwaps = await fetchAllSwapLogs(poolIds);
   const perPoolStats = {};
   for (const swap of allSwaps) {
     const key = swap.poolId.toLowerCase();
@@ -419,7 +442,8 @@ export async function fetchLaunchStats() {
 // numbers alone risks a confidently-wrong figure, not an honestly-labeled
 // estimate — so that tile stays "Not available yet" rather than guessing.
 export async function fetchProtocolStats() {
-  const allSwaps = await fetchAllSwapLogs();
+  const poolIds = await getKnownPoolIds();
+  const allSwaps = await fetchAllSwapLogs(poolIds);
   const dayMs = 24 * 3600 * 1000;
   const now = Date.now();
   let totalVolumeEth = 0;
