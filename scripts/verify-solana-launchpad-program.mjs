@@ -51,20 +51,20 @@ check("well-known constants parse as valid pubkeys", () => {
 });
 
 check("PROGRAM_ID matches declare_id!() in solana-program's lib.rs", () => {
-  assert.equal(program.PROGRAM_ID.toBase58(), "2iPvVbb64HNmRq1oWW83cgSQ9frgYd8Kv3ShckUafccU");
+  assert.equal(program.PROGRAM_ID.toBase58(), "GoNqEH59tn8q8ogHJjPmF9TRPei9DgYDnXFdm6yEY3RR");
 });
 
 check("global PDA matches the Rust-side cross-check test", () => {
   const [pda, bump] = program.deriveGlobalPda();
-  assert.equal(pda.toBase58(), "FxaR3zYCA11WtbvVDpQ4juX7ktwKFDb45MdTnwVh5os2");
-  assert.equal(bump, 253);
+  assert.equal(pda.toBase58(), "BhT73GwJjXb7BBsfifjT4uder3fjeosCDuz7sxqmHyQi");
+  assert.equal(bump, 254);
 });
 
 check("bonding_curve PDA (fixed WSOL mint) matches the Rust-side cross-check test", () => {
   const wsolMint = new PublicKey("So11111111111111111111111111111111111111112");
   const [pda, bump] = program.deriveBondingCurvePda(wsolMint);
-  assert.equal(pda.toBase58(), "BM5yig234taXP5yYikbUvdSrrhSrpZHFGHrfv1RqPgWS");
-  assert.equal(bump, 253);
+  assert.equal(pda.toBase58(), "FYdqv844DskpoEf6eYPRbFi2V2bbZmgxB6G626hui3TB");
+  assert.equal(bump, 255);
 });
 
 check("create_launch instruction has the right accounts and both required signers", () => {

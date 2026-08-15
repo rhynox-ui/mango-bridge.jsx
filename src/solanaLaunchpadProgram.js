@@ -30,10 +30,13 @@
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 
 // declare_id!(...) in solana-program/programs/mango-launchpad/src/lib.rs —
-// a real generated program keypair's public half, not a placeholder
-// string, but genuinely unused until this program is actually deployed
-// under it.
-export const PROGRAM_ID = new PublicKey("2iPvVbb64HNmRq1oWW83cgSQ9frgYd8Kv3ShckUafccU");
+// a real generated program keypair's public half. The original placeholder
+// ID had no corresponding private key committed anywhere and could never
+// actually be deployed under; this is the regenerated one a real
+// `anchor build` / `cargo build-sbf` pass confirmed compiles to a real
+// deployable BPF/SBF binary — still genuinely unused until an actual
+// devnet/mainnet deploy happens under it.
+export const PROGRAM_ID = new PublicKey("GoNqEH59tn8q8ogHJjPmF9TRPei9DgYDnXFdm6yEY3RR");
 
 // Well-known, stable Solana ecosystem constants — unchanged since the SPL
 // Token program's original 2020 deployment, not specific to this program.

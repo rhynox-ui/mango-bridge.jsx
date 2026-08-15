@@ -135,12 +135,12 @@ mod js_client_cross_check {
         let fixed_mint: Pubkey = "So11111111111111111111111111111111111111112".parse().unwrap();
 
         let (global_pda, global_bump) = Pubkey::find_program_address(&[GLOBAL_SEED], &program_id);
-        assert_eq!(global_pda.to_string(), "FxaR3zYCA11WtbvVDpQ4juX7ktwKFDb45MdTnwVh5os2");
-        assert_eq!(global_bump, 253);
+        assert_eq!(global_pda.to_string(), "BhT73GwJjXb7BBsfifjT4uder3fjeosCDuz7sxqmHyQi");
+        assert_eq!(global_bump, 254);
 
         let (bonding_curve_pda, bc_bump) =
             Pubkey::find_program_address(&[BONDING_CURVE_SEED, fixed_mint.as_ref()], &program_id);
-        assert_eq!(bonding_curve_pda.to_string(), "BM5yig234taXP5yYikbUvdSrrhSrpZHFGHrfv1RqPgWS");
-        assert_eq!(bc_bump, 253);
+        assert_eq!(bonding_curve_pda.to_string(), "FYdqv844DskpoEf6eYPRbFi2V2bbZmgxB6G626hui3TB");
+        assert_eq!(bc_bump, 255);
     }
 }
