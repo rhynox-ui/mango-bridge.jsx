@@ -14,6 +14,7 @@ import { getBalance, readContract, readContracts } from "wagmi/actions";
 import { config } from "./wagmi.js";
 import { getWagmiChain } from "./networkMode.js";
 import { TOKEN_ADDRESSES } from "./relaybridge.js";
+import { withSolanaFallback } from "./solanaRpc.js";
 
 const ERC20_BALANCE_ABI = [
   { type: "function", name: "balanceOf", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
@@ -147,12 +148,8 @@ export async function fetchSolanaBalance({ solanaAddress, forceFresh = false }) 
     if (cached) return cached;
   }
   try {
-    const { Connection, PublicKey } = await import("@solana/web3.js");
-    // Same real fix as the execution path — Solana Tracker's public
-    // endpoint, confirmed free and reliable, rather than Solana's own
-    // heavily rate-limited default public endpoint.
-    const connection = new Connection("https://rpc.solanatracker.io/public", "confirmed");
-    const lamports = await connection.getBalance(new PublicKey(solanaAddress));
+    const { PublicKey } = await import("@solana/web3.js");
+    const lamports = await withSolanaFallback((connection) => connection.getBalance(new PublicKey(solanaAddress)));
     const result = { SOL: lamports / 1e9 };
     setCached(key, result);
     return result;

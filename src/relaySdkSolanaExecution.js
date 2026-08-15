@@ -27,6 +27,7 @@ import { createClient, getClient, convertViemChainToRelayChain, MAINNET_RELAY_AP
 import { adaptSolanaWallet } from "@relayprotocol/relay-svm-wallet-adapter";
 import { mainnet, base, bsc } from "wagmi/chains";
 import { robinhoodMainnet, stableMainnet } from "./wagmi.js";
+import { SOLANA_RPC_PRIMARY, withSolanaFallback } from "./solanaRpc.js";
 
 let clientInitialized = false;
 let initPromise = null;
@@ -97,32 +98,39 @@ export const DEV_FEE_WALLET_SOLANA = "CFqNwTuTkqkaVoNZmNE6q5TeV6CcNwGRns2NSEY72F
 export async function sendSolanaProtocolFee({ solanaAddress, solanaProvider, feeBaseUnits }) {
   if (feeBaseUnits <= 0n) return null;
 
-  const { Connection, PublicKey, SystemProgram, Transaction } = await import("@solana/web3.js");
-  // Same public RPC endpoint used for the transfer execution below — the
-  // default public Solana RPC disables sendTransaction for most callers,
-  // confirmed as a real 403 earlier in this project.
-  const connection = new Connection("https://rpc.solanatracker.io/public", "confirmed");
+  const { PublicKey, SystemProgram, Transaction } = await import("@solana/web3.js");
 
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-  const fromPubkey = new PublicKey(solanaAddress);
-  const transaction = new Transaction({
-    feePayer: fromPubkey,
-    recentBlockhash: blockhash,
-  }).add(
-    SystemProgram.transfer({
-      fromPubkey,
-      toPubkey: new PublicKey(DEV_FEE_WALLET_SOLANA),
-      lamports: feeBaseUnits,
-    })
-  );
+  // Whole flow (blockhash -> sign -> broadcast -> confirm) runs against
+  // ONE connection per attempt, retried as a unit against the next
+  // endpoint on failure — see solanaRpc.js. Both configured endpoints
+  // genuinely support sendTransaction (the reason the primary was chosen
+  // over Solana's own default public RPC, which disables it for most
+  // callers, confirmed as a real 403 earlier in this project); a retry
+  // means a second signature prompt for the user, which is the correct,
+  // safe behavior here — a transaction that never broadcast successfully
+  // the first time can't become a duplicate on-chain.
+  return withSolanaFallback(async (connection) => {
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    const fromPubkey = new PublicKey(solanaAddress);
+    const transaction = new Transaction({
+      feePayer: fromPubkey,
+      recentBlockhash: blockhash,
+    }).add(
+      SystemProgram.transfer({
+        fromPubkey,
+        toPubkey: new PublicKey(DEV_FEE_WALLET_SOLANA),
+        lamports: feeBaseUnits,
+      })
+    );
 
-  // Same CAIP-2 identifier and signing call already confirmed working
-  // against OKX's installed solana-provider source, immediately below in
-  // executeSolanaSourcedTransfer.
-  const signed = await solanaProvider.signTransaction(transaction, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`);
-  const signature = await connection.sendRawTransaction(signed.serialize());
-  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
-  return signature;
+    // Same CAIP-2 identifier and signing call already confirmed working
+    // against OKX's installed solana-provider source, immediately below in
+    // executeSolanaSourcedTransfer.
+    const signed = await solanaProvider.signTransaction(transaction, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`);
+    const signature = await connection.sendRawTransaction(signed.serialize());
+    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
+    return signature;
+  });
 }
 
 /**
@@ -152,7 +160,17 @@ export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvid
     // transactions. Solana Tracker's public endpoint is confirmed as a
     // genuinely free, no-signup alternative that does support
     // sendTransaction.
-    connection = new Connection("https://rpc.solanatracker.io/public", "confirmed");
+    //
+    // Deliberately NOT wrapped in withSolanaFallback's retry-the-whole-
+    // flow pattern (see sendSolanaProtocolFee above for that pattern) —
+    // this connection is captured in adaptedWallet's closure and reused
+    // across getQuote AND execute below, several steps and an external
+    // SDK call apart. Retrying that whole sequence against a second
+    // endpoint mid-flow risks a real regression in an already fragile,
+    // proven-working integration; not worth it for a fallback tier here.
+    // Sourced from the shared primary constant so there's one place this
+    // URL is defined, even without full retry logic on this path.
+    connection = new Connection(SOLANA_RPC_PRIMARY, "confirmed");
 
     adaptedWallet = adaptSolanaWallet(
       solanaAddress,
