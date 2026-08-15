@@ -110,6 +110,46 @@ check("claim_creator_fees and claim_protocol_fees have the right account counts"
   assert.equal(ixProtocol.keys.length, 10);
 });
 
+check("update_global has the right account writability and Option<T> Borsh encoding", () => {
+  const authority = Keypair.generate().publicKey;
+
+  // global must be writable (handler mutates it) and authority must NOT be
+  // (plain Signer, no #[account(mut)] on it in update_global.rs) — this
+  // exact check caught a real bug during development: the Rust side was
+  // originally missing `mut` on `global`, which compiles fine (Anchor's
+  // Account<> allows &mut access regardless) but would fail every real
+  // call at runtime, since Solana rejects writes to accounts not marked
+  // writable in the transaction — a "compiles clean, wrong on-chain"
+  // class of bug that only a check like this one catches.
+  const ixNoop = program.buildUpdateGlobalInstruction({ authority });
+  assert.equal(ixNoop.keys.length, 2);
+  assert.equal(ixNoop.keys[0].isWritable, true); // global
+  assert.equal(ixNoop.keys[1].isSigner, true); // authority
+  assert.equal(ixNoop.keys[1].isWritable, false); // authority
+
+  const discriminator = [...ixNoop.data.subarray(0, 8)];
+  assert.deepEqual(discriminator, [90, 152, 240, 21, 199, 38, 72, 20]); // sha256("global:update_global")[0:8]
+
+  // Every field omitted -> seven None tags (1 byte each), nothing else.
+  assert.equal(ixNoop.data.length, 8 + 7);
+  assert.ok(ixNoop.data.subarray(8).every((byte) => byte === 0));
+
+  // One Pubkey-typed field set -> its Some tag + 32 bytes, others still None.
+  const newAuthority = Keypair.generate().publicKey;
+  const ixAuth = program.buildUpdateGlobalInstruction({ authority, newAuthority });
+  assert.equal(ixAuth.data.length, 8 + 1 + 32 + 6);
+  assert.equal(ixAuth.data[8], 1); // Some tag
+  assert.ok(newAuthority.toBuffer().equals(ixAuth.data.subarray(9, 41)));
+
+  // One u64-typed field set, at a real production-scale value (90 SOL) —
+  // byte-for-byte checked against Python's own little-endian encoding of
+  // the same number, not just "looks right".
+  const ixGrad = program.buildUpdateGlobalInstruction({ authority, newGraduationRealSolLamports: 90_000_000_000n });
+  assert.equal(ixGrad.data.length, 8 + 6 + 1 + 8);
+  const tail = ixGrad.data.subarray(-8);
+  assert.deepEqual([...tail], [0, 4, 107, 244, 20, 0, 0, 0]);
+});
+
 check("Associated Token Address derivation is deterministic and owner/mint-sensitive", () => {
   const owner = Keypair.generate().publicKey;
   const mintA = Keypair.generate().publicKey;

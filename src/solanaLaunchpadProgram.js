@@ -68,6 +68,7 @@ const DISCRIMINATORS = {
   sell: [51, 230, 133, 164, 1, 127, 131, 173],
   claim_creator_fees: [0, 23, 125, 234, 156, 118, 134, 89],
   claim_protocol_fees: [34, 142, 219, 112, 109, 54, 133, 23],
+  update_global: [90, 152, 240, 21, 199, 38, 72, 20],
 };
 
 function discriminator(name) {
@@ -81,6 +82,25 @@ function u64LeBytes(value) {
   const buf = Buffer.alloc(8);
   buf.writeBigUInt64LE(BigInt(value));
   return buf;
+}
+
+/** Borsh encodes a u16 as 2 bytes little-endian. */
+function u16LeBytes(value) {
+  const buf = Buffer.alloc(2);
+  buf.writeUInt16LE(value);
+  return buf;
+}
+
+/**
+ * Borsh encodes a Rust `Option<T>` — a 1-byte tag (0 = None, 1 = Some)
+ * followed by the encoded value if present, nothing if absent. `encode`
+ * is only called when `value` is non-null/undefined. Matches Anchor's own
+ * generated encoding for every `Option<T>` field, used here for
+ * UpdateGlobalParams's optional admin-update fields.
+ */
+function encodeOption(value, encode) {
+  if (value === undefined || value === null) return Buffer.from([0]);
+  return Buffer.concat([Buffer.from([1]), encode(value)]);
 }
 
 function accountMeta(pubkey, { signer = false, writable = false } = {}) {
@@ -215,6 +235,48 @@ export function buildClaimProtocolFeesInstruction({ payer, mint, protocolFeeWall
       accountMeta(SystemProgram.programId),
     ],
     data: discriminator("claim_protocol_fees"),
+  });
+}
+
+/**
+ * Authority-gated config update — see instructions/update_global.rs.
+ * Every param is optional (pass `undefined`/omit to leave it unchanged);
+ * `params` mirrors UpdateGlobalParams's fields EXACTLY in name and order,
+ * since Borsh encoding is positional, not keyed — reordering these would
+ * silently corrupt every field after the reordered one.
+ *
+ * newCreatorFeeShareBps: setting this also overwrites the on-chain
+ * protocol_fee_share_bps as the BPS_DENOMINATOR complement (Rust-side
+ * behavior, see update_global.rs's own doc comment on why) — nothing to
+ * do here client-side, just worth knowing the one field affects two.
+ */
+export function buildUpdateGlobalInstruction({
+  authority,
+  newAuthority,
+  newProtocolFeeWallet,
+  newBuyFeeBps,
+  newSellFeeBpsPreGraduation,
+  newSellFeeBpsPostGraduation,
+  newCreatorFeeShareBps,
+  newGraduationRealSolLamports,
+}) {
+  const [global] = deriveGlobalPda();
+
+  const data = Buffer.concat([
+    discriminator("update_global"),
+    encodeOption(newAuthority, (pk) => pk.toBuffer()),
+    encodeOption(newProtocolFeeWallet, (pk) => pk.toBuffer()),
+    encodeOption(newBuyFeeBps, u16LeBytes),
+    encodeOption(newSellFeeBpsPreGraduation, u16LeBytes),
+    encodeOption(newSellFeeBpsPostGraduation, u16LeBytes),
+    encodeOption(newCreatorFeeShareBps, u16LeBytes),
+    encodeOption(newGraduationRealSolLamports, u64LeBytes),
+  ]);
+
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [accountMeta(global, { writable: true }), accountMeta(authority, { signer: true })],
+    data,
   });
 }
 

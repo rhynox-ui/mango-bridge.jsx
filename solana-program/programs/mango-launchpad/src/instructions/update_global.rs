@@ -6,6 +6,7 @@ use anchor_lang::prelude::*;
 #[derive(Accounts)]
 pub struct UpdateGlobal<'info> {
     #[account(
+        mut,
         seeds = [GLOBAL_SEED],
         bump = global.bump,
         has_one = authority @ MangoLaunchpadError::NotAuthority,
