@@ -77,7 +77,7 @@ pub use instructions::*;
 //     NOT cover (curve-shape constants are deliberately excluded).
 // ============================================================================
 
-declare_id!("2iPvVbb64HNmRq1oWW83cgSQ9frgYd8Kv3ShckUafccU");
+declare_id!("GoNqEH59tn8q8ogHJjPmF9TRPei9DgYDnXFdm6yEY3RR");
 
 #[program]
 pub mod mango_launchpad {
@@ -131,7 +131,7 @@ mod js_client_cross_check {
 
     #[test]
     fn pda_derivation_matches_solana_launchpad_program_js() {
-        let program_id: Pubkey = "2iPvVbb64HNmRq1oWW83cgSQ9frgYd8Kv3ShckUafccU".parse().unwrap();
+        let program_id: Pubkey = "GoNqEH59tn8q8ogHJjPmF9TRPei9DgYDnXFdm6yEY3RR".parse().unwrap();
         let fixed_mint: Pubkey = "So11111111111111111111111111111111111111112".parse().unwrap();
 
         let (global_pda, global_bump) = Pubkey::find_program_address(&[GLOBAL_SEED], &program_id);
