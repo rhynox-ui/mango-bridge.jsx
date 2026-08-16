@@ -36,7 +36,7 @@ import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.j
 // `anchor build` / `cargo build-sbf` pass confirmed compiles to a real
 // deployable BPF/SBF binary — still genuinely unused until an actual
 // devnet/mainnet deploy happens under it.
-export const PROGRAM_ID = new PublicKey("GoNqEH59tn8q8ogHJjPmF9TRPei9DgYDnXFdm6yEY3RR");
+export const PROGRAM_ID = new PublicKey("FCGmRZL2yV2wyMiN21zn2Z1zqgTyA8taR5sYNKChnpK5");
 
 // Well-known, stable Solana ecosystem constants — unchanged since the SPL
 // Token program's original 2020 deployment, not specific to this program.

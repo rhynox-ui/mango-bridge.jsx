@@ -77,7 +77,7 @@ pub use instructions::*;
 //     NOT cover (curve-shape constants are deliberately excluded).
 // ============================================================================
 
-declare_id!("GoNqEH59tn8q8ogHJjPmF9TRPei9DgYDnXFdm6yEY3RR");
+declare_id!("FCGmRZL2yV2wyMiN21zn2Z1zqgTyA8taR5sYNKChnpK5");
 
 #[program]
 pub mod mango_launchpad {
@@ -131,16 +131,16 @@ mod js_client_cross_check {
 
     #[test]
     fn pda_derivation_matches_solana_launchpad_program_js() {
-        let program_id: Pubkey = "GoNqEH59tn8q8ogHJjPmF9TRPei9DgYDnXFdm6yEY3RR".parse().unwrap();
+        let program_id: Pubkey = "FCGmRZL2yV2wyMiN21zn2Z1zqgTyA8taR5sYNKChnpK5".parse().unwrap();
         let fixed_mint: Pubkey = "So11111111111111111111111111111111111111112".parse().unwrap();
 
         let (global_pda, global_bump) = Pubkey::find_program_address(&[GLOBAL_SEED], &program_id);
-        assert_eq!(global_pda.to_string(), "BhT73GwJjXb7BBsfifjT4uder3fjeosCDuz7sxqmHyQi");
-        assert_eq!(global_bump, 254);
+        assert_eq!(global_pda.to_string(), "8uuKngtesL3UxjeFYXkH7a77AJjYqNdioyKeYzBDBoei");
+        assert_eq!(global_bump, 255);
 
         let (bonding_curve_pda, bc_bump) =
             Pubkey::find_program_address(&[BONDING_CURVE_SEED, fixed_mint.as_ref()], &program_id);
-        assert_eq!(bonding_curve_pda.to_string(), "FYdqv844DskpoEf6eYPRbFi2V2bbZmgxB6G626hui3TB");
+        assert_eq!(bonding_curve_pda.to_string(), "7pKJz25qq61fqHLMyHJp9qkfYiUauPQaqkrNZamhJDgA");
         assert_eq!(bc_bump, 255);
     }
 }

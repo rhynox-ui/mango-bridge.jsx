@@ -5,7 +5,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-mango_launchpad = "GoNqEH59tn8q8ogHJjPmF9TRPei9DgYDnXFdm6yEY3RR"
+mango_launchpad = "FCGmRZL2yV2wyMiN21zn2Z1zqgTyA8taR5sYNKChnpK5"
 
 [registry]
 url = "https://api.apr.dev"
