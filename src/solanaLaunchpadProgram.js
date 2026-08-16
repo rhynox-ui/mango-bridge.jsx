@@ -111,6 +111,28 @@ function accountMeta(pubkey, { signer = false, writable = false } = {}) {
 }
 
 /**
+ * One-time setup — creates the Global config PDA with real defaults (see
+ * initialize.rs). Must be called exactly once per deployment, before
+ * create_launch/buy/sell/claim/update_global can do anything (they all
+ * read the Global account, which doesn't exist until this runs).
+ * `authority` becomes whoever signs this — should be a real, deliberately
+ * chosen key before mainnet, a throwaway devnet key is fine for testing.
+ */
+export function buildInitializeInstruction({ authority }) {
+  const [global] = deriveGlobalPda();
+
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      accountMeta(authority, { signer: true, writable: true }),
+      accountMeta(global, { writable: true }),
+      accountMeta(SystemProgram.programId),
+    ],
+    data: discriminator("initialize"),
+  });
+}
+
+/**
  * Launches a new token — mints its entire fixed supply into a fresh
  * bonding curve and permanently revokes mint/freeze authority (create.rs).
  * `mintKeypair` MUST be a freshly generated Keypair (Keypair.generate()),
