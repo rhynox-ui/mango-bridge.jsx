@@ -51,6 +51,7 @@ function renderFullWalletApp() {
   // popup's own point of view "the extension" (itself) genuinely is
   // installed, so this is accurate, not a workaround.
   if (typeof window.ethereum === "undefined") window.ethereum = { isMangoWallet: true };
+  root.classList.remove("legacy"); // in case a previous render() in this same page left it set
   createRoot(root).render(React.createElement(MangoWalletTab, { P: PALETTE.dark }));
 }
 
@@ -68,7 +69,15 @@ function h(tag, attrs = {}, ...children) {
   }
   return el;
 }
-function mount(...nodes) { root.replaceChildren(...nodes); }
+// "legacy" scopes popup.html's own hand-written CSS to only this render
+// path — see that file's comment on the real bug this fixes: those rules
+// used to target bare button/input/h1/p tags globally, which silently
+// broke MangoWalletTab's own Tailwind-positioned elements too, since both
+// this plain-DOM UI and the React tree mount into the same #root.
+function mount(...nodes) {
+  root.classList.add("legacy");
+  root.replaceChildren(...nodes);
+}
 
 function truncate(address, head = 6, tail = 4) {
   return address.length > head + tail ? `${address.slice(0, head)}…${address.slice(-tail)}` : address;

@@ -34,42 +34,56 @@
      screens (rendered via the plain h() helper below) look fine with the
      same padding. */
   #root { padding: 16px; }
-  .display { font-family: "Space Grotesk", "Inter", sans-serif; }
-  h1 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 15px; font-weight: 600; margin: 0 0 4px; }
-  p { color: #9A9AA0; line-height: 1.5; margin: 0 0 12px; }
-  .panel { background: #151517; border: 1px solid #232326; border-radius: 16px; padding: 18px; margin-bottom: 12px; }
-  .row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
-  .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #F5F5F6; }
-  .muted { color: #57575D; }
-  .secondary-text { color: #9A9AA0; }
-  input, textarea {
+
+  /* Everything below is scoped to #root.legacy — the plain h()-helper
+     screens (approval/reject, and onboarding reached via a pending dApp
+     request) — never to bare element selectors. A real bug lived here:
+     an earlier version styled bare `button`/`input`/`h1`/`p` tags
+     globally, which — since both this legacy UI and the real
+     MangoWalletTab React tree mount into the same #root — silently
+     overrode MangoWalletTab's own Tailwind-positioned elements too
+     (worst visible case: PasswordField's absolutely-positioned eye-
+     toggle button inheriting `width: 100%` from the bare `button` rule,
+     stretching it across the whole field and misplacing the icon).
+     Scoping under #root.legacy (added to #root only by the legacy
+     render path — see popup.js's mount()) keeps this CSS from ever
+     touching React-rendered markup again. */
+  #root.legacy .display { font-family: "Space Grotesk", "Inter", sans-serif; }
+  #root.legacy h1 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  #root.legacy p { color: #9A9AA0; line-height: 1.5; margin: 0 0 12px; }
+  #root.legacy .panel { background: #151517; border: 1px solid #232326; border-radius: 16px; padding: 18px; margin-bottom: 12px; }
+  #root.legacy .row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+  #root.legacy .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #F5F5F6; }
+  #root.legacy .muted { color: #57575D; }
+  #root.legacy .secondary-text { color: #9A9AA0; }
+  #root.legacy input, #root.legacy textarea {
     width: 100%; background: #0E0E10; border: 1px solid #232326; border-radius: 12px;
     color: #F5F5F6; padding: 10px 12px; font-size: 13px; margin-bottom: 8px; font-family: inherit;
   }
-  textarea { resize: none; font-family: "IBM Plex Mono", ui-monospace, monospace; }
-  button {
+  #root.legacy textarea { resize: none; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  #root.legacy button {
     width: 100%; padding: 12px; border-radius: 999px; border: none;
     font-family: "Space Grotesk", "Inter", sans-serif; font-weight: 600;
     font-size: 14px; cursor: pointer; margin-bottom: 8px;
   }
-  .btn-primary { background: #FF9A2E; color: #0A0A0B; }
-  .btn-primary:disabled { background: #1D1D20; color: #57575D; cursor: not-allowed; }
-  .btn-secondary { background: #1F1F22; color: #F5F5F6; }
-  .btn-danger { background: #D92D20; color: #FFFFFF; }
-  .btn-row { display: flex; gap: 8px; }
-  .btn-row button { margin-bottom: 0; }
-  .error { color: #F97066; font-size: 11.5px; margin: -4px 0 8px; font-family: "Inter", sans-serif; }
-  .words-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 12px; }
-  .word { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; background: #0E0E10; border-radius: 8px; padding: 6px 8px; }
-  .word span { color: #57575D; margin-right: 4px; }
-  .origin-badge { font-size: 11px; color: #9A9AA0; word-break: break-all; }
-  .link { color: #FF9A2E; text-decoration: none; font-size: 12px; cursor: pointer; }
-  a.link { display: block; text-align: center; }
-  .icon-circle {
+  #root.legacy .btn-primary { background: #FF9A2E; color: #0A0A0B; }
+  #root.legacy .btn-primary:disabled { background: #1D1D20; color: #57575D; cursor: not-allowed; }
+  #root.legacy .btn-secondary { background: #1F1F22; color: #F5F5F6; }
+  #root.legacy .btn-danger { background: #D92D20; color: #FFFFFF; }
+  #root.legacy .btn-row { display: flex; gap: 8px; }
+  #root.legacy .btn-row button { margin-bottom: 0; }
+  #root.legacy .error { color: #F97066; font-size: 11.5px; margin: -4px 0 8px; font-family: "Inter", sans-serif; }
+  #root.legacy .words-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 12px; }
+  #root.legacy .word { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; background: #0E0E10; border-radius: 8px; padding: 6px 8px; }
+  #root.legacy .word span { color: #57575D; margin-right: 4px; }
+  #root.legacy .origin-badge { font-size: 11px; color: #9A9AA0; word-break: break-all; }
+  #root.legacy .link { color: #FF9A2E; text-decoration: none; font-size: 12px; cursor: pointer; }
+  #root.legacy a.link { display: block; text-align: center; }
+  #root.legacy .icon-circle {
     width: 44px; height: 44px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
     background: rgba(255, 154, 46, 0.1); margin: 0 auto 12px;
   }
-  .icon-circle svg { display: block; }
+  #root.legacy .icon-circle svg { display: block; }
 </style>
 </head>
 <body>
