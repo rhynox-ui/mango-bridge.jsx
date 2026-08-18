@@ -22,17 +22,25 @@
 //   with a confidently-verified CoinGecko id (walletPrices.js); password-
 //   gated reveal of the recovery phrase; wallet reset; sending native and
 //   token transfers on both chain families with a real fee estimate
-//   shown before confirming. All of this is offline-verified (real
-//   transaction construction/signing/encoding, checked against this
-//   sandbox's own tools) but NOT broadcast-tested against a live network
-//   — this sandbox's egress proxy blocks RPC and price-API traffic
-//   entirely (confirmed via direct curl, same limitation documented in
-//   solana-program/README.md for the Solana program side of this
-//   project) — needs real-world testing on the deployed site before
-//   WALLET_LIVE flips to true.
+//   shown before confirming; unlimited HD-derived accounts under one seed
+//   (same "Add account" model OKX Wallet uses — see keys.js's
+//   deriveAccountAtIndex); standalone private-key import/export as a
+//   separate, single-chain concept from HD accounts (matching OKX's own
+//   restriction: a raw imported key has no seed to derive siblings from);
+//   custom names for both HD accounts and imported keys. All of this is
+//   offline-verified (real transaction construction/signing/encoding,
+//   checked against this sandbox's own tools) but NOT broadcast-tested
+//   against a live network — this sandbox's egress proxy blocks RPC and
+//   price-API traffic entirely (confirmed via direct curl, same
+//   limitation documented in solana-program/README.md for the Solana
+//   program side of this project) — needs real-world testing on the
+//   deployed site before WALLET_LIVE flips to true.
 // - Not yet built: an aggregate portfolio USD total (needs balance state
 //   lifted out of each independent row), a dApp-facing provider (EIP-1193
-//   injection), browser-extension packaging.
+//   injection), browser-extension packaging, and multiple independent
+//   WALLETS (a different seed phrase entirely — OKX's separate "Add
+//   wallet" concept, distinct from "Add account"). Only a single
+//   wallet with unlimited accounts is built so far.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 // Static, named imports only — same convention App.jsx's AssetIcon/ChainIcon
@@ -43,7 +51,7 @@ import {
   NetworkPolygon, NetworkOptimism, NetworkZksync, NetworkLinea, NetworkScroll, NetworkGnosis,
   NetworkMonad, NetworkSonic, NetworkMantle, NetworkBlast, NetworkBerachain, NetworkWorld, NetworkSeiNetwork,
 } from "@web3icons/react";
-import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon } from "lucide-react";
+import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil } from "lucide-react";
 import { isAddress, parseUnits } from "viem";
 import { PublicKey } from "@solana/web3.js";
 import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
@@ -534,7 +542,7 @@ function LockedScreen({ onUnlock, P }) {
 // Unlocked dashboard
 // ---------------------------------------------------------------------------
 
-function RevealPhraseModal({ session, onClose, P }) {
+function RevealPhraseModal({ onClose, P }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [phrase, setPhrase] = useState(null);
@@ -573,6 +581,113 @@ function RevealPhraseModal({ session, onClose, P }) {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function RevealPrivateKeyModal({ session, activeKey, onClose, P }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [revealed, setRevealed] = useState(false);
+
+  async function handleReveal() {
+    const vault = loadVault();
+    try {
+      if (activeKey.type === "hd") {
+        await decryptSecret(vault.mnemonicRecord, password); // just confirms the password — the key itself is already in session, derived at unlock
+      } else {
+        const entry = (vault.importedKeys ?? []).find((k) => k.id === activeKey.id);
+        await decryptSecret(entry.record, password);
+      }
+      setRevealed(true);
+      setError("");
+    } catch {
+      setError("Incorrect password.");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Export private key</span>
+          <button onClick={onClose} style={{ color: P.textMuted }}>✕</button>
+        </div>
+        {!revealed ? (
+          <>
+            <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>
+              Anyone with this key has full control of every asset it can access. Re-enter your password to view it.
+            </div>
+            <PasswordField value={password} onChange={setPassword} placeholder="Password" P={P} autoFocus />
+            {error && <div className="text-[11.5px] mt-2" style={{ color: "#D92D20" }}>{error}</div>}
+            <div className="mt-3"><PrimaryButton onClick={handleReveal} disabled={!password} P={P}>Reveal</PrimaryButton></div>
+          </>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {session.evm && (
+              <div>
+                <div className="text-[11px] mb-1" style={{ color: P.textMuted }}>EVM (all chains)</div>
+                <div className="p-3 rounded-xl text-[12px] font-mono break-all" style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}>
+                  {session.evm.privateKey}
+                </div>
+              </div>
+            )}
+            {session.solana && (
+              <div>
+                <div className="text-[11px] mb-1" style={{ color: P.textMuted }}>Solana</div>
+                <div className="p-3 rounded-xl text-[12px] font-mono break-all" style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}>
+                  {session.solana.privateKey}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ImportKeyModal({ onClose, onImport, P }) {
+  const [rawKey, setRawKey] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit() {
+    setBusy(true);
+    setError("");
+    try {
+      await onImport(rawKey, password);
+      onClose();
+    } catch (err) {
+      setError(err instanceof KeyImportError ? err.message : "Incorrect password.");
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Import private key</span>
+          <button onClick={onClose} style={{ color: P.textMuted }}>✕</button>
+        </div>
+        <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>
+          An EVM (0x…) or Solana (base58) private key. This account is separate from your recovery phrase — losing this specific key means losing access to it, even if you still have your phrase.
+        </div>
+        <textarea
+          value={rawKey}
+          onChange={(e) => setRawKey(e.target.value)}
+          placeholder="Private key"
+          rows={2}
+          {...NO_CAPTURE_ATTRS}
+          className="w-full px-3.5 py-3 rounded-xl text-[13px] font-mono resize-none mb-2.5"
+          style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+        />
+        <PasswordField value={password} onChange={setPassword} placeholder="Your wallet password" P={P} />
+        {error && <div className="text-[11.5px] mt-2" style={{ color: "#D92D20" }}>{error}</div>}
+        <div className="mt-3"><PrimaryButton onClick={handleSubmit} disabled={!rawKey.trim() || !password || busy} P={P}>{busy ? "Importing…" : "Import"}</PrimaryButton></div>
       </div>
     </div>
   );
@@ -633,7 +748,7 @@ function QuickAction({ icon: Icon, label, onClick, disabled, P }) {
   );
 }
 
-function SendChainPicker({ value, onChange, P }) {
+function SendChainPicker({ value, onChange, chains, P }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -652,7 +767,7 @@ function SendChainPicker({ value, onChange, P }) {
       </button>
       {open && (
         <div className="absolute left-0 right-0 z-30 mt-2 rounded-xl overflow-hidden shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, maxHeight: "min(50vh, 320px)", overflowY: "auto" }}>
-          {WALLET_CHAIN_ORDER.map((key) => (
+          {chains.map((key) => (
             <button key={key} onClick={() => { onChange(key); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left">
               <WalletChainBadge id={key} size={18} />
               <span className="text-[13px]" style={{ color: P.textPrimary }}>{CHAIN_LABEL[key]}</span>
@@ -692,7 +807,10 @@ function SendAssetPicker({ chainKey, value, onChange, P }) {
 }
 
 function SendScreen({ session, onBack, P }) {
-  const [chainKey, setChainKey] = useState("ethereum");
+  // An imported single-chain account only offers that one chain — an HD
+  // account (both evm + solana) offers everything, same as before.
+  const availableChains = WALLET_CHAIN_ORDER.filter((key) => (key === "solana" ? !!session.solana : !!session.evm));
+  const [chainKey, setChainKey] = useState(availableChains[0]);
   const [assetSymbol, setAssetSymbol] = useState("native");
   const [toAddress, setToAddress] = useState("");
   const [amount, setAmount] = useState("");
@@ -829,7 +947,7 @@ function SendScreen({ session, onBack, P }) {
   return (
     <ScreenShell title="Send" onBack={onBack} P={P}>
       <div className="flex flex-col gap-3 mb-4">
-        <SendChainPicker value={chainKey} onChange={handleChainChange} P={P} />
+        <SendChainPicker value={chainKey} onChange={handleChainChange} chains={availableChains} P={P} />
         <SendAssetPicker chainKey={chainKey} value={assetSymbol} onChange={setAssetSymbol} P={P} />
         <input
           value={toAddress}
@@ -862,31 +980,93 @@ function SendScreen({ session, onBack, P }) {
 // Multiple independent WALLETS (a different seed phrase entirely,
 // OKX's separate "Add wallet") aren't built yet — see this file's
 // top-of-file STATUS block.
-function AccountSwitcher({ accounts, activeIndex, onSwitch, onAddAccount, P }) {
+function keysEqual(a, b) {
+  return a.type === b.type && (a.type === "hd" ? a.index === b.index : a.id === b.id);
+}
+
+function hdAccountLabel(accountLabels, index) {
+  return accountLabels[index] || `Account ${index + 1}`;
+}
+
+function RenameModal({ initialLabel, onSave, onClose, P }) {
+  const [label, setLabel] = useState(initialLabel);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Rename</span>
+          <button onClick={onClose} style={{ color: P.textMuted }}>✕</button>
+        </div>
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          maxLength={40}
+          autoFocus
+          className="w-full px-3.5 py-3 rounded-xl text-[13px] mb-3"
+          style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+        />
+        <PrimaryButton onClick={() => { if (label.trim()) { onSave(label.trim()); onClose(); } }} disabled={!label.trim()} P={P}>Save</PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
+function AccountSwitcher({ accounts, importedKeys, accountLabels, activeKey, onSwitch, onAddAccount, onImportKey, onRenameAccount, P }) {
   const [open, setOpen] = useState(false);
+  const [renaming, setRenaming] = useState(null); // { key, currentLabel } | null
   const ref = useRef(null);
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+  const activeLabel = activeKey.type === "hd" ? hdAccountLabel(accountLabels, activeKey.index) : (importedKeys.find((k) => k.id === activeKey.id)?.label ?? "Imported");
   return (
     <div className="relative" ref={ref}>
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[12.5px] font-medium" style={{ color: P.textPrimary }}>
-        Account {activeIndex + 1}
+        {activeLabel}
         <ChevronDown size={13} color={P.textMuted} />
       </button>
       {open && (
-        <div className="absolute left-0 z-30 mt-2 w-56 rounded-xl overflow-hidden shadow-2xl py-1" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-          {accounts.map((acc, i) => (
-            <button key={i} onClick={() => { onSwitch(i); setOpen(false); }} className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left">
-              <div className="flex flex-col">
-                <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Account {i + 1}</span>
-                <span className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{acc.evm.address.slice(0, 6)}…{acc.evm.address.slice(-4)}</span>
+        <div className="absolute left-0 z-30 mt-2 w-64 rounded-xl overflow-hidden shadow-2xl py-1" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, maxHeight: "min(60vh, 360px)", overflowY: "auto" }}>
+          {accounts.map((acc, i) => {
+            const key = { type: "hd", index: i };
+            const label = hdAccountLabel(accountLabels, i);
+            return (
+              <div key={`hd-${i}`} className="w-full flex items-center gap-2 px-3.5 py-2.5">
+                <button onClick={() => { onSwitch(key); setOpen(false); }} className="flex-1 flex items-center justify-between gap-2 text-left">
+                  <div className="flex flex-col">
+                    <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{label}</span>
+                    <span className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{acc.evm.address.slice(0, 6)}…{acc.evm.address.slice(-4)}</span>
+                  </div>
+                  {keysEqual(key, activeKey) && <Check size={14} color={LIME} />}
+                </button>
+                <button onClick={() => setRenaming({ key, currentLabel: label })} className="shrink-0" style={{ color: P.textMuted }}>
+                  <Pencil size={13} />
+                </button>
               </div>
-              {i === activeIndex && <Check size={14} color={LIME} />}
-            </button>
-          ))}
+            );
+          })}
+          {importedKeys.length > 0 && (
+            <div className="text-[10px] font-medium uppercase tracking-wide px-3.5 pt-2.5 pb-1" style={{ color: P.textMuted, borderTop: `1px solid ${P.divider}` }}>Imported</div>
+          )}
+          {importedKeys.map((k) => {
+            const key = { type: "imported", id: k.id };
+            return (
+              <div key={k.id} className="w-full flex items-center gap-2 px-3.5 py-2.5">
+                <button onClick={() => { onSwitch(key); setOpen(false); }} className="flex-1 flex items-center justify-between gap-2 text-left">
+                  <div className="flex flex-col">
+                    <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{k.label}</span>
+                    <span className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{k.address.slice(0, 6)}…{k.address.slice(-4)}</span>
+                  </div>
+                  {keysEqual(key, activeKey) && <Check size={14} color={LIME} />}
+                </button>
+                <button onClick={() => setRenaming({ key, currentLabel: k.label })} className="shrink-0" style={{ color: P.textMuted }}>
+                  <Pencil size={13} />
+                </button>
+              </div>
+            );
+          })}
           <button
             onClick={() => { onAddAccount(); setOpen(false); }}
             className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left"
@@ -894,7 +1074,18 @@ function AccountSwitcher({ accounts, activeIndex, onSwitch, onAddAccount, P }) {
           >
             <Plus size={14} color={P.textMuted} /> Add account
           </button>
+          <button onClick={() => { onImportKey(); setOpen(false); }} className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left" style={{ color: P.textPrimary }}>
+            <Download size={14} color={P.textMuted} /> Import private key
+          </button>
         </div>
+      )}
+      {renaming && (
+        <RenameModal
+          initialLabel={renaming.currentLabel}
+          onSave={(newLabel) => onRenameAccount(renaming.key, newLabel)}
+          onClose={() => setRenaming(null)}
+          P={P}
+        />
       )}
     </div>
   );
@@ -937,15 +1128,19 @@ function AddAccountModal({ onClose, onAdd, P }) {
   );
 }
 
-function WalletDashboard({ session, accounts, activeIndex, onSwitchAccount, onAddAccount, onLock, onReset, onSend, P }) {
+function WalletDashboard({ session, accounts, importedKeys, accountLabels, activeKey, onSwitchAccount, onAddAccount, onImportKey, onRenameAccount, onLock, onReset, onSend, P }) {
   const [showReveal, setShowReveal] = useState(false);
+  const [showRevealKey, setShowRevealKey] = useState(false);
   const [showReset, setShowReset] = useState(false);
   const [showAddAccount, setShowAddAccount] = useState(false);
+  const [showImportKey, setShowImportKey] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [justCopied, setJustCopied] = useState(false);
 
+  const isImportedAccount = activeKey.type === "imported";
+
   function handleReceive() {
-    navigator.clipboard.writeText(session.evm.address);
+    navigator.clipboard.writeText(session.evm ? session.evm.address : session.solana.address);
     setJustCopied(true);
     setTimeout(() => setJustCopied(false), 1500);
   }
@@ -954,7 +1149,12 @@ function WalletDashboard({ session, accounts, activeIndex, onSwitchAccount, onAd
     <div className="flex flex-col gap-3">
       <div className="rounded-2xl p-4" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
         <div className="flex items-center justify-between mb-4">
-          <AccountSwitcher accounts={accounts} activeIndex={activeIndex} onSwitch={onSwitchAccount} onAddAccount={() => setShowAddAccount(true)} P={P} />
+          <AccountSwitcher
+            accounts={accounts} importedKeys={importedKeys} accountLabels={accountLabels} activeKey={activeKey}
+            onSwitch={onSwitchAccount} onAddAccount={() => setShowAddAccount(true)} onImportKey={() => setShowImportKey(true)}
+            onRenameAccount={onRenameAccount}
+            P={P}
+          />
           <button onClick={onLock} className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: P.textMuted }}>
             <Lock size={11} /> Lock
           </button>
@@ -965,14 +1165,18 @@ function WalletDashboard({ session, accounts, activeIndex, onSwitchAccount, onAd
           <QuickAction icon={RefreshCw} label="Refresh" onClick={() => setRefreshKey((k) => k + 1)} P={P} />
         </div>
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: P.input }}>
-            <span className="text-[11.5px]" style={{ color: P.textMuted }}>EVM (all chains)</span>
-            <CopyableAddress address={session.evm.address} P={P} />
-          </div>
-          <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: P.input }}>
-            <span className="text-[11.5px]" style={{ color: P.textMuted }}>Solana</span>
-            <CopyableAddress address={session.solana.address} P={P} />
-          </div>
+          {session.evm && (
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: P.input }}>
+              <span className="text-[11.5px]" style={{ color: P.textMuted }}>EVM (all chains)</span>
+              <CopyableAddress address={session.evm.address} P={P} />
+            </div>
+          )}
+          {session.solana && (
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: P.input }}>
+              <span className="text-[11.5px]" style={{ color: P.textMuted }}>Solana</span>
+              <CopyableAddress address={session.solana.address} P={P} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -983,7 +1187,7 @@ function WalletDashboard({ session, accounts, activeIndex, onSwitchAccount, onAd
             <RefreshCw size={13} />
           </button>
         </div>
-        {WALLET_CHAIN_ORDER.map((key, i) =>
+        {WALLET_CHAIN_ORDER.filter((key) => (key === "solana" ? !!session.solana : !!session.evm)).map((key, i) =>
           key === "solana" ? (
             <React.Fragment key={`${key}-${refreshKey}`}>
               <SolanaBalanceRow solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
@@ -1003,19 +1207,21 @@ function WalletDashboard({ session, accounts, activeIndex, onSwitchAccount, onAd
       </div>
 
       <div className="rounded-2xl p-1 overflow-hidden" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-        <button onClick={() => setShowReveal(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
-          <Eye size={15} color={P.textMuted} /> Reveal recovery phrase
+        {!isImportedAccount && (
+          <button onClick={() => setShowReveal(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
+            <Eye size={15} color={P.textMuted} /> Reveal recovery phrase
+          </button>
+        )}
+        <button onClick={() => setShowRevealKey(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
+          <Eye size={15} color={P.textMuted} /> Export private key
         </button>
         <button onClick={() => setShowReset(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: "#D92D20" }}>
           <Trash2 size={15} color="#D92D20" /> Remove wallet from this browser
         </button>
       </div>
 
-      <div className="text-center text-[11px]" style={{ color: P.textMuted }}>
-        Sending from Mango Wallet is coming next — for now this is a real, self-custodial address you can receive to and view balances on across every chain Mango supports.
-      </div>
-
-      {showReveal && <RevealPhraseModal session={session} onClose={() => setShowReveal(false)} P={P} />}
+      {showReveal && <RevealPhraseModal onClose={() => setShowReveal(false)} P={P} />}
+      {showRevealKey && <RevealPrivateKeyModal session={session} activeKey={activeKey} onClose={() => setShowRevealKey(false)} P={P} />}
       {showReset && (
         <ResetWalletModal
           onClose={() => setShowReset(false)}
@@ -1024,6 +1230,7 @@ function WalletDashboard({ session, accounts, activeIndex, onSwitchAccount, onAd
         />
       )}
       {showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} onAdd={onAddAccount} P={P} />}
+      {showImportKey && <ImportKeyModal onClose={() => setShowImportKey(false)} onImport={onImportKey} P={P} />}
     </div>
   );
 }
@@ -1044,8 +1251,16 @@ function MangoWalletInner({ P }) {
   // than keeping the mnemonic sitting in long-lived React state —
   // inspectable via React DevTools — for the entire unlocked session.
   const [accounts, setAccounts] = useState([]);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [showAddAccount, setShowAddAccount] = useState(false);
+  // Standalone imported keys — NOT derived from the mnemonic, each tied
+  // to exactly one chain (see walletKeyImport.js's module doc for why).
+  // { id, chain, address, label, privateKey } — privateKey in-memory only
+  // while unlocked, same as every other private key in this file.
+  const [importedKeys, setImportedKeys] = useState([]);
+  // Which account is active — an HD index or a specific imported key's id.
+  const [activeKey, setActiveKey] = useState({ type: "hd", index: 0 });
+  // Custom names — { [hdIndex]: label } — purely cosmetic, safe to store
+  // in cleartext (no different from the addresses already cached alongside).
+  const [accountLabels, setAccountLabels] = useState({});
 
   async function finalizeWallet(mnemonic, password) {
     const account0 = deriveAccountAtIndex(mnemonic, 0);
@@ -1055,9 +1270,12 @@ function MangoWalletInner({ P }) {
       accountCount: 1,
       addresses: { evm: [account0.evm.address], solana: [account0.solana.address] },
       importedKeys: [],
+      accountLabels: {},
     });
     setAccounts([account0]);
-    setActiveIndex(0);
+    setImportedKeys([]);
+    setAccountLabels({});
+    setActiveKey({ type: "hd", index: 0 });
     setPendingMnemonic(null);
     setPendingImportPhrase(null);
     setScreen("dashboard");
@@ -1069,8 +1287,16 @@ function MangoWalletInner({ P }) {
       const mnemonic = await decryptSecret(vault.mnemonicRecord, password);
       const derived = [];
       for (let i = 0; i < vault.accountCount; i++) derived.push(deriveAccountAtIndex(mnemonic, i));
+      const decryptedImports = await Promise.all(
+        (vault.importedKeys ?? []).map(async (entry) => ({
+          id: entry.id, chain: entry.chain, address: entry.address, label: entry.label,
+          privateKey: await decryptSecret(entry.record, password),
+        }))
+      );
       setAccounts(derived);
-      setActiveIndex(0);
+      setImportedKeys(decryptedImports);
+      setAccountLabels(vault.accountLabels ?? {});
+      setActiveKey({ type: "hd", index: 0 });
       setScreen("dashboard");
       return true;
     } catch {
@@ -1090,27 +1316,71 @@ function MangoWalletInner({ P }) {
       accountCount: nextAccounts.length,
       addresses: { evm: nextAccounts.map((a) => a.evm.address), solana: nextAccounts.map((a) => a.solana.address) },
       importedKeys: vault.importedKeys ?? [],
+      accountLabels: vault.accountLabels ?? {},
     });
     setAccounts(nextAccounts);
-    setActiveIndex(nextIndex);
+    setActiveKey({ type: "hd", index: nextIndex });
+  }
+
+  /** Renames an HD account or an imported key. Purely cosmetic — no password needed, unlike anything that touches key material. */
+  function handleRenameAccount(key, newLabel) {
+    const vault = loadVault();
+    if (key.type === "hd") {
+      const nextLabels = { ...(vault.accountLabels ?? {}), [key.index]: newLabel };
+      saveVault({ ...vault, accountLabels: nextLabels });
+      setAccountLabels(nextLabels);
+    } else {
+      const nextImportedKeys = (vault.importedKeys ?? []).map((entry) => (entry.id === key.id ? { ...entry, label: newLabel } : entry));
+      saveVault({ ...vault, importedKeys: nextImportedKeys });
+      setImportedKeys((prev) => prev.map((k) => (k.id === key.id ? { ...k, label: newLabel } : k)));
+    }
+  }
+
+  /** Imports a standalone private key. Requires the vault's existing password (not a new one) — throws on a wrong password or an unparseable key; caller (ImportKeyModal) handles both. */
+  async function handleImportPrivateKey(rawInput, password) {
+    const vault = loadVault();
+    await decryptSecret(vault.mnemonicRecord, password); // confirms this is really the wallet's password before we encrypt anything with it
+    const parsed = parseImportedPrivateKey(rawInput);
+    const record = await encryptSecret(parsed.privateKey, password);
+    const id = `imported-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const label = `Imported ${parsed.chain === "evm" ? "EVM" : "Solana"}`;
+    const nextImportedKeys = [...(vault.importedKeys ?? []), { id, chain: parsed.chain, address: parsed.address, label, record }];
+    saveVault({ ...vault, importedKeys: nextImportedKeys });
+    setImportedKeys((prev) => [...prev, { id, chain: parsed.chain, address: parsed.address, label, privateKey: parsed.privateKey }]);
+    setActiveKey({ type: "imported", id });
   }
 
   function handleLock() {
     setAccounts([]); // discard in-memory keys — nothing else to "lock", they're gone
-    setActiveIndex(0);
+    setImportedKeys([]);
+    setActiveKey({ type: "hd", index: 0 });
     setScreen("locked");
   }
 
   function handleReset() {
     setAccounts([]);
-    setActiveIndex(0);
+    setImportedKeys([]);
+    setAccountLabels({});
+    setActiveKey({ type: "hd", index: 0 });
     setPendingMnemonic(null);
     setPendingImportPhrase(null);
     setScreen("welcome");
   }
 
-  const activeAccount = accounts[activeIndex] ?? null;
-  const session = activeAccount ? { evm: activeAccount.evm, solana: activeAccount.solana } : null;
+  // The active account's { evm, solana } — an HD account always has both;
+  // an imported key has exactly one and the other is null. Every consumer
+  // of `session` below must treat a null evm/solana as "this chain isn't
+  // available for the current account," not crash on it.
+  const activeHdAccount = activeKey.type === "hd" ? (accounts[activeKey.index] ?? null) : null;
+  const activeImportedKey = activeKey.type === "imported" ? (importedKeys.find((k) => k.id === activeKey.id) ?? null) : null;
+  const session = activeHdAccount
+    ? { evm: activeHdAccount.evm, solana: activeHdAccount.solana }
+    : activeImportedKey
+      ? {
+          evm: activeImportedKey.chain === "evm" ? { address: activeImportedKey.address, privateKey: activeImportedKey.privateKey } : null,
+          solana: activeImportedKey.chain === "solana" ? { address: activeImportedKey.address, privateKey: activeImportedKey.privateKey } : null,
+        }
+      : null;
 
   if (screen === "welcome") {
     return (
@@ -1168,9 +1438,13 @@ function MangoWalletInner({ P }) {
     <WalletDashboard
       session={session}
       accounts={accounts}
-      activeIndex={activeIndex}
-      onSwitchAccount={setActiveIndex}
+      importedKeys={importedKeys}
+      accountLabels={accountLabels}
+      activeKey={activeKey}
+      onSwitchAccount={setActiveKey}
       onAddAccount={handleAddAccount}
+      onImportKey={handleImportPrivateKey}
+      onRenameAccount={handleRenameAccount}
       onLock={handleLock}
       onReset={handleReset}
       onSend={() => setScreen("send")}

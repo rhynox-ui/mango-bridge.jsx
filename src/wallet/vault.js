@@ -79,10 +79,17 @@ export async function decryptSecret(record, password) {
  * exist, their (non-secret) cached addresses per chain/index, and any
  * standalone imported keys (each independently encrypted, same password).
  */
-export function saveVault({ mnemonicRecord, accountCount, addresses, importedKeys }) {
+export function saveVault({ mnemonicRecord, accountCount, addresses, importedKeys, accountLabels }) {
   window.localStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify({ version: VAULT_SCHEMA_VERSION, mnemonicRecord, accountCount, addresses, importedKeys: importedKeys ?? [] })
+    JSON.stringify({
+      version: VAULT_SCHEMA_VERSION,
+      mnemonicRecord,
+      accountCount,
+      addresses,
+      importedKeys: importedKeys ?? [],
+      accountLabels: accountLabels ?? {},
+    })
   );
 }
 
