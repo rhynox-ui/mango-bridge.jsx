@@ -16,12 +16,15 @@
 // ones, but reverses which endpoint each feature tries FIRST, and builds a
 // genuinely separate viem client per chain (its own connection, its own
 // cache) — so a burst of wallet reads and a burst of bridge activity don't
-// both open with the same provider at the same moment.
+// both open with the same provider at the same moment. The wallet-only
+// chains (Polygon, Optimism, etc. — see walletChains.js) have their own
+// separately-sourced second endpoint (WALLET_ONLY_RPC_FALLBACK), pulled
+// from ethereum-lists/chains rather than guessed.
 
 import { createPublicClient, http, fallback } from "viem";
 import { RPC_FALLBACKS, CHAIN_KEY_TO_WAGMI_MAINNET } from "../wagmi.js";
 import { solanaRpcUrls } from "../solanaRpc.js";
-import { WALLET_ONLY_EVM_CHAINS } from "./walletChains.js";
+import { WALLET_ONLY_EVM_CHAINS, WALLET_ONLY_RPC_FALLBACK } from "./walletChains.js";
 
 const ERC20_BALANCE_ABI = [
   { type: "function", name: "balanceOf", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
@@ -29,12 +32,15 @@ const ERC20_BALANCE_ABI = [
 
 // Wallet-visible EVM chains = every chain the Bridge already knows about,
 // PLUS the wallet-only additions in walletChains.js (Polygon, Optimism,
-// etc.) that the Bridge doesn't yet support routing/fees for. RPC_FALLBACKS
-// only has entries for the Bridge's original chains — wallet-only chains
-// fall through to their own wagmi/chains-provided default RPC below,
-// which is real and verified, just single-endpoint (no second fallback
-// sourced yet for these).
+// etc.) that the Bridge doesn't yet support routing/fees for.
 const ALL_WALLET_CHAINS = { ...CHAIN_KEY_TO_WAGMI_MAINNET, ...WALLET_ONLY_EVM_CHAINS };
+
+// RPC_FALLBACKS only covers the Bridge's original chains; wallet-only
+// chains get their real second endpoint from WALLET_ONLY_RPC_FALLBACK
+// instead (Monad and Sei have none documented — see that file's comment).
+function extraFallbackUrl(chainId) {
+  return WALLET_ONLY_RPC_FALLBACK[chainId] || null;
+}
 
 const clientCache = new Map();
 
@@ -63,11 +69,20 @@ export function getWalletChain(chainKey) {
 }
 
 function getWalletTransport(chain) {
-  const urls = (RPC_FALLBACKS[chain.id] || []).filter(Boolean);
-  const reversedPriority = [...urls].reverse(); // opposite of wagmi.js's transportFor()
-  return reversedPriority.length > 0
-    ? fallback(reversedPriority.map((url) => http(url)), { rank: true })
-    : http(); // no override configured for this chain — chain's own default RPC
+  const bridgeUrls = (RPC_FALLBACKS[chain.id] || []).filter(Boolean);
+  if (bridgeUrls.length > 0) {
+    const reversedPriority = [...bridgeUrls].reverse(); // opposite of wagmi.js's transportFor()
+    return fallback(reversedPriority.map((url) => http(url)), { rank: true });
+  }
+  const extraUrl = extraFallbackUrl(chain.id);
+  if (extraUrl) {
+    // No existing Bridge-side ordering to reverse here (these chains
+    // aren't in the Bridge's own list at all) — just the chain's own
+    // wagmi/chains default plus the real second endpoint sourced in
+    // walletChains.js.
+    return fallback([http(), http(extraUrl)], { rank: true });
+  }
+  return http(); // no second verified endpoint documented for this chain (Monad, Sei) — its own default only
 }
 
 export function getWalletPublicClient(chainKey) {

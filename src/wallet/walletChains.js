@@ -51,6 +51,27 @@ export const WALLET_ONLY_NATIVE_SYMBOL = {
   mantle: "MNT", blast: "ETH", berachain: "BERA", worldchain: "ETH", sei: "SEI",
 };
 
+// A second, real RPC endpoint per chain, keyed by chain id (matching
+// wagmi.js's RPC_FALLBACKS convention) — every URL here was pulled
+// directly from ethereum-lists/chains (the same chain registry wagmi/chains
+// itself is built from, fetched via raw.githubusercontent.com), not
+// guessed, and cross-checked against wagmi.js's own "no Thirdweb" policy.
+// Monad and Sei genuinely have no second documented public HTTP endpoint
+// in that registry — left single-endpoint rather than inventing one.
+export const WALLET_ONLY_RPC_FALLBACK = {
+  [polygon.id]: "https://polygon-bor-rpc.publicnode.com",
+  [optimism.id]: "https://optimism-rpc.publicnode.com",
+  [zksync.id]: "https://zksync.drpc.org",
+  [linea.id]: "https://linea-rpc.publicnode.com",
+  [scroll.id]: "https://scroll-rpc.publicnode.com",
+  [gnosis.id]: "https://rpc.ankr.com/gnosis",
+  [sonic.id]: "https://sonic-rpc.publicnode.com",
+  [mantle.id]: "https://mantle-rpc.publicnode.com",
+  [blast.id]: "https://rpc.ankr.com/blast",
+  [berachain.id]: "https://berachain-rpc.publicnode.com",
+  [worldchain.id]: "https://worldchain-mainnet.gateway.tenderly.co",
+};
+
 // The @web3icons/react "Network*" icon for each chain is imported and
 // mapped directly in MangoWallet.jsx (WALLET_ONLY_ICON), not here — as
 // static, named imports, so bundlers can tree-shake them, rather than a
