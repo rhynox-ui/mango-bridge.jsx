@@ -46,6 +46,7 @@ import { encryptMnemonic, decryptMnemonic, saveVault, loadVault, clearVault } fr
 import { fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, getWalletChain } from "./wallet/walletRpc.js";
 import { estimateEvmSendFee, sendEvmNative, estimateSolanaSendFee, sendSolanaNative, estimateEvmTokenSendFee, sendEvmToken } from "./wallet/sendTransaction.js";
 import { tokensForWalletChain } from "./wallet/walletTokens.js";
+import { fetchWalletPrices } from "./wallet/walletPrices.js";
 import {
   WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL,
 } from "./wallet/walletChains.js";
@@ -192,6 +193,27 @@ function PrimaryButton({ onClick, disabled, children, P }) {
 // Balances
 // ---------------------------------------------------------------------------
 
+// Real USD price for one symbol, or null if walletPrices.js has no
+// confidently-verified id for it (see that file for which assets that
+// covers and why) — a row simply omits its USD line in that case, rather
+// than showing a guessed value.
+function useUsdPrice(symbol) {
+  const [price, setPrice] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchWalletPrices()
+      .then((prices) => { if (!cancelled) setPrice(prices[symbol] ?? null); })
+      .catch(() => { if (!cancelled) setPrice(null); });
+    return () => { cancelled = true; };
+  }, [symbol]);
+  return price;
+}
+
+function UsdSubtext({ balance, price, P }) {
+  if (balance === null || price === null) return null;
+  return <div className="text-[10.5px] text-right" style={{ color: P.textMuted }}>${fmt(balance * price, 2)}</div>;
+}
+
 function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh }) {
   // Uses walletRpc.js's own independent viem client — deliberately not
   // wagmi's shared useBalance/config, which the Bridge tab's connected-wallet
@@ -209,15 +231,19 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh }) {
       .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
   }, [chainKey, evmAddress, forceFresh]);
+  const price = useUsdPrice(NATIVE_SYMBOL_BY_CHAIN[chainKey]);
   return (
     <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: isFirst ? "none" : `1px solid ${P.divider}` }}>
       <div className="flex items-center gap-2.5">
         <WalletChainBadge id={chainKey} size={24} />
         <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{CHAIN_LABEL[chainKey]}</span>
       </div>
-      <div className="flex items-center gap-1.5 text-[13px] font-mono font-medium" style={{ color: P.textPrimary }}>
-        <span>{loading ? "…" : balance !== null ? balance.toFixed(4) : "—"}</span>
-        <span className="text-[11px] font-sans" style={{ color: P.textMuted }}>{NATIVE_SYMBOL_BY_CHAIN[chainKey]}</span>
+      <div>
+        <div className="flex items-center gap-1.5 text-[13px] font-mono font-medium" style={{ color: P.textPrimary }}>
+          <span>{loading ? "…" : balance !== null ? balance.toFixed(4) : "—"}</span>
+          <span className="text-[11px] font-sans" style={{ color: P.textMuted }}>{NATIVE_SYMBOL_BY_CHAIN[chainKey]}</span>
+        </div>
+        <UsdSubtext balance={balance} price={price} P={P} />
       </div>
     </div>
   );
@@ -234,11 +260,15 @@ function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh }) {
       .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
   }, [chainKey, token.address, token.decimals, evmAddress, forceFresh]);
+  const price = useUsdPrice(token.symbol);
   return (
     <div className="flex items-center justify-between px-4 py-2 pl-11" style={{ borderTop: `1px solid ${P.divider}` }}>
       <span className="text-[11.5px]" style={{ color: P.textMuted }}>{token.symbol}</span>
-      <div className="flex items-center gap-1.5 text-[12px] font-mono" style={{ color: P.textSecondary }}>
-        <span>{loading ? "…" : balance !== null ? fmt(balance, balance < 1 ? 4 : 2) : "—"}</span>
+      <div>
+        <div className="flex items-center gap-1.5 text-[12px] font-mono" style={{ color: P.textSecondary }}>
+          <span>{loading ? "…" : balance !== null ? fmt(balance, balance < 1 ? 4 : 2) : "—"}</span>
+        </div>
+        <UsdSubtext balance={balance} price={price} P={P} />
       </div>
     </div>
   );
@@ -255,15 +285,19 @@ function SolanaBalanceRow({ solanaAddress, P, forceFresh }) {
       .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
   }, [solanaAddress, forceFresh]);
+  const price = useUsdPrice("SOL");
   return (
     <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: `1px solid ${P.divider}` }}>
       <div className="flex items-center gap-2.5">
         <ChainBadge id="solana" size={24} />
         <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Solana</span>
       </div>
-      <div className="flex items-center gap-1.5 text-[13px] font-mono font-medium" style={{ color: P.textPrimary }}>
-        <span>{loading ? "…" : fmt(balance ?? 0, 4)}</span>
-        <span className="text-[11px] font-sans" style={{ color: P.textMuted }}>SOL</span>
+      <div>
+        <div className="flex items-center gap-1.5 text-[13px] font-mono font-medium" style={{ color: P.textPrimary }}>
+          <span>{loading ? "…" : fmt(balance ?? 0, 4)}</span>
+          <span className="text-[11px] font-sans" style={{ color: P.textMuted }}>SOL</span>
+        </div>
+        <UsdSubtext balance={balance} price={price} P={P} />
       </div>
     </div>
   );
