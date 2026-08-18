@@ -87,7 +87,10 @@ import { MAINNET_CHAIN_IDS } from "./chainData.js";
 import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic, suggestBip39Words } from "./wallet/keys.js";
 import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault } from "./wallet/vault.js";
 import { parseImportedPrivateKey, KeyImportError } from "./wallet/walletKeyImport.js";
-import { fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, fetchWalletSplTokenBalance, getWalletChain } from "./wallet/walletRpc.js";
+import {
+  fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, fetchWalletSplTokenBalance,
+  getWalletChain, fetchErc20TokenMetadata, fetchSplMintDecimals,
+} from "./wallet/walletRpc.js";
 import {
   estimateEvmSendFee, sendEvmNative, estimateSolanaSendFee, sendSolanaNative,
   estimateEvmTokenSendFee, sendEvmToken, estimateSplSendFee, sendSplToken,
@@ -98,6 +101,8 @@ import { fetchWalletPrices } from "./wallet/walletPrices.js";
 import {
   WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL,
 } from "./wallet/walletChains.js";
+import { loadCustomNetworks, addCustomNetwork, removeCustomNetwork } from "./wallet/customNetworks.js";
+import { loadCustomTokens, addCustomToken, removeCustomToken } from "./wallet/customTokens.js";
 
 const SOLANA_EXPLORER_TX_URL = "https://solscan.io/tx/";
 
@@ -127,6 +132,33 @@ const NATIVE_SYMBOL_BY_CHAIN = {
   ...WALLET_ONLY_NATIVE_SYMBOL,
 };
 const MIN_PASSWORD_LENGTH = 8;
+
+// User-added custom EVM networks (OKX/MetaMask's "Add network") merged
+// straight into CHAIN_LABEL/NATIVE_SYMBOL_BY_CHAIN above so every existing
+// lookup by chain key across this file (balance rows, the send chain
+// picker, address placeholders) picks a custom network up with no further
+// changes — WalletChainBadge already renders an honest "?" circle for a
+// chain id it doesn't recognize (chainBadges.jsx), which is exactly the
+// right badge for a network Mango hasn't reviewed.
+function registerCustomNetworkLabels(networks) {
+  for (const net of networks) {
+    CHAIN_LABEL[net.chainKey] = net.name;
+    NATIVE_SYMBOL_BY_CHAIN[net.chainKey] = net.symbol;
+  }
+}
+registerCustomNetworkLabels(loadCustomNetworks());
+
+/** Built-in chain order plus whatever custom networks are currently saved — read fresh on every call so a just-added network shows up without a reload. */
+function getWalletChainOrder() {
+  return [...WALLET_CHAIN_ORDER, ...loadCustomNetworks().map((n) => n.chainKey)];
+}
+
+/** Every token this wallet shows for a chain: the project's own verified list plus whatever the user has imported by contract address/mint. */
+function allTokensForChain(chainKey) {
+  const verified = (chainKey === "solana" ? SPL_TOKENS : tokensForWalletChain(chainKey)).map((t) => ({ ...t, isCustom: false }));
+  const custom = loadCustomTokens(chainKey).map((t) => ({ ...t, isCustom: true }));
+  return [...verified, ...custom];
+}
 
 // App.jsx's ChainBadge only knows the Bridge's own chain set — for the
 // wallet-only additions, render the verified @web3icons/react icon
@@ -297,7 +329,7 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh }) {
   );
 }
 
-function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh }) {
+function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove }) {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -311,7 +343,14 @@ function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh }) {
   const price = useUsdPrice(token.symbol);
   return (
     <div className="flex items-center justify-between px-4 py-2 pl-11" style={{ borderTop: `1px solid ${P.divider}` }}>
-      <span className="text-[11.5px]" style={{ color: P.textMuted }}>{token.symbol}</span>
+      <span className="flex items-center gap-1.5 text-[11.5px]" style={{ color: P.textMuted }}>
+        {token.symbol}
+        {onRemove && (
+          <button onClick={onRemove} style={{ color: P.textMuted }} title="Remove custom token">
+            <Trash2 size={11} />
+          </button>
+        )}
+      </span>
       <div>
         <div className="flex items-center gap-1.5 text-[12px] font-mono" style={{ color: P.textSecondary }}>
           <span>{loading ? "…" : balance !== null ? fmt(balance, balance < 1 ? 4 : 2) : "—"}</span>
@@ -322,7 +361,7 @@ function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh }) {
   );
 }
 
-function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh }) {
+function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove }) {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -336,7 +375,14 @@ function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh }) {
   const price = useUsdPrice(token.symbol);
   return (
     <div className="flex items-center justify-between px-4 py-2 pl-11" style={{ borderTop: `1px solid ${P.divider}` }}>
-      <span className="text-[11.5px]" style={{ color: P.textMuted }}>{token.symbol}</span>
+      <span className="flex items-center gap-1.5 text-[11.5px]" style={{ color: P.textMuted }}>
+        {token.symbol}
+        {onRemove && (
+          <button onClick={onRemove} style={{ color: P.textMuted }} title="Remove custom token">
+            <Trash2 size={11} />
+          </button>
+        )}
+      </span>
       <div>
         <div className="flex items-center gap-1.5 text-[12px] font-mono" style={{ color: P.textSecondary }}>
           <span>{loading ? "…" : balance !== null ? fmt(balance, balance < 1 ? 4 : 2) : "—"}</span>
@@ -914,6 +960,195 @@ function ResetWalletModal({ onClose, onConfirmReset, P }) {
   );
 }
 
+// "Add custom token" — OKX's own paste-a-contract-address flow. EVM
+// tokens verify themselves on-chain (symbol()/decimals() are a real part
+// of the ERC-20 standard); an SPL mint only has decimals on-chain, so the
+// user types the symbol themselves — asking for a name we can't actually
+// read would just be a fake verification.
+function AddCustomTokenScreen({ chains, onBack, onAdded, onClose, P }) {
+  const [chainKey, setChainKey] = useState(chains[0]);
+  const [address, setAddress] = useState("");
+  const [manualSymbol, setManualSymbol] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const isSolana = chainKey === "solana";
+
+  async function handleSubmit() {
+    setBusy(true);
+    setError("");
+    try {
+      const trimmed = address.trim();
+      if (!isValidChainAddress(chainKey, trimmed)) {
+        throw new Error(isSolana ? "Enter a valid mint address." : "Enter a valid contract address.");
+      }
+      if (isSolana) {
+        if (!manualSymbol.trim()) throw new Error("Enter a symbol/ticker for this token.");
+        const decimals = await fetchSplMintDecimals(trimmed);
+        addCustomToken("solana", { symbol: manualSymbol.trim().toUpperCase(), mint: trimmed, decimals });
+      } else {
+        const { symbol, decimals } = await fetchErc20TokenMetadata(chainKey, trimmed);
+        addCustomToken(chainKey, { symbol, address: trimmed, decimals });
+      }
+      onAdded();
+      onClose();
+    } catch (err) {
+      setError(err?.message || "Couldn't verify this token — check the address and network.");
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center gap-2 mb-3">
+          <button onClick={onBack} style={{ color: P.textMuted }}><ArrowLeft size={15} /></button>
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Add custom token</span>
+        </div>
+        <div className="text-[11.5px] mb-3" style={{ color: P.textMuted }}>
+          Paste a token's contract address (or mint, for Solana). Mango hasn't reviewed this token — trade at your own risk, especially with new or low-liquidity coins.
+        </div>
+        <div className="mb-2.5">
+          <SendChainPicker value={chainKey} onChange={(k) => { setChainKey(k); setError(""); }} chains={chains} P={P} />
+        </div>
+        <input
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          placeholder={isSolana ? "Token mint address" : "Contract address (0x…)"}
+          {...NO_CAPTURE_ATTRS}
+          className="w-full px-3.5 py-3 rounded-xl text-[13px] font-mono mb-2.5"
+          style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+        />
+        {isSolana && (
+          <input
+            value={manualSymbol}
+            onChange={(e) => setManualSymbol(e.target.value)}
+            placeholder="Symbol, e.g. BONK — SPL tokens have no on-chain symbol"
+            className="w-full px-3.5 py-3 rounded-xl text-[13px] mb-2.5"
+            style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+          />
+        )}
+        {error && <div className="text-[11.5px] mb-2.5" style={{ color: "#D92D20" }}>{error}</div>}
+        <PrimaryButton onClick={handleSubmit} disabled={!address.trim() || busy || (isSolana && !manualSymbol.trim())} P={P}>
+          {busy ? "Verifying…" : "Add token"}
+        </PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
+// "Add network" — the same custom-RPC concept MetaMask/OKX both offer.
+// Deliberately EVM-only: an RPC URL + chain ID is exactly what an EVM
+// chain needs to be usable here (see customNetworks.js's viemChainForCustomNetwork);
+// Solana has no equivalent "point at a different chain ID" concept.
+function AddCustomNetworkScreen({ onBack, onAdded, onClose, P }) {
+  const [name, setName] = useState("");
+  const [rpcUrl, setRpcUrl] = useState("");
+  const [chainId, setChainId] = useState("");
+  const [symbol, setSymbol] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  function handleSubmit() {
+    setBusy(true);
+    setError("");
+    try {
+      const entry = addCustomNetwork({ name, rpcUrl, chainId, symbol });
+      registerCustomNetworkLabels([entry]);
+      onAdded();
+      onClose();
+    } catch (err) {
+      setError(err?.message || "Couldn't add this network.");
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center gap-2 mb-3">
+          <button onClick={onBack} style={{ color: P.textMuted }}><ArrowLeft size={15} /></button>
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Add network</span>
+        </div>
+        <div className="text-[11.5px] mb-3" style={{ color: P.textMuted }}>
+          Add any EVM-compatible chain by its RPC URL. Mango hasn't verified this endpoint — only add one you trust.
+        </div>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Network name" className="w-full px-3.5 py-3 rounded-xl text-[13px] mb-2.5" style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }} />
+        <input
+          value={rpcUrl} onChange={(e) => setRpcUrl(e.target.value)} placeholder="RPC URL (https://…)" {...NO_CAPTURE_ATTRS}
+          className="w-full px-3.5 py-3 rounded-xl text-[13px] font-mono mb-2.5" style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+        />
+        <div className="flex gap-2.5 mb-2.5">
+          <input value={chainId} onChange={(e) => setChainId(e.target.value)} placeholder="Chain ID" inputMode="numeric" className="w-full px-3.5 py-3 rounded-xl text-[13px] font-mono" style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }} />
+          <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="Symbol, e.g. ETH" className="w-full px-3.5 py-3 rounded-xl text-[13px]" style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }} />
+        </div>
+        {error && <div className="text-[11.5px] mb-2.5" style={{ color: "#D92D20" }}>{error}</div>}
+        <PrimaryButton onClick={handleSubmit} disabled={!name.trim() || !rpcUrl.trim() || !chainId.trim() || !symbol.trim() || busy} P={P}>
+          {busy ? "Adding…" : "Add network"}
+        </PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
+// OKX-style "Manage" entry point: add a custom token or a custom network,
+// and see/remove what's already been added. Reachable from the Balances
+// panel header.
+function ManageAssetsModal({ onClose, onChanged, P }) {
+  const [screen, setScreen] = useState("menu"); // menu | addToken | addNetwork
+  const [customNetworks, setCustomNetworks] = useState(() => loadCustomNetworks());
+
+  function refresh() {
+    setCustomNetworks(loadCustomNetworks());
+    onChanged();
+  }
+
+  function handleRemoveNetwork(chainKey) {
+    removeCustomNetwork(chainKey);
+    refresh();
+  }
+
+  if (screen === "addToken") {
+    return <AddCustomTokenScreen chains={getWalletChainOrder()} onBack={() => setScreen("menu")} onAdded={refresh} onClose={onClose} P={P} />;
+  }
+  if (screen === "addNetwork") {
+    return <AddCustomNetworkScreen onBack={() => setScreen("menu")} onAdded={refresh} onClose={onClose} P={P} />;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}`, maxHeight: "80vh", overflowY: "auto" }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Manage assets</span>
+          <button onClick={onClose} style={{ color: P.textMuted }}>✕</button>
+        </div>
+        <button onClick={() => setScreen("addToken")} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium mb-1.5" style={{ background: P.input, color: P.textPrimary }}>
+          <Plus size={15} color={P.textMuted} /> Add custom token
+        </button>
+        <button onClick={() => setScreen("addNetwork")} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium mb-3" style={{ background: P.input, color: P.textPrimary }}>
+          <Plus size={15} color={P.textMuted} /> Add network
+        </button>
+        {customNetworks.length > 0 && (
+          <>
+            <div className="text-[11px] font-medium mb-1.5" style={{ color: P.textMuted }}>Your networks</div>
+            <div className="flex flex-col gap-1">
+              {customNetworks.map((net) => (
+                <div key={net.chainKey} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: P.input }}>
+                  <span className="flex items-center gap-2 text-[12.5px]" style={{ color: P.textPrimary }}>
+                    <WalletChainBadge id={net.chainKey} size={16} /> {net.name}
+                  </span>
+                  <button onClick={() => handleRemoveNetwork(net.chainKey)} style={{ color: "#D92D20" }} title="Remove network">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // One quick-action circle — same visual language OKX/MetaMask/Trust all
 // use for Send/Receive/History. Receive and Send are wired to something
 // real; a disabled one stays honestly disabled rather than faked, never
@@ -967,8 +1202,8 @@ function SendChainPicker({ value, onChange, chains, P }) {
 }
 
 function SendAssetPicker({ chainKey, value, onChange, P }) {
-  const tokens = chainKey === "solana" ? SPL_TOKENS : tokensForWalletChain(chainKey);
-  if (tokens.length === 0) return null; // nothing to pick between — this chain has no verified token, native is the only option
+  const tokens = allTokensForChain(chainKey);
+  if (tokens.length === 0) return null; // nothing to pick between — this chain has no token added, native is the only option
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       <button
@@ -995,7 +1230,7 @@ function SendAssetPicker({ chainKey, value, onChange, P }) {
 function SendScreen({ session, onBack, P }) {
   // An imported single-chain account only offers that one chain — an HD
   // account (both evm + solana) offers everything, same as before.
-  const availableChains = WALLET_CHAIN_ORDER.filter((key) => (key === "solana" ? !!session.solana : !!session.evm));
+  const availableChains = getWalletChainOrder().filter((key) => (key === "solana" ? !!session.solana : !!session.evm));
   const [chainKey, setChainKey] = useState(availableChains[0]);
   const [assetSymbol, setAssetSymbol] = useState("native");
   const [toAddress, setToAddress] = useState("");
@@ -1009,7 +1244,7 @@ function SendScreen({ session, onBack, P }) {
   const isSolana = chainKey === "solana";
   const selectedToken = assetSymbol === "native"
     ? null
-    : (isSolana ? SPL_TOKENS : tokensForWalletChain(chainKey)).find((t) => t.symbol === assetSymbol);
+    : allTokensForChain(chainKey).find((t) => t.symbol === assetSymbol);
   const assetLabel = selectedToken ? selectedToken.symbol : NATIVE_SYMBOL_BY_CHAIN[chainKey];
   const addressValid = isValidChainAddress(chainKey, toAddress);
   const amountValid = Number(amount) > 0;
@@ -1353,6 +1588,7 @@ function WalletDashboard({
   const [addAccountFor, setAddAccountFor] = useState(null); // walletId | null
   const [showImportKey, setShowImportKey] = useState(false);
   const [showExtension, setShowExtension] = useState(false);
+  const [showManage, setShowManage] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [justCopied, setJustCopied] = useState(false);
   const extensionInstalled = useExtensionInstalled();
@@ -1405,27 +1641,44 @@ function WalletDashboard({
       <div className="rounded-2xl overflow-hidden" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
         <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${P.divider}` }}>
           <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>Balances</span>
-          <button onClick={() => setRefreshKey((k) => k + 1)} style={{ color: P.textMuted }}>
-            <RefreshCw size={13} />
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setShowManage(true)} style={{ color: P.textMuted }} title="Add token or network">
+              <Plus size={14} />
+            </button>
+            <button onClick={() => setRefreshKey((k) => k + 1)} style={{ color: P.textMuted }} title="Refresh balances">
+              <RefreshCw size={13} />
+            </button>
+          </div>
         </div>
-        {WALLET_CHAIN_ORDER.filter((key) => (key === "solana" ? !!session.solana : !!session.evm)).map((key, i) =>
-          key === "solana" ? (
-            <React.Fragment key={`${key}-${refreshKey}`}>
-              <SolanaBalanceRow solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
-              {SPL_TOKENS.map((token) => (
-                <SplTokenBalanceRow key={token.symbol} token={token} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
-              ))}
-            </React.Fragment>
-          ) : (
-            <React.Fragment key={`${key}-${refreshKey}`}>
-              <EvmBalanceRow chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} />
-              {tokensForWalletChain(key).map((token) => (
-                <TokenBalanceRow key={token.symbol} chainKey={key} token={token} evmAddress={session.evm.address} P={P} forceFresh={refreshKey > 0} />
-              ))}
-            </React.Fragment>
-          )
-        )}
+        {/* Capped height + scroll — once custom tokens/networks are added
+            the list can run well past a single screen; the rest of the
+            dashboard (actions, reveal/export, lock) should never get
+            pushed out of reach by a long token list. */}
+        <div style={{ maxHeight: "340px", overflowY: "auto" }}>
+          {getWalletChainOrder().filter((key) => (key === "solana" ? !!session.solana : !!session.evm)).map((key, i) =>
+            key === "solana" ? (
+              <React.Fragment key={`${key}-${refreshKey}`}>
+                <SolanaBalanceRow solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
+                {allTokensForChain("solana").map((token) => (
+                  <SplTokenBalanceRow
+                    key={token.mint} token={token} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0}
+                    onRemove={token.isCustom ? () => { removeCustomToken("solana", token.mint); setRefreshKey((k) => k + 1); } : undefined}
+                  />
+                ))}
+              </React.Fragment>
+            ) : (
+              <React.Fragment key={`${key}-${refreshKey}`}>
+                <EvmBalanceRow chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} />
+                {allTokensForChain(key).map((token) => (
+                  <TokenBalanceRow
+                    key={token.address} chainKey={key} token={token} evmAddress={session.evm.address} P={P} forceFresh={refreshKey > 0}
+                    onRemove={token.isCustom ? () => { removeCustomToken(key, token.address); setRefreshKey((k) => k + 1); } : undefined}
+                  />
+                ))}
+              </React.Fragment>
+            )
+          )}
+        </div>
       </div>
 
       <div className="rounded-2xl p-1 overflow-hidden" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
@@ -1461,6 +1714,9 @@ function WalletDashboard({
         <AddAccountModal onClose={() => setAddAccountFor(null)} onAdd={(password) => onAddAccount(addAccountFor, password)} P={P} />
       )}
       {showImportKey && <ImportKeyModal onClose={() => setShowImportKey(false)} onImport={onImportKey} P={P} />}
+      {showManage && (
+        <ManageAssetsModal onClose={() => setShowManage(false)} onChanged={() => setRefreshKey((k) => k + 1)} P={P} />
+      )}
     </div>
   );
 }

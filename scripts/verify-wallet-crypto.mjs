@@ -5,6 +5,22 @@ import { encryptSecret, decryptSecret } from "../src/wallet/vault.js";
 import { derivePath, getMasterKeyFromSeed } from "ed25519-hd-key";
 import { parseEvmPrivateKey, parseSolanaPrivateKey, parseImportedPrivateKey, KeyImportError } from "../src/wallet/walletKeyImport.js";
 
+// customNetworks.js/customTokens.js are browser-only (window.localStorage) —
+// a minimal in-memory shim so their real add/remove/validate logic can be
+// exercised here the same as everything else in this file, offline.
+{
+  const store = new Map();
+  globalThis.window = {
+    localStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+      removeItem: (k) => store.delete(k),
+    },
+  };
+}
+const { addCustomNetwork, removeCustomNetwork, loadCustomNetworks, customNetworkChainKey } = await import("../src/wallet/customNetworks.js");
+const { addCustomToken, removeCustomToken, loadCustomTokens } = await import("../src/wallet/customTokens.js");
+
 let n = 0;
 function check(label, fn) {
   fn();
@@ -234,6 +250,44 @@ check("suggestBip39Words respects its limit and returns [] for an empty prefix",
 
 check("suggestBip39Words returns [] for a prefix no real BIP-39 word starts with", () => {
   assert.deepEqual(suggestBip39Words("zzzzz"), []);
+});
+
+// --- customNetworks.js / customTokens.js: the "Add network" / "Add custom token" stores ---
+
+check("addCustomNetwork saves a real entry and rejects a duplicate chain ID", () => {
+  const entry = addCustomNetwork({ name: "Test Chain", rpcUrl: "https://rpc.test.example", chainId: "99999", symbol: "tst" });
+  assert.equal(entry.chainKey, customNetworkChainKey(99999));
+  assert.equal(entry.chainId, 99999);
+  assert.equal(entry.symbol, "TST"); // normalized uppercase
+  assert.equal(loadCustomNetworks().some((n) => n.chainId === 99999), true);
+  assert.throws(() => addCustomNetwork({ name: "Dupe", rpcUrl: "https://rpc.test.example", chainId: "99999", symbol: "TST" }), /already added/);
+  removeCustomNetwork(entry.chainKey);
+  assert.equal(loadCustomNetworks().some((n) => n.chainId === 99999), false);
+});
+
+check("addCustomNetwork rejects an invalid RPC URL, chain ID, or missing fields", () => {
+  assert.throws(() => addCustomNetwork({ name: "", rpcUrl: "https://x.example", chainId: "1", symbol: "X" }), /name is required/);
+  assert.throws(() => addCustomNetwork({ name: "X", rpcUrl: "not-a-url", chainId: "1", symbol: "X" }), /RPC URL/);
+  assert.throws(() => addCustomNetwork({ name: "X", rpcUrl: "https://x.example", chainId: "not-a-number", symbol: "X" }), /Chain ID/);
+  assert.throws(() => addCustomNetwork({ name: "X", rpcUrl: "https://x.example", chainId: "1", symbol: "" }), /symbol is required/);
+});
+
+check("addCustomToken dedupes an EVM token by address case-insensitively and removeCustomToken removes it", () => {
+  const addr = "0xAbC0000000000000000000000000000000dEaD";
+  addCustomToken("ethereum", { symbol: "TEST", address: addr, decimals: 18 });
+  assert.throws(() => addCustomToken("ethereum", { symbol: "TEST2", address: addr.toLowerCase(), decimals: 18 }), /already added/);
+  assert.equal(loadCustomTokens("ethereum").length, 1);
+  removeCustomToken("ethereum", addr);
+  assert.equal(loadCustomTokens("ethereum").length, 0);
+});
+
+check("addCustomToken tracks Solana tokens by mint, independently of EVM tokens on other chains", () => {
+  const mint = "So11111111111111111111111111111111111111112";
+  addCustomToken("solana", { symbol: "WSOL", mint, decimals: 9 });
+  assert.equal(loadCustomTokens("solana").length, 1);
+  assert.equal(loadCustomTokens("ethereum").length, 0); // separate namespace per chain
+  removeCustomToken("solana", mint);
+  assert.equal(loadCustomTokens("solana").length, 0);
 });
 
 console.log(`\n${n}/${n} checks passed`);

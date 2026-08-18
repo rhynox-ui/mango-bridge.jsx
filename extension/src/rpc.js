@@ -14,13 +14,18 @@
 import { createPublicClient, createWalletClient, http, fallback } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddress, getAccount } from "@solana/spl-token";
+import { getAssociatedTokenAddress, getAccount, getMint } from "@solana/spl-token";
 import { RPC_FALLBACKS, CHAIN_KEY_TO_WAGMI_MAINNET } from "../../src/wallet/chainRegistry.js";
 import { WALLET_ONLY_EVM_CHAINS, WALLET_ONLY_RPC_FALLBACK } from "../../src/wallet/walletChains.js";
+import { loadCustomNetworks, viemChainForCustomNetwork } from "../../src/wallet/customNetworks.js";
 import { SOLANA_RPC_ENDPOINTS } from "./chains.js";
 
 const ERC20_BALANCE_ABI = [
   { type: "function", name: "balanceOf", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
+];
+const ERC20_METADATA_ABI = [
+  { type: "function", name: "symbol", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
+  { type: "function", name: "decimals", inputs: [], outputs: [{ type: "uint8" }], stateMutability: "view" },
 ];
 
 const ALL_WALLET_CHAINS = { ...CHAIN_KEY_TO_WAGMI_MAINNET, ...WALLET_ONLY_EVM_CHAINS };
@@ -45,8 +50,10 @@ function setCached(key, data) {
 
 export function getWalletChain(chainKey) {
   const chain = ALL_WALLET_CHAINS[chainKey];
-  if (!chain) throw new Error(`No mainnet chain configured for key "${chainKey}"`);
-  return chain;
+  if (chain) return chain;
+  const custom = loadCustomNetworks().find((n) => n.chainKey === chainKey);
+  if (custom) return viemChainForCustomNetwork(custom);
+  throw new Error(`No mainnet chain configured for key "${chainKey}"`);
 }
 
 function getWalletTransport(chain) {
@@ -149,4 +156,21 @@ export async function fetchWalletSplTokenBalance(mintAddress, decimals, ownerAdd
     }
   }
   throw lastError;
+}
+
+/** Real on-chain symbol()/decimals() reads for a user-pasted ERC-20 contract address — see walletRpc.js's own version of this comment. */
+export async function fetchErc20TokenMetadata(chainKey, tokenAddress) {
+  const client = getWalletPublicClient(chainKey);
+  const [symbol, decimals] = await Promise.all([
+    client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
+    client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "decimals" }),
+  ]);
+  return { symbol, decimals: Number(decimals) };
+}
+
+/** Real on-chain decimals for a user-pasted SPL mint address — see walletRpc.js's own version of this comment on why the symbol is asked for separately. */
+export async function fetchSplMintDecimals(mintAddress) {
+  const connection = getWalletSolanaConnection();
+  const mint = await getMint(connection, new PublicKey(mintAddress));
+  return mint.decimals;
 }

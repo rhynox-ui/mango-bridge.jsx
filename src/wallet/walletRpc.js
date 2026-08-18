@@ -25,9 +25,14 @@ import { createPublicClient, http, fallback } from "viem";
 import { RPC_FALLBACKS, CHAIN_KEY_TO_WAGMI_MAINNET } from "../wagmi.js";
 import { solanaRpcUrls } from "../solanaRpc.js";
 import { WALLET_ONLY_EVM_CHAINS, WALLET_ONLY_RPC_FALLBACK } from "./walletChains.js";
+import { loadCustomNetworks, viemChainForCustomNetwork } from "./customNetworks.js";
 
 const ERC20_BALANCE_ABI = [
   { type: "function", name: "balanceOf", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
+];
+const ERC20_METADATA_ABI = [
+  { type: "function", name: "symbol", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
+  { type: "function", name: "decimals", inputs: [], outputs: [{ type: "uint8" }], stateMutability: "view" },
 ];
 
 // Wallet-visible EVM chains = every chain the Bridge already knows about,
@@ -64,8 +69,10 @@ function setCached(key, data) {
 
 export function getWalletChain(chainKey) {
   const chain = ALL_WALLET_CHAINS[chainKey];
-  if (!chain) throw new Error(`No mainnet chain configured for key "${chainKey}"`);
-  return chain;
+  if (chain) return chain;
+  const custom = loadCustomNetworks().find((n) => n.chainKey === chainKey);
+  if (custom) return viemChainForCustomNetwork(custom);
+  throw new Error(`No mainnet chain configured for key "${chainKey}"`);
 }
 
 function getWalletTransport(chain) {
@@ -225,4 +232,34 @@ export async function fetchWalletSplTokenBalance(mintAddress, decimals, ownerAdd
     }
   }
   throw lastError;
+}
+
+/**
+ * Real on-chain symbol()/decimals() reads for a user-pasted ERC-20
+ * contract address — the "import custom token" flow. Deliberately no
+ * fallback/guess: if either call reverts (not actually an ERC-20, wrong
+ * chain) this throws, and the caller surfaces that as "couldn't verify
+ * this token," never a fabricated symbol.
+ */
+export async function fetchErc20TokenMetadata(chainKey, tokenAddress) {
+  const client = getWalletPublicClient(chainKey);
+  const [symbol, decimals] = await Promise.all([
+    client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
+    client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "decimals" }),
+  ]);
+  return { symbol, decimals: Number(decimals) };
+}
+
+/**
+ * Real on-chain decimals for a user-pasted SPL mint address. SPL mints
+ * carry no on-chain symbol/name (that lives in an optional, separate
+ * Metaplex metadata account this project doesn't parse) — the caller
+ * asks the user for a symbol directly, same honest limitation
+ * documented on the "import custom token" UI itself.
+ */
+export async function fetchSplMintDecimals(mintAddress) {
+  const [{ getMint }, { PublicKey }] = await Promise.all([import("@solana/spl-token"), import("@solana/web3.js")]);
+  const connection = await getWalletSolanaConnection();
+  const mint = await getMint(connection, new PublicKey(mintAddress));
+  return mint.decimals;
 }
