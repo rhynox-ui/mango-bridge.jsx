@@ -423,7 +423,7 @@ function TopMenuDropdown({ P, onOpenDocs }) {
         <Menu size={14} color={P.textSecondary} />
       </button>
       {open && (
-        <div className="absolute left-0 z-30 mt-2 w-48 rounded-xl overflow-hidden shadow-2xl py-1" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <div className="absolute left-0 z-50 mt-2 w-48 rounded-xl overflow-hidden shadow-2xl py-1" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           <button
             onClick={() => { onOpenDocs(); setOpen(false); }}
             className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-[13px] font-medium"
