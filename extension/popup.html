@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mango Wallet</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; width: 360px; min-height: 480px;
+    background: #0A0A0B; color: #F5F5F6;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    font-size: 13px;
+  }
+  #root { padding: 16px; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  p { color: #9A9AA0; line-height: 1.5; margin: 0 0 12px; }
+  .panel { background: #151517; border: 1px solid #232326; border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #F5F5F6; }
+  .muted { color: #9A9AA0; }
+  input, textarea {
+    width: 100%; background: #0E0E10; border: 1px solid #232326; border-radius: 10px;
+    color: #F5F5F6; padding: 10px 12px; font-size: 13px; margin-bottom: 8px; font-family: inherit;
+  }
+  textarea { resize: none; font-family: ui-monospace, monospace; }
+  button {
+    width: 100%; padding: 11px; border-radius: 999px; border: none; font-weight: 600;
+    font-size: 13px; cursor: pointer; margin-bottom: 8px; font-family: inherit;
+  }
+  .btn-primary { background: #FF9A2E; color: #0A0A0B; }
+  .btn-primary:disabled { background: #1D1D20; color: #57575D; cursor: not-allowed; }
+  .btn-secondary { background: #1F1F22; color: #F5F5F6; }
+  .btn-danger { background: #D92D20; color: #FFFFFF; }
+  .btn-row { display: flex; gap: 8px; }
+  .btn-row button { margin-bottom: 0; }
+  .error { color: #F97066; font-size: 11.5px; margin: -4px 0 8px; }
+  .words-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 12px; }
+  .word { font-family: ui-monospace, monospace; font-size: 12px; background: #0E0E10; border-radius: 8px; padding: 6px 8px; }
+  .word span { color: #57575D; margin-right: 4px; }
+  .origin-badge { font-size: 11px; color: #9A9AA0; word-break: break-all; }
+  .link { color: #FF9A2E; text-decoration: none; font-size: 12px; cursor: pointer; }
+  a.link { display: block; text-align: center; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="popup.bundle.js"></script>
+</body>
+</html>

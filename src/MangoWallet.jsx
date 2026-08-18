@@ -38,9 +38,18 @@
 //   curl, same limitation documented in solana-program/README.md for the
 //   Solana program side of this project) — needs real-world testing on
 //   the deployed site before WALLET_LIVE flips to true.
+// - Also real, but a separate deliverable from this file: a browser
+//   extension (extension/) injecting a real EIP-1193 provider
+//   (window.ethereum) and a Phantom-compatible Solana provider
+//   (window.solana) into every page, with EIP-6963 discovery, so any
+//   dApp can connect to Mango Wallet like it would MetaMask or Phantom.
+//   Its own vault is separate from this tab's (different browser
+//   origin — see extension/README.md) and its signing logic
+//   (extension/src/signing.js) is independently offline-verified in
+//   scripts/verify-extension-signing.mjs, same real-crypto-recovery
+//   discipline as this file's own send/sign paths.
 // - Not yet built: an aggregate portfolio USD total (needs balance state
-//   lifted out of each independent row), a dApp-facing provider (EIP-1193
-//   injection), browser-extension packaging.
+//   lifted out of each independent row).
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 // Static, named imports only — same convention App.jsx's AssetIcon/ChainIcon

@@ -1,6 +1,8 @@
 node_modules/
 dist/
 dist-ssr/
+extension/popup.bundle.js
+extension/popup.bundle.js.map
 .vercel/
 *.local
 .env
