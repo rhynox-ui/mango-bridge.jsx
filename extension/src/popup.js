@@ -27,8 +27,9 @@
 //     needs a small, fast, unambiguous "approve or reject" surface, not
 //     the whole wallet UI.
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
+import { Sun, Moon } from "lucide-react";
 import { MangoWalletTab } from "../../src/MangoWallet.jsx";
 import { PALETTE } from "../../src/theme.js";
 import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic } from "../../src/wallet/keys.js";
@@ -42,6 +43,74 @@ import { isHex, hexToBytes, hexToString } from "viem";
 
 const root = document.getElementById("root");
 
+// The extension keeps its own light/dark preference — a real, separate
+// setting from the site's own "mango:theme" localStorage key, since a
+// different browser origin can't read that key at all (same reason this
+// extension's wallet vault is its own — see this file's module doc).
+// Defaults to dark, matching this popup's own dark-first chrome; the
+// site defaults to light instead — two independent, equally real
+// defaults, not one "forgetting" the other.
+const THEME_STORAGE_KEY = "mango_wallet_theme";
+function loadTheme() {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+function saveTheme(theme) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // storage unavailable — theme just won't persist across popup opens, nothing else breaks
+  }
+}
+
+// Wraps MangoWalletTab with the toggle the site's own top nav has (see
+// App.jsx's Sun/Moon button) — MangoWalletTab itself renders no page
+// chrome of its own (that lives in App.jsx on the site), so the popup
+// needs a small one here instead.
+function ExtensionApp() {
+  const [theme, setTheme] = useState(loadTheme);
+  const P = PALETTE[theme];
+
+  useEffect(() => {
+    document.body.style.background = P.bg;
+    document.body.style.color = P.textPrimary;
+    document.documentElement.style.colorScheme = theme; // native form-control/scrollbar coloring follows too
+  }, [P, theme]);
+
+  function toggleTheme() {
+    const next = theme === "light" ? "dark" : "light";
+    setTheme(next);
+    saveTheme(next);
+  }
+
+  return React.createElement(
+    "div",
+    null,
+    React.createElement(
+      "div",
+      { style: { display: "flex", justifyContent: "flex-end", marginBottom: "10px" } },
+      React.createElement(
+        "button",
+        {
+          onClick: toggleTheme,
+          "aria-label": "Toggle light/dark theme",
+          style: {
+            width: "30px", height: "30px", borderRadius: "999px", border: "none", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center", background: P.pillBg,
+          },
+        },
+        theme === "light"
+          ? React.createElement(Moon, { size: 13, color: P.textSecondary })
+          : React.createElement(Sun, { size: 13, color: P.textSecondary })
+      )
+    ),
+    React.createElement(MangoWalletTab, { P })
+  );
+}
+
 function renderFullWalletApp() {
   // MangoWallet.jsx's WelcomeScreen/WalletDashboard check
   // window.ethereum?.isMangoWallet to show "browser extension detected"
@@ -52,7 +121,7 @@ function renderFullWalletApp() {
   // installed, so this is accurate, not a workaround.
   if (typeof window.ethereum === "undefined") window.ethereum = { isMangoWallet: true };
   root.classList.remove("legacy"); // in case a previous render() in this same page left it set
-  createRoot(root).render(React.createElement(MangoWalletTab, { P: PALETTE.dark }));
+  createRoot(root).render(React.createElement(ExtensionApp));
 }
 
 function h(tag, attrs = {}, ...children) {
