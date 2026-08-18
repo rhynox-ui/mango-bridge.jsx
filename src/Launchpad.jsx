@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
 import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2 } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
-import { ChainBadge } from "./App.jsx";
+import { ChainBadge } from "./chainBadges.jsx";
 import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getLaunchStats, getProtocolStats, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
 // Slippage tolerance at/above this shows an explicit warning in the trade

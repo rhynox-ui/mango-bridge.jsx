@@ -15,12 +15,22 @@
 // the same wallet ends up in both places, exactly like importing a
 // MetaMask seed into a second device.
 //
-// Deliberately single-wallet, single-account (index 0) for this first
-// version — the main site's Wallet tab already has the full multi-
-// wallet/multi-account UI; this popup's job is dApp connectivity, kept
-// small enough to fit a 360×480 popup without needing that entire
-// surface duplicated here too.
+// Two rendering paths, chosen by whether a dApp is waiting:
+//   - No pending request (the toolbar icon was clicked directly): mounts
+//     the ACTUAL src/MangoWallet.jsx component the main site renders —
+//     full multi-wallet/multi-account UI, balances, send, the works —
+//     not a reimplementation. build.mjs redirects its walletRpc.js
+//     import to ./rpc.js (a Vite-independent equivalent) so it runs
+//     completely unmodified.
+//   - A pending request: the lightweight, hand-rolled approve/reject flow
+//     below — deliberately NOT the full app, since a request approval
+//     needs a small, fast, unambiguous "approve or reject" surface, not
+//     the whole wallet UI.
 
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { MangoWalletTab } from "../../src/MangoWallet.jsx";
+import { PALETTE } from "../../src/theme.js";
 import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic } from "../../src/wallet/keys.js";
 import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault } from "../../src/wallet/vault.js";
 import {
@@ -30,8 +40,19 @@ import {
 import { viemChainForId, DEFAULT_EVM_CHAIN_ID } from "./chains.js";
 import { isHex, hexToBytes, hexToString } from "viem";
 
-const MANGO_SITE_URL = "https://mangoprotocol.site/";
 const root = document.getElementById("root");
+
+function renderFullWalletApp() {
+  // MangoWallet.jsx's WelcomeScreen/WalletDashboard check
+  // window.ethereum?.isMangoWallet to show "browser extension detected"
+  // instead of re-promoting an install. That check only ever sees a real
+  // value on a page inpage.js was injected into — which this popup, as
+  // an extension page rather than a normal tab, never is. From the
+  // popup's own point of view "the extension" (itself) genuinely is
+  // installed, so this is accurate, not a workaround.
+  if (typeof window.ethereum === "undefined") window.ethereum = { isMangoWallet: true };
+  createRoot(root).render(React.createElement(MangoWalletTab, { P: PALETTE.dark }));
+}
 
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -201,43 +222,6 @@ function renderUnlock(onDone) {
 }
 
 // ---------------------------------------------------------------------
-// Dashboard (no pending dApp request — the toolbar icon was just clicked)
-// ---------------------------------------------------------------------
-
-async function renderDashboard(account) {
-  const { connectedSites } = await chrome.storage.local.get("connectedSites");
-  const sites = connectedSites ?? {};
-  const originRows = Object.entries(sites).map(([origin, byChain]) =>
-    h("div", { class: "row" },
-      h("div", {}, h("div", { class: "origin-badge" }, origin)),
-      h("button", {
-        class: "btn-secondary", style: "width:auto;padding:6px 12px;margin:0;",
-        onclick: async () => {
-          const next = { ...sites };
-          delete next[origin];
-          await chrome.storage.local.set({ connectedSites: next });
-          renderDashboard(account);
-        },
-      }, "Disconnect"),
-    ),
-  );
-
-  mount(
-    h("div", { class: "panel" },
-      h("h1", {}, "Mango Wallet"),
-      h("div", { class: "row" }, h("span", { class: "muted" }, "EVM (all chains)"), h("span", { class: "mono" }, truncate(account.evm.address))),
-      h("div", { class: "row" }, h("span", { class: "muted" }, "Solana"), h("span", { class: "mono" }, truncate(account.solana.address))),
-    ),
-    h("div", { class: "panel" },
-      h("div", { style: "font-size:12px;font-weight:600;margin-bottom:4px;" }, "Connected sites"),
-      originRows.length ? h("div", {}, ...originRows) : h("p", { style: "margin:0;" }, "No sites connected yet."),
-    ),
-    h("a", { class: "link", href: MANGO_SITE_URL, target: "_blank", style: "margin-bottom:8px;" }, "Open full wallet on mangoprotocol.site →"),
-    h("button", { class: "btn-danger", onclick: async () => { clearVault(); renderWelcome((acc) => renderDashboard(acc)); } }, "Remove this wallet"),
-  );
-}
-
-// ---------------------------------------------------------------------
 // Approval flow — a dApp is waiting on the other end of this popup
 // ---------------------------------------------------------------------
 
@@ -356,21 +340,19 @@ async function main() {
   const params = new URLSearchParams(window.location.search);
   const requestId = params.get("requestId") ? Number(params.get("requestId")) : null;
 
-  let request = null;
-  if (requestId != null) {
-    request = await chrome.runtime.sendMessage({ type: "MANGO_WALLET_POPUP_READY", requestId });
-    if (!request) {
-      mount(h("div", { class: "panel" }, h("h1", {}, "Request expired"), h("p", {}, "Go back to the site and try again.")));
-      return;
-    }
+  if (requestId == null) {
+    renderFullWalletApp();
+    return;
   }
 
-  function afterUnlock(account) {
-    if (request) renderApproval(requestId, request, account);
-    else renderDashboard(account);
+  const request = await chrome.runtime.sendMessage({ type: "MANGO_WALLET_POPUP_READY", requestId });
+  if (!request) {
+    mount(h("div", { class: "panel" }, h("h1", {}, "Request expired"), h("p", {}, "Go back to the site and try again.")));
+    return;
   }
 
   const vault = loadVault();
+  const afterUnlock = (account) => renderApproval(requestId, request, account);
   if (!vault) renderWelcome(afterUnlock);
   else renderUnlock(afterUnlock);
 }

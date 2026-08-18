@@ -3,6 +3,7 @@ dist/
 dist-ssr/
 extension/popup.bundle.js
 extension/popup.bundle.js.map
+extension/popup.css
 .vercel/
 *.local
 .env

@@ -1,13 +1,31 @@
 // src/MangoWallet.jsx
 //
-// Mango Wallet — Phase 1 (see solana-program/README.md-style status notes
-// below): a genuinely self-custodial wallet embedded directly in the site.
-// The recovery phrase is generated, encrypted, and stored ENTIRELY in this
-// browser — src/wallet/keys.js and src/wallet/vault.js never make a
-// network call, and nothing here ever sends a mnemonic, private key, or
-// derived signing material to Mango's backend in any form. That's a
-// deliberate, different trust model from the Telegram bot's wallet (which
-// is necessarily custodial — see mango-telegram-bot's wallet.service.ts).
+// Mango Wallet: a genuinely self-custodial wallet. The recovery phrase is
+// generated, encrypted, and stored ENTIRELY in the browser — src/wallet/
+// keys.js and src/wallet/vault.js never make a network call, and nothing
+// here ever sends a mnemonic, private key, or derived signing material to
+// Mango's backend in any form. That's a deliberate, different trust
+// model from the Telegram bot's wallet (which is necessarily custodial —
+// see mango-telegram-bot's wallet.service.ts).
+//
+// This component now runs in TWO places, deliberately not offering the
+// same thing in both:
+//   - The browser extension (extension/) — the real wallet. Its popup
+//     bundles this exact file (extension/build.mjs redirects its
+//     walletRpc.js import to extension/src/rpc.js, a Vite-independent
+//     equivalent) and renders it in full: onboarding, multi-wallet/
+//     account management, balances, send. The extension is also the
+//     ONLY place a dApp can actually connect to Mango Wallet — a plain
+//     browser tab has no way to inject window.ethereum/window.solana
+//     into other pages, only an installed extension can.
+//   - The main site — a pointer to the extension, not a second wallet.
+//     isExtensionPage() (near MangoWalletTab, below) is what tells the
+//     two apart: it's only ever true on the extension's own chrome-
+//     extension:// pages. A separate in-site wallet with no dApp
+//     connectivity would just be a second wallet a visitor could mistake
+//     for the same one, with no real advantage over the extension's own —
+//     so the site shows "install the extension" (or, once it's
+//     installed, "open it") instead of running its own onboarding here.
 //
 // STATUS:
 // - Real: create/import a BIP-39 wallet, password-encrypted local storage
@@ -64,7 +82,7 @@ import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, 
 import { isAddress, parseUnits } from "viem";
 import { PublicKey } from "@solana/web3.js";
 import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
-import { ChainBadge } from "./App.jsx";
+import { ChainBadge } from "./chainBadges.jsx";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
 import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic, suggestBip39Words } from "./wallet/keys.js";
 import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault } from "./wallet/vault.js";
@@ -1337,6 +1355,7 @@ function WalletDashboard({
   const [showExtension, setShowExtension] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [justCopied, setJustCopied] = useState(false);
+  const extensionInstalled = useExtensionInstalled();
 
   const isImportedAccount = activeKey.type === "imported";
 
@@ -1418,9 +1437,11 @@ function WalletDashboard({
         <button onClick={() => setShowRevealKey(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
           <Eye size={15} color={P.textMuted} /> Export private key
         </button>
-        <button onClick={() => setShowExtension(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
-          <Puzzle size={15} color={P.textMuted} /> Get the browser extension
-        </button>
+        {!extensionInstalled && (
+          <button onClick={() => setShowExtension(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
+            <Puzzle size={15} color={P.textMuted} /> Get the browser extension
+          </button>
+        )}
         <button onClick={() => setShowReset(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: "#D92D20" }}>
           <Trash2 size={15} color="#D92D20" /> Remove wallet from this browser
         </button>
@@ -1778,9 +1799,82 @@ function WalletComingSoon({ P }) {
   );
 }
 
+// True only inside the extension's own popup (a chrome-extension:// page)
+// — never true for the site, no matter what protocol/origin trickery a
+// page might attempt, since only an actual installed extension's own
+// pages ever run at that protocol. This is what decides whether
+// MangoWalletTab renders the real wallet (extension) or a pointer to it
+// (site) — see the module doc below on why the site no longer runs its
+// own separate onboarding/dashboard.
+function isExtensionPage() {
+  try {
+    return window.location.protocol === "chrome-extension:";
+  } catch {
+    return false;
+  }
+}
+
+// Real dApp connectivity (window.ethereum/window.solana injection) only
+// exists in the browser extension — a plain site tab has no way to
+// inject a provider into other pages. Since the extension now has full
+// feature parity with what this file used to render directly on the
+// site (same MangoWalletInner component, same multi-wallet/account UI,
+// balances, send — see extension/src/popup.js and extension/build.mjs's
+// walletRpc.js redirect), a separate, disconnected in-site wallet with
+// no dApp connectivity has no real advantage over the extension's own —
+// it would just be a second wallet a visitor might mistake for the same
+// one. The site's Wallet tab is a pointer to the extension now, not a
+// second implementation of it.
+function OpenExtensionPrompt({ P }) {
+  return (
+    <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
+        <Check size={19} color={LIME_DEEP} />
+      </div>
+      <div>
+        <div className="font-display text-[16px] font-semibold mb-1" style={{ color: P.textPrimary }}>Extension detected</div>
+        <div className="text-[12.5px] leading-relaxed" style={{ color: P.textMuted }}>
+          Mango Wallet lives in the browser extension — click the Mango icon in your browser's toolbar to create or open your wallet.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InstallExtensionGate({ P }) {
+  const [showExtension, setShowExtension] = useState(false);
+  return (
+    <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
+        <Puzzle size={19} color={LIME_DEEP} />
+      </div>
+      <div>
+        <div className="font-display text-[16px] font-semibold mb-1" style={{ color: P.textPrimary }}>Mango Wallet</div>
+        <div className="text-[12.5px] leading-relaxed" style={{ color: P.textMuted }}>
+          Mango Wallet lives entirely in the browser extension now — the only way it can connect to other dApps, the same way MetaMask or Phantom do. Install it to create or import your wallet.
+        </div>
+      </div>
+      <div className="w-full mt-2">
+        <PrimaryButton onClick={() => setShowExtension(true)} P={P}>
+          <span className="flex items-center justify-center gap-1.5"><Puzzle size={14} /> Get the browser extension</span>
+        </PrimaryButton>
+      </div>
+      {showExtension && <ExtensionModal onClose={() => setShowExtension(false)} P={P} />}
+    </div>
+  );
+}
+
+function SiteWalletGate({ P }) {
+  const extensionInstalled = useExtensionInstalled();
+  return extensionInstalled ? <OpenExtensionPrompt P={P} /> : <InstallExtensionGate P={P} />;
+}
+
 export function MangoWalletTab({ P }) {
   if (!WALLET_LIVE && !hasPreviewOverride()) {
     return <WalletComingSoon P={P} />;
   }
-  return <MangoWalletInner P={P} />;
+  if (isExtensionPage()) {
+    return <MangoWalletInner P={P} />;
+  }
+  return <SiteWalletGate P={P} />;
 }

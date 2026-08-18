@@ -29,7 +29,7 @@ fs.rmSync(zipPath, { force: true });
 // on the extracted folder finds manifest.json directly) — excludes the
 // packaging/build tooling itself and the source map, neither of which
 // the extension needs at runtime.
-execFileSync("zip", ["-r", zipPath, ".", "-x", "package.mjs", "-x", "build.mjs", "-x", "shims/*", "-x", "popup.bundle.js.map"], {
+execFileSync("zip", ["-r", zipPath, ".", "-x", "package.mjs", "-x", "build.mjs", "-x", "shims/*", "-x", "popup.bundle.js.map", "-x", "tailwind.config.js", "-x", "tailwind-input.css"], {
   cwd: dir,
   stdio: "inherit",
 });

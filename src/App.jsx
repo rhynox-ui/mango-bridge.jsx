@@ -1,5 +1,5 @@
 import {
-  NetworkEthereum, NetworkBase, NetworkBinanceSmartChain, TokenETH, TokenUSDC, TokenUSDT, TokenBNB,
+  TokenETH, TokenUSDC, TokenUSDT, TokenBNB,
   // Confirmed real, static exports via a live server-render check of this
   // exact installed package version — same verification bar as the
   // original four above, not a search-result guess (see the note further
@@ -7,10 +7,9 @@ import {
   // reverted: NetworkStablechain genuinely doesn't exist, but this batch
   // was independently re-checked and every name below does).
   TokenWBTC, TokenAVAX, TokenHYPE, TokenXPL, TokenOKB,
-  NetworkArbitrumOne, NetworkAvalanche, NetworkAbstract, NetworkHyperEvm, NetworkInk, NetworkPlasma, NetworkUnichain, NetworkXLayer,
-  NetworkStable, NetworkRobinhood,
 } from "@web3icons/react";
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { ChainBadge } from "./chainBadges.jsx";
 import { parseUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
 import { PublicKey } from "@solana/web3.js";
@@ -283,90 +282,6 @@ function FloatingMangoDecor({ P }) {
         </div>
       ))}
     </div>
-  );
-}
-
-function ChainIcon({ id, size }) {
-  const s = size * 0.8;
-  if (id === "ethereum") return <NetworkEthereum variant="branded" size={s} />;
-  if (id === "base") return <NetworkBase variant="branded" size={s} />;
-  if (id === "bnb") return <NetworkBinanceSmartChain variant="branded" size={s} />;
-  // Real, confirmed static exports (same live server-render verification as
-  // the asset icons above) — NetworkStable/NetworkRobinhood genuinely exist
-  // even though an earlier attempt at "NetworkStablechain" (wrong name) did
-  // not, and all 8 newly added chains' network icons are confirmed real
-  // too. No runtime API fetch needed for any of these now.
-  if (id === "stable") return <NetworkStable variant="branded" size={s} />;
-  if (id === "robinhood") return <NetworkRobinhood variant="branded" size={s} />;
-  if (id === "arbitrum") return <NetworkArbitrumOne variant="branded" size={s} />;
-  if (id === "avalanche") return <NetworkAvalanche variant="branded" size={s} />;
-  if (id === "abstract") return <NetworkAbstract variant="branded" size={s} />;
-  if (id === "hyperevm") return <NetworkHyperEvm variant="branded" size={s} />;
-  if (id === "ink") return <NetworkInk variant="branded" size={s} />;
-  if (id === "plasma") return <NetworkPlasma variant="branded" size={s} />;
-  if (id === "unichain") return <NetworkUnichain variant="branded" size={s} />;
-  if (id === "xlayer") return <NetworkXLayer variant="branded" size={s} />;
-  const sHand = size * 0.56;
-  const solanaFallback = (
-    <svg width={sHand} height={sHand} viewBox="0 0 24 24" fill="none">
-      <path d="M4 6.5L7 4h13l-3 2.5H4z" fill="currentColor" opacity="0.9" />
-      <path d="M4 17.5L7 20h13l-3-2.5H4z" fill="currentColor" opacity="0.9" />
-      <path d="M4 12L7 9.5h13L17 12H4z" fill="currentColor" />
-    </svg>
-  );
-  // Real bug fix: this branch didn't exist at all, so selecting Solana
-  // silently fell through to the Robinhood arrow icon below — visually
-  // making it look like the chain selector wasn't actually changing
-  // anything, even though the underlying state genuinely was.
-  if (id === "solana") return <SolanaLogoIcon size={s} fallback={solanaFallback} />;
-  const robinhoodFallback = (
-    <svg width={sHand} height={sHand} viewBox="0 0 24 24" fill="none">
-      <path d="M12 3l7 6-7 12-7-12 7-6z" fill="currentColor" opacity="0.85" />
-      <path d="M12 3l7 6h-14l7-6z" fill="currentColor" />
-    </svg>
-  );
-  return robinhoodFallback;
-}
-
-export function ChainBadge({ id, size = 18 }) {
-  const c = CHAINS[id];
-  if (!c) {
-    // Defensive fallback: id could be a chain that no longer exists (e.g. a
-    // persisted history entry from before a chain was removed). Never crash
-    // rendering someone's past transaction history over this.
-    return (
-      <span className="flex items-center justify-center rounded-full shrink-0" style={{ width: size, height: size, background: "#8C9BAE22", color: "#8C9BAE", border: "1px solid #8C9BAE55" }}>
-        <span style={{ fontSize: size * 0.5, fontWeight: 700 }}>?</span>
-      </span>
-    );
-  }
-  // Real fix, same reasoning across all of these: every chain below renders
-  // via @web3icons/react's "branded" variant (or, for Solana, its own
-  // official logomark from icons.sol.new) — all complete, self-contained
-  // badge icons with their own color/shape already baked in. Wrapping any
-  // of them in another background circle created a visible double-circle
-  // effect. Only the plain hand-drawn robinhood-arrow fallback (used for a
-  // chain id ChainIcon doesn't otherwise recognize) genuinely needs the
-  // wrapping for contrast, since that's simple line-art with no color of
-  // its own.
-  const SELF_CONTAINED_BADGE_CHAINS = [
-    "ethereum", "base", "bnb", "solana", "stable", "robinhood",
-    "arbitrum", "avalanche", "abstract", "hyperevm", "ink", "plasma", "unichain", "xlayer",
-  ];
-  if (SELF_CONTAINED_BADGE_CHAINS.includes(id)) {
-    return (
-      <span className="flex items-center justify-center rounded-full shrink-0 overflow-hidden" style={{ width: size, height: size }}>
-        <ChainIcon id={id} size={size} />
-      </span>
-    );
-  }
-  return (
-    <span
-      className="flex items-center justify-center rounded-full shrink-0"
-      style={{ width: size, height: size, background: `${c.color}22`, color: c.color, border: `1px solid ${c.color}55` }}
-    >
-      <ChainIcon id={id} size={size} />
-    </span>
   );
 }
 
