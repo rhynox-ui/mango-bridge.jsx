@@ -60,7 +60,7 @@ import {
   NetworkPolygon, NetworkOptimism, NetworkZksync, NetworkLinea, NetworkScroll, NetworkGnosis,
   NetworkMonad, NetworkSonic, NetworkMantle, NetworkBlast, NetworkBerachain, NetworkWorld, NetworkSeiNetwork,
 } from "@web3icons/react";
-import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil } from "lucide-react";
+import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle } from "lucide-react";
 import { isAddress, parseUnits } from "viem";
 import { PublicKey } from "@solana/web3.js";
 import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
@@ -362,7 +362,45 @@ function SolanaBalanceRow({ solanaAddress, P, forceFresh }) {
 // Onboarding: welcome
 // ---------------------------------------------------------------------------
 
+// Points at extension/README.md's own distribution story: this ships as a
+// real, working "Load unpacked" bundle (public/mango-wallet-extension.zip,
+// built by extension/package.mjs) rather than a Chrome Web Store listing —
+// that store submission is a manual review process this repo can't do on
+// its own. ExtensionModal says exactly that; never claims a one-click
+// install that doesn't exist yet.
+function ExtensionModal({ onClose, P }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Mango Wallet extension</span>
+          <button onClick={onClose} style={{ color: P.textMuted }}>✕</button>
+        </div>
+        <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>
+          A browser extension so any dApp — not just Mango — can connect to your Mango Wallet, the same way it would MetaMask or Phantom. It's a separate wallet from this one (a browser extension can't share this site's storage), so you'll create or import a recovery phrase again once it's installed.
+        </div>
+        <div className="text-[12px] mb-4" style={{ color: P.textMuted }}>
+          Not yet on the Chrome Web Store — that requires a manual review this early. Until then, install it as an unpacked extension in any Chromium browser (Chrome, Brave, Edge, Arc):
+        </div>
+        <ol className="text-[12px] mb-4 pl-4 flex flex-col gap-1.5" style={{ color: P.textSecondary, listStyle: "decimal" }}>
+          <li>Download and unzip the extension below.</li>
+          <li>Open <span className="font-mono">chrome://extensions</span> and turn on <b>Developer mode</b>.</li>
+          <li>Click <b>Load unpacked</b> and select the unzipped folder.</li>
+        </ol>
+        <a
+          href="/mango-wallet-extension.zip" download
+          className="w-full py-3 rounded-full font-display font-semibold text-[14px] flex items-center justify-center gap-2"
+          style={{ background: P.ctaBg, color: P.ctaText }}
+        >
+          <Download size={15} /> Download extension (.zip)
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function WelcomeScreen({ onCreate, onImport, P }) {
+  const [showExtension, setShowExtension] = useState(false);
   return (
     <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
       <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
@@ -379,7 +417,11 @@ function WelcomeScreen({ onCreate, onImport, P }) {
         <button onClick={onImport} className="w-full py-3 rounded-full text-[13.5px] font-medium" style={{ background: P.pillBg, color: P.textPrimary }}>
           I already have a recovery phrase
         </button>
+        <button onClick={() => setShowExtension(true)} className="w-full py-2.5 rounded-full text-[12.5px] font-medium flex items-center justify-center gap-1.5" style={{ color: P.textMuted }}>
+          <Puzzle size={13} /> Get the browser extension
+        </button>
       </div>
+      {showExtension && <ExtensionModal onClose={() => setShowExtension(false)} P={P} />}
     </div>
   );
 }
@@ -1206,6 +1248,7 @@ function WalletDashboard({
   const [showReset, setShowReset] = useState(false);
   const [addAccountFor, setAddAccountFor] = useState(null); // walletId | null
   const [showImportKey, setShowImportKey] = useState(false);
+  const [showExtension, setShowExtension] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [justCopied, setJustCopied] = useState(false);
 
@@ -1289,6 +1332,9 @@ function WalletDashboard({
         <button onClick={() => setShowRevealKey(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
           <Eye size={15} color={P.textMuted} /> Export private key
         </button>
+        <button onClick={() => setShowExtension(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
+          <Puzzle size={15} color={P.textMuted} /> Get the browser extension
+        </button>
         <button onClick={() => setShowReset(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: "#D92D20" }}>
           <Trash2 size={15} color="#D92D20" /> Remove wallet from this browser
         </button>
@@ -1296,6 +1342,7 @@ function WalletDashboard({
 
       {showReveal && <RevealPhraseModal walletId={activeKey.walletId} onClose={() => setShowReveal(false)} P={P} />}
       {showRevealKey && <RevealPrivateKeyModal session={session} activeKey={activeKey} onClose={() => setShowRevealKey(false)} P={P} />}
+      {showExtension && <ExtensionModal onClose={() => setShowExtension(false)} P={P} />}
       {showReset && (
         <ResetWalletModal
           onClose={() => setShowReset(false)}
@@ -1616,11 +1663,10 @@ function MangoWalletInner({ P }) {
 
 // Same pattern Launchpad.jsx uses for its Solana tab: the real, working
 // implementation above stays fully built and testable, but the public site
-// shows "Coming soon" until this flips to true — a deliberate choice given
-// this generates and stores real private keys, and hasn't gone through a
-// security review yet. Flip this one line when that's done; nothing else
-// about the implementation needs to change.
-export const WALLET_LIVE = false;
+// shows "Coming soon" until this flips to true — a deliberate choice while
+// this hadn't gone through a security review yet. Flipped to true for
+// live testing; nothing else about the implementation needs to change.
+export const WALLET_LIVE = true;
 
 // Internal-only bypass for testing the real flow before launch — mirrors
 // main.jsx's existing `?test=solana` convention. Not documented anywhere

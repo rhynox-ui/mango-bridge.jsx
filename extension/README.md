@@ -85,6 +85,20 @@ own comment for why a Buffer polyfill is injected — the same real issue
    → select this `extension/` directory.
 3. Click the toolbar icon to create or import a wallet.
 
+## Distributing it
+
+```
+node extension/package.mjs
+```
+
+Builds the popup bundle, then zips this directory into
+`public/mango-wallet-extension.zip` — the file the main site's Wallet tab
+links to from its own "Get the browser extension" button (see
+`ExtensionModal` in `src/MangoWallet.jsx`). This is the real distribution
+path until the extension goes through the Chrome Web Store's manual
+review process; the in-app modal is upfront about that rather than
+implying a one-click store install that doesn't exist yet.
+
 ## Icons
 
 `icons/icon{16,32,48,128}.png` are generated from the repo's own

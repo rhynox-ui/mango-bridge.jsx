@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx",
-    "build:extension": "node extension/build.mjs"
+    "build:extension": "node extension/build.mjs",
+    "package:extension": "node extension/package.mjs"
   },
   "dependencies": {
     "@arbitrum/sdk": "^4.0.2",
