@@ -49,8 +49,9 @@ import { PublicKey } from "@solana/web3.js";
 import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
 import { ChainBadge } from "./App.jsx";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
-import { generateMnemonic, isValidMnemonic, deriveAccounts, normalizeMnemonic } from "./wallet/keys.js";
-import { encryptMnemonic, decryptMnemonic, saveVault, loadVault, clearVault } from "./wallet/vault.js";
+import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic } from "./wallet/keys.js";
+import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault } from "./wallet/vault.js";
+import { parseImportedPrivateKey, KeyImportError } from "./wallet/walletKeyImport.js";
 import { fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, fetchWalletSplTokenBalance, getWalletChain } from "./wallet/walletRpc.js";
 import {
   estimateEvmSendFee, sendEvmNative, estimateSolanaSendFee, sendSolanaNative,
@@ -539,9 +540,9 @@ function RevealPhraseModal({ session, onClose, P }) {
   const [phrase, setPhrase] = useState(null);
 
   async function handleReveal() {
-    const record = loadVault();
+    const vault = loadVault();
     try {
-      const decrypted = await decryptMnemonic(record, password);
+      const decrypted = await decryptSecret(vault.mnemonicRecord, password);
       setPhrase(decrypted);
       setError("");
     } catch {
@@ -855,9 +856,91 @@ function SendScreen({ session, onBack, P }) {
   );
 }
 
-function WalletDashboard({ session, onLock, onReset, onSend, P }) {
+// "Account N ▾" — matches the real OKX Wallet pattern this was built
+// against: tapping it lists every HD-derived account under the current
+// seed phrase (checkmark on the active one) plus an "Add account" row.
+// Multiple independent WALLETS (a different seed phrase entirely,
+// OKX's separate "Add wallet") aren't built yet — see this file's
+// top-of-file STATUS block.
+function AccountSwitcher({ accounts, activeIndex, onSwitch, onAddAccount, P }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[12.5px] font-medium" style={{ color: P.textPrimary }}>
+        Account {activeIndex + 1}
+        <ChevronDown size={13} color={P.textMuted} />
+      </button>
+      {open && (
+        <div className="absolute left-0 z-30 mt-2 w-56 rounded-xl overflow-hidden shadow-2xl py-1" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          {accounts.map((acc, i) => (
+            <button key={i} onClick={() => { onSwitch(i); setOpen(false); }} className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left">
+              <div className="flex flex-col">
+                <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Account {i + 1}</span>
+                <span className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{acc.evm.address.slice(0, 6)}…{acc.evm.address.slice(-4)}</span>
+              </div>
+              {i === activeIndex && <Check size={14} color={LIME} />}
+            </button>
+          ))}
+          <button
+            onClick={() => { onAddAccount(); setOpen(false); }}
+            className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left"
+            style={{ color: P.textPrimary, borderTop: `1px solid ${P.divider}` }}
+          >
+            <Plus size={14} color={P.textMuted} /> Add account
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddAccountModal({ onClose, onAdd, P }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit() {
+    setBusy(true);
+    setError("");
+    try {
+      await onAdd(password);
+      onClose();
+    } catch {
+      setError("Incorrect password.");
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Add account</span>
+          <button onClick={onClose} style={{ color: P.textMuted }}>✕</button>
+        </div>
+        <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>
+          Derives the next account from your existing recovery phrase — the same phrase, a new account. Re-enter your password to confirm.
+        </div>
+        <PasswordField value={password} onChange={setPassword} placeholder="Password" P={P} autoFocus />
+        {error && <div className="text-[11.5px] mt-2" style={{ color: "#D92D20" }}>{error}</div>}
+        <div className="mt-3">
+          <PrimaryButton onClick={handleSubmit} disabled={!password || busy} P={P}>{busy ? "Adding…" : "Add account"}</PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WalletDashboard({ session, accounts, activeIndex, onSwitchAccount, onAddAccount, onLock, onReset, onSend, P }) {
   const [showReveal, setShowReveal] = useState(false);
   const [showReset, setShowReset] = useState(false);
+  const [showAddAccount, setShowAddAccount] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [justCopied, setJustCopied] = useState(false);
 
@@ -871,7 +954,7 @@ function WalletDashboard({ session, onLock, onReset, onSend, P }) {
     <div className="flex flex-col gap-3">
       <div className="rounded-2xl p-4" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
         <div className="flex items-center justify-between mb-4">
-          <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>Mango Wallet</span>
+          <AccountSwitcher accounts={accounts} activeIndex={activeIndex} onSwitch={onSwitchAccount} onAddAccount={() => setShowAddAccount(true)} P={P} />
           <button onClick={onLock} className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: P.textMuted }}>
             <Lock size={11} /> Lock
           </button>
@@ -940,6 +1023,7 @@ function WalletDashboard({ session, onLock, onReset, onSend, P }) {
           P={P}
         />
       )}
+      {showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} onAdd={onAddAccount} P={P} />}
     </div>
   );
 }
@@ -952,31 +1036,41 @@ function MangoWalletInner({ P }) {
   const [screen, setScreen] = useState(() => (loadVault() ? "locked" : "welcome"));
   const [pendingMnemonic, setPendingMnemonic] = useState(null); // in-memory only, during onboarding
   const [pendingImportPhrase, setPendingImportPhrase] = useState(null);
-  // { evm, solana } — public addresses + private keys, in-memory only while
-  // unlocked. Deliberately does NOT include the mnemonic itself: nothing in
-  // this phase needs it after account derivation (RevealPhraseModal
-  // re-decrypts straight from the vault + a fresh password prompt, it never
-  // reads this), so there's no reason for the raw seed phrase to sit in
-  // long-lived React state — inspectable via React DevTools — for the
-  // entire unlocked session when it can simply not be there at all.
-  const [session, setSession] = useState(null);
+  // Array of { evm, solana } — one entry per HD-derived account, index 0
+  // being the wallet's default identity. In-memory only while unlocked.
+  // Deliberately does NOT include the mnemonic itself: it's only needed
+  // transiently, to derive an account (at unlock, or when adding a new
+  // one — see handleAddAccount, which re-prompts for the password rather
+  // than keeping the mnemonic sitting in long-lived React state —
+  // inspectable via React DevTools — for the entire unlocked session.
+  const [accounts, setAccounts] = useState([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [showAddAccount, setShowAddAccount] = useState(false);
 
   async function finalizeWallet(mnemonic, password) {
-    const accounts = deriveAccounts(mnemonic);
-    const record = await encryptMnemonic(mnemonic, password);
-    saveVault(record, { evm: accounts.evm.address, solana: accounts.solana.address });
-    setSession(accounts);
+    const account0 = deriveAccountAtIndex(mnemonic, 0);
+    const mnemonicRecord = await encryptSecret(mnemonic, password);
+    saveVault({
+      mnemonicRecord,
+      accountCount: 1,
+      addresses: { evm: [account0.evm.address], solana: [account0.solana.address] },
+      importedKeys: [],
+    });
+    setAccounts([account0]);
+    setActiveIndex(0);
     setPendingMnemonic(null);
     setPendingImportPhrase(null);
     setScreen("dashboard");
   }
 
   async function handleUnlock(password) {
-    const record = loadVault();
+    const vault = loadVault();
     try {
-      const mnemonic = await decryptMnemonic(record, password);
-      const accounts = deriveAccounts(mnemonic);
-      setSession(accounts);
+      const mnemonic = await decryptSecret(vault.mnemonicRecord, password);
+      const derived = [];
+      for (let i = 0; i < vault.accountCount; i++) derived.push(deriveAccountAtIndex(mnemonic, i));
+      setAccounts(derived);
+      setActiveIndex(0);
       setScreen("dashboard");
       return true;
     } catch {
@@ -984,17 +1078,39 @@ function MangoWalletInner({ P }) {
     }
   }
 
+  /** Derives the next HD account. Needs the password again since the mnemonic isn't kept in memory between unlock and this — see the accounts state comment above. */
+  async function handleAddAccount(password) {
+    const vault = loadVault();
+    const mnemonic = await decryptSecret(vault.mnemonicRecord, password); // throws on wrong password — caller (AddAccountModal) handles that
+    const nextIndex = accounts.length;
+    const newAccount = deriveAccountAtIndex(mnemonic, nextIndex);
+    const nextAccounts = [...accounts, newAccount];
+    saveVault({
+      mnemonicRecord: vault.mnemonicRecord,
+      accountCount: nextAccounts.length,
+      addresses: { evm: nextAccounts.map((a) => a.evm.address), solana: nextAccounts.map((a) => a.solana.address) },
+      importedKeys: vault.importedKeys ?? [],
+    });
+    setAccounts(nextAccounts);
+    setActiveIndex(nextIndex);
+  }
+
   function handleLock() {
-    setSession(null); // discard in-memory keys — nothing else to "lock", they're gone
+    setAccounts([]); // discard in-memory keys — nothing else to "lock", they're gone
+    setActiveIndex(0);
     setScreen("locked");
   }
 
   function handleReset() {
-    setSession(null);
+    setAccounts([]);
+    setActiveIndex(0);
     setPendingMnemonic(null);
     setPendingImportPhrase(null);
     setScreen("welcome");
   }
+
+  const activeAccount = accounts[activeIndex] ?? null;
+  const session = activeAccount ? { evm: activeAccount.evm, solana: activeAccount.solana } : null;
 
   if (screen === "welcome") {
     return (
@@ -1048,7 +1164,19 @@ function MangoWalletInner({ P }) {
   if (screen === "send") {
     return <SendScreen session={session} onBack={() => setScreen("dashboard")} P={P} />;
   }
-  return <WalletDashboard session={session} onLock={handleLock} onReset={handleReset} onSend={() => setScreen("send")} P={P} />;
+  return (
+    <WalletDashboard
+      session={session}
+      accounts={accounts}
+      activeIndex={activeIndex}
+      onSwitchAccount={setActiveIndex}
+      onAddAccount={handleAddAccount}
+      onLock={handleLock}
+      onReset={handleReset}
+      onSend={() => setScreen("send")}
+      P={P}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------

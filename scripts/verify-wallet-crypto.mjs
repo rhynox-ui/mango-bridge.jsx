@@ -1,8 +1,9 @@
 import assert from "node:assert";
 import { createHmac } from "node:crypto";
-import { generateMnemonic, isValidMnemonic, deriveAccounts, normalizeMnemonic, EVM_DERIVATION_PATH, SOLANA_DERIVATION_PATH } from "../src/wallet/keys.js";
-import { encryptMnemonic, decryptMnemonic } from "../src/wallet/vault.js";
+import { generateMnemonic, isValidMnemonic, deriveAccounts, deriveAccountAtIndex, normalizeMnemonic, EVM_DERIVATION_PATH, SOLANA_DERIVATION_PATH } from "../src/wallet/keys.js";
+import { encryptSecret, decryptSecret } from "../src/wallet/vault.js";
 import { derivePath, getMasterKeyFromSeed } from "ed25519-hd-key";
+import { parseEvmPrivateKey, parseSolanaPrivateKey, parseImportedPrivateKey, KeyImportError } from "../src/wallet/walletKeyImport.js";
 
 let n = 0;
 function check(label, fn) {
@@ -76,39 +77,72 @@ check("different mnemonics derive different EVM and Solana addresses", () => {
   assert.notEqual(a.solana.address, b.solana.address);
 });
 
+// --- multi-account derivation (deriveAccountAtIndex — backs "Add account") ---
+
+check("deriveAccountAtIndex(m, 0) matches deriveAccounts(m) exactly — account 0 is the default identity", () => {
+  const viaIndex = deriveAccountAtIndex(TEST_MNEMONIC, 0);
+  const viaDefault = deriveAccounts(TEST_MNEMONIC);
+  assert.deepEqual(viaIndex, viaDefault);
+});
+
+check("deriveAccountAtIndex produces distinct, deterministic accounts per index", () => {
+  const a1 = deriveAccountAtIndex(TEST_MNEMONIC, 1);
+  const a2 = deriveAccountAtIndex(TEST_MNEMONIC, 2);
+  const a1again = deriveAccountAtIndex(TEST_MNEMONIC, 1);
+  assert.notEqual(a1.evm.address, a2.evm.address);
+  assert.notEqual(a1.solana.address, a2.solana.address);
+  assert.equal(a1.evm.address, a1again.evm.address);
+  assert.equal(a1.solana.address, a1again.solana.address);
+});
+
+check("deriveAccountAtIndex rejects a negative or non-integer index", () => {
+  assert.throws(() => deriveAccountAtIndex(TEST_MNEMONIC, -1));
+  assert.throws(() => deriveAccountAtIndex(TEST_MNEMONIC, 1.5));
+});
+
 // --- vault.js: real Web Crypto round-trip, no mocking ---
 
 await (async () => {
   const mnemonic = generateMnemonic();
-  const record = await encryptMnemonic(mnemonic, "correct horse battery staple");
-  check("encryptMnemonic produces base64 salt/iv/ciphertext fields", () => {
-    assert.equal(record.version, 1);
+  const record = await encryptSecret(mnemonic, "correct horse battery staple");
+  check("encryptSecret produces base64 salt/iv/ciphertext fields", () => {
     assert.equal(record.iterations, 600_000);
     assert.ok(/^[A-Za-z0-9+/=]+$/.test(record.salt));
     assert.ok(/^[A-Za-z0-9+/=]+$/.test(record.iv));
     assert.ok(/^[A-Za-z0-9+/=]+$/.test(record.ciphertext));
   });
 
-  const decrypted = await decryptMnemonic(record, "correct horse battery staple");
-  check("decryptMnemonic round-trips the exact original mnemonic with the right password", () => {
+  const decrypted = await decryptSecret(record, "correct horse battery staple");
+  check("decryptSecret round-trips the exact original mnemonic with the right password", () => {
     assert.equal(decrypted, mnemonic);
   });
 
   let wrongPasswordThrew = false;
   try {
-    await decryptMnemonic(record, "wrong password entirely");
+    await decryptSecret(record, "wrong password entirely");
   } catch {
     wrongPasswordThrew = true;
   }
-  check("decryptMnemonic throws (GCM auth tag failure) on a wrong password, never returns garbage", () => {
+  check("decryptSecret throws (GCM auth tag failure) on a wrong password, never returns garbage", () => {
     assert.equal(wrongPasswordThrew, true);
   });
 
-  const record2 = await encryptMnemonic(mnemonic, "correct horse battery staple");
-  check("encrypting the same mnemonic+password twice produces different salt/iv/ciphertext (no key/nonce reuse)", () => {
+  const record2 = await encryptSecret(mnemonic, "correct horse battery staple");
+  check("encrypting the same secret+password twice produces different salt/iv/ciphertext (no key/nonce reuse)", () => {
     assert.notEqual(record.salt, record2.salt);
     assert.notEqual(record.iv, record2.iv);
     assert.notEqual(record.ciphertext, record2.ciphertext);
+  });
+
+  // encryptSecret/decryptSecret are now also used for standalone imported
+  // private keys (see walletKeyImport.js), not just the mnemonic — a real
+  // regression worth pinning, since a subtle bug here would silently
+  // corrupt an imported key rather than a recovery phrase.
+  const importedKeyHex = "0x" + "7a".repeat(32);
+  const keyRecord = await encryptSecret(importedKeyHex, "a different password");
+  const decryptedKey = await decryptSecret(keyRecord, "a different password");
+  check("encryptSecret/decryptSecret round-trip a raw imported private key just as correctly as a mnemonic", () => {
+    assert.equal(decryptedKey, importedKeyHex);
   });
 })();
 
@@ -135,5 +169,47 @@ check("ed25519-hd-key's derivePath for a hardened child differs from the master 
   assert.notEqual(Buffer.from(child1.key).toString("hex"), Buffer.from(master.key).toString("hex"));
   assert.equal(Buffer.from(child1.key).toString("hex"), Buffer.from(child2.key).toString("hex"));
 });
+
+// --- walletKeyImport.js: raw private-key import validation ---
+
+check("parseEvmPrivateKey accepts a valid key (with or without 0x) and recovers the correct known address", () => {
+  const withPrefix = parseEvmPrivateKey(`0x${"11".repeat(32)}`);
+  const withoutPrefix = parseEvmPrivateKey("11".repeat(32));
+  // Matches the same private key used elsewhere in this project's own
+  // offline-signing tests (scripts/verify-wallet-send.mjs) — same known
+  // account, cross-checked here independently.
+  assert.equal(withPrefix.address, "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A");
+  assert.equal(withPrefix.address, withoutPrefix.address);
+  assert.equal(withPrefix.chain, "evm");
+});
+
+check("parseEvmPrivateKey rejects malformed input with a real KeyImportError, not a crash", () => {
+  assert.throws(() => parseEvmPrivateKey("not a key"), KeyImportError);
+  assert.throws(() => parseEvmPrivateKey(`0x${"zz".repeat(32)}`), KeyImportError);
+});
+
+await (async () => {
+  const { Keypair } = await import("@solana/web3.js");
+  const bs58 = (await import("bs58")).default;
+  const keypair = Keypair.generate();
+  const encoded = bs58.encode(keypair.secretKey);
+
+  check("parseSolanaPrivateKey recovers the exact address for a real, freshly-generated keypair", () => {
+    const result = parseSolanaPrivateKey(encoded);
+    assert.equal(result.address, keypair.publicKey.toBase58());
+    assert.equal(result.chain, "solana");
+  });
+
+  check("parseSolanaPrivateKey rejects malformed input with a real KeyImportError, not a crash", () => {
+    assert.throws(() => parseSolanaPrivateKey("not base58 at all !!"), KeyImportError);
+  });
+
+  check("parseImportedPrivateKey auto-detects the chain — an EVM key and a Solana key both resolve correctly through the same entry point", () => {
+    const evmResult = parseImportedPrivateKey(`0x${"11".repeat(32)}`);
+    const solanaResult = parseImportedPrivateKey(encoded);
+    assert.equal(evmResult.chain, "evm");
+    assert.equal(solanaResult.chain, "solana");
+  });
+})();
 
 console.log(`\n${n}/${n} checks passed`);
