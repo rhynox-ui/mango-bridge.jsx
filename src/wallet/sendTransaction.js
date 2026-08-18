@@ -1,7 +1,7 @@
 // src/wallet/sendTransaction.js
 //
 // Real signing + broadcast for Mango Wallet — native-asset and verified
-// ERC-20/token sends, one chain family at a time. Everything here signs
+// ERC-20/SPL token sends, one chain family at a time. Everything here signs
 // with the private key already held in memory from the unlocked session
 // (see MangoWallet.jsx's session state) — nothing here ever persists or
 // transmits that key anywhere except as a locally-computed signature.
@@ -136,6 +136,65 @@ export async function sendSolanaNative({ secretKeyBase58, toAddress, amountSol }
       lamports: Math.round(amountSol * 1e9),
     })
   );
+
+  const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair]);
+  return { signature };
+}
+
+/**
+ * Real fee estimate for an SPL token transfer. Always includes the base
+ * signature fee; ALSO includes real rent-exemption cost for the
+ * recipient's associated token account (ATA) when it doesn't exist yet —
+ * checked live against the connection, not assumed either way, since the
+ * sender pays that rent only if account creation is actually needed.
+ */
+export async function estimateSplSendFee({ mintAddress, toAddress }) {
+  const [{ PublicKey }, { getAssociatedTokenAddress, ACCOUNT_SIZE }, connection] = await Promise.all([
+    import("@solana/web3.js"),
+    import("@solana/spl-token"),
+    getWalletSolanaConnection(),
+  ]);
+  const toAta = await getAssociatedTokenAddress(new PublicKey(mintAddress), new PublicKey(toAddress));
+  const ataInfo = await connection.getAccountInfo(toAta);
+  const needsAtaCreation = ataInfo === null;
+  const ataRentLamports = needsAtaCreation ? await connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE) : 0;
+  const feeLamports = SOLANA_BASE_FEE_LAMPORTS + ataRentLamports;
+  return { feeLamports, feeSol: feeLamports / 1e9, needsAtaCreation };
+}
+
+/**
+ * Sends an SPL token from the wallet's derived Solana account, creating
+ * the recipient's associated token account first if it doesn't exist yet
+ * (paid for by the sender, same as every other Solana wallet's behavior —
+ * there's no way to send an SPL token into an account that can't hold it).
+ */
+export async function sendSplToken({ secretKeyBase58, mintAddress, mintDecimals, toAddress, amountToken }) {
+  const [
+    { Keypair, PublicKey, Transaction, sendAndConfirmTransaction },
+    { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferInstruction },
+    bs58Module,
+    connection,
+  ] = await Promise.all([
+    import("@solana/web3.js"),
+    import("@solana/spl-token"),
+    import("bs58"),
+    getWalletSolanaConnection(),
+  ]);
+  const bs58 = bs58Module.default;
+  const fromKeypair = Keypair.fromSecretKey(bs58.decode(secretKeyBase58));
+  const mintPublicKey = new PublicKey(mintAddress);
+  const toPublicKey = new PublicKey(toAddress);
+
+  const fromAta = await getAssociatedTokenAddress(mintPublicKey, fromKeypair.publicKey);
+  const toAta = await getAssociatedTokenAddress(mintPublicKey, toPublicKey);
+  const toAtaInfo = await connection.getAccountInfo(toAta);
+
+  const transaction = new Transaction();
+  if (toAtaInfo === null) {
+    transaction.add(createAssociatedTokenAccountInstruction(fromKeypair.publicKey, toAta, toPublicKey, mintPublicKey));
+  }
+  const amountRaw = BigInt(Math.round(amountToken * 10 ** mintDecimals));
+  transaction.add(createTransferInstruction(fromAta, toAta, fromKeypair.publicKey, amountRaw));
 
   const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair]);
   return { signature };

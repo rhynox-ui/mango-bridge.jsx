@@ -11,20 +11,28 @@
 //
 // STATUS:
 // - Real: create/import a BIP-39 wallet, password-encrypted local storage
-//   (AES-256-GCM via Web Crypto, PBKDF2-SHA256/600k), one EVM address +
-//   one Solana address derived from a single seed (same derivation paths
-//   MetaMask/Phantom use — see src/wallet/keys.js for why that matters),
-//   live native-balance display across every chain this app supports,
-//   password-gated reveal of the recovery phrase, wallet reset, sending
-//   native-asset transfers (see src/wallet/sendTransaction.js) with a
-//   real fee estimate shown before confirming — offline-verified (real
-//   EIP-1559/SLIP transaction construction and signing, checked against
-//   this sandbox's own tools) but NOT yet broadcast-tested against a live
-//   network, since this sandbox's egress proxy blocks RPC traffic
-//   entirely (confirmed via direct curl — same limitation documented in
-//   solana-program/README.md for the Solana side of this project).
-// - Not yet built: token (ERC-20/SPL) sends, a dApp-facing provider
-//   (EIP-1193 injection), browser-extension packaging.
+//   (AES-256-GCM via Web Crypto, PBKDF2-SHA256/600k), one EVM address
+//   (valid across all 27 EVM chains this wallet supports — 14 shared with
+//   the Bridge, 13 wallet-only, see walletChains.js) + one Solana address,
+//   derived from a single seed (same derivation paths MetaMask/Phantom
+//   use — see src/wallet/keys.js for why that matters); live native AND
+//   token balance display (ERC-20 on EVM, SPL on Solana, both restricted
+//   to addresses this project has independently verified — never a
+//   guessed contract/mint address); real USD price display for assets
+//   with a confidently-verified CoinGecko id (walletPrices.js); password-
+//   gated reveal of the recovery phrase; wallet reset; sending native and
+//   token transfers on both chain families with a real fee estimate
+//   shown before confirming. All of this is offline-verified (real
+//   transaction construction/signing/encoding, checked against this
+//   sandbox's own tools) but NOT broadcast-tested against a live network
+//   — this sandbox's egress proxy blocks RPC and price-API traffic
+//   entirely (confirmed via direct curl, same limitation documented in
+//   solana-program/README.md for the Solana program side of this
+//   project) — needs real-world testing on the deployed site before
+//   WALLET_LIVE flips to true.
+// - Not yet built: an aggregate portfolio USD total (needs balance state
+//   lifted out of each independent row), a dApp-facing provider (EIP-1193
+//   injection), browser-extension packaging.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 // Static, named imports only — same convention App.jsx's AssetIcon/ChainIcon
@@ -43,9 +51,13 @@ import { ChainBadge } from "./App.jsx";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
 import { generateMnemonic, isValidMnemonic, deriveAccounts, normalizeMnemonic } from "./wallet/keys.js";
 import { encryptMnemonic, decryptMnemonic, saveVault, loadVault, clearVault } from "./wallet/vault.js";
-import { fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, getWalletChain } from "./wallet/walletRpc.js";
-import { estimateEvmSendFee, sendEvmNative, estimateSolanaSendFee, sendSolanaNative, estimateEvmTokenSendFee, sendEvmToken } from "./wallet/sendTransaction.js";
+import { fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, fetchWalletSplTokenBalance, getWalletChain } from "./wallet/walletRpc.js";
+import {
+  estimateEvmSendFee, sendEvmNative, estimateSolanaSendFee, sendSolanaNative,
+  estimateEvmTokenSendFee, sendEvmToken, estimateSplSendFee, sendSplToken,
+} from "./wallet/sendTransaction.js";
 import { tokensForWalletChain } from "./wallet/walletTokens.js";
+import { SPL_TOKENS } from "./wallet/walletSplTokens.js";
 import { fetchWalletPrices } from "./wallet/walletPrices.js";
 import {
   WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL,
@@ -260,6 +272,31 @@ function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh }) {
       .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
   }, [chainKey, token.address, token.decimals, evmAddress, forceFresh]);
+  const price = useUsdPrice(token.symbol);
+  return (
+    <div className="flex items-center justify-between px-4 py-2 pl-11" style={{ borderTop: `1px solid ${P.divider}` }}>
+      <span className="text-[11.5px]" style={{ color: P.textMuted }}>{token.symbol}</span>
+      <div>
+        <div className="flex items-center gap-1.5 text-[12px] font-mono" style={{ color: P.textSecondary }}>
+          <span>{loading ? "…" : balance !== null ? fmt(balance, balance < 1 ? 4 : 2) : "—"}</span>
+        </div>
+        <UsdSubtext balance={balance} price={price} P={P} />
+      </div>
+    </div>
+  );
+}
+
+function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh }) {
+  const [balance, setBalance] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchWalletSplTokenBalance(token.mint, token.decimals, solanaAddress, { forceFresh })
+      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [token.mint, token.decimals, solanaAddress, forceFresh]);
   const price = useUsdPrice(token.symbol);
   return (
     <div className="flex items-center justify-between px-4 py-2 pl-11" style={{ borderTop: `1px solid ${P.divider}` }}>
@@ -628,7 +665,7 @@ function SendChainPicker({ value, onChange, P }) {
 }
 
 function SendAssetPicker({ chainKey, value, onChange, P }) {
-  const tokens = tokensForWalletChain(chainKey);
+  const tokens = chainKey === "solana" ? SPL_TOKENS : tokensForWalletChain(chainKey);
   if (tokens.length === 0) return null; // nothing to pick between — this chain has no verified token, native is the only option
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
@@ -665,7 +702,9 @@ function SendScreen({ session, onBack, P }) {
   const [errorMessage, setErrorMessage] = useState("");
 
   const isSolana = chainKey === "solana";
-  const selectedToken = isSolana || assetSymbol === "native" ? null : tokensForWalletChain(chainKey).find((t) => t.symbol === assetSymbol);
+  const selectedToken = assetSymbol === "native"
+    ? null
+    : (isSolana ? SPL_TOKENS : tokensForWalletChain(chainKey)).find((t) => t.symbol === assetSymbol);
   const assetLabel = selectedToken ? selectedToken.symbol : NATIVE_SYMBOL_BY_CHAIN[chainKey];
   const addressValid = isValidChainAddress(chainKey, toAddress);
   const amountValid = Number(amount) > 0;
@@ -681,7 +720,7 @@ function SendScreen({ session, onBack, P }) {
     setPhase("confirm");
     try {
       const fee = isSolana
-        ? estimateSolanaSendFee()
+        ? (selectedToken ? await estimateSplSendFee({ mintAddress: selectedToken.mint, toAddress: toAddress.trim() }) : estimateSolanaSendFee())
         : selectedToken
           ? await estimateEvmTokenSendFee({
               chainKey, tokenAddress: selectedToken.address, fromAddress: session.evm.address,
@@ -699,7 +738,12 @@ function SendScreen({ session, onBack, P }) {
     setErrorMessage("");
     try {
       const sendResult = isSolana
-        ? await sendSolanaNative({ secretKeyBase58: session.solana.privateKey, toAddress: toAddress.trim(), amountSol: Number(amount) })
+        ? (selectedToken
+            ? await sendSplToken({
+                secretKeyBase58: session.solana.privateKey, mintAddress: selectedToken.mint,
+                mintDecimals: selectedToken.decimals, toAddress: toAddress.trim(), amountToken: Number(amount),
+              })
+            : await sendSolanaNative({ secretKeyBase58: session.solana.privateKey, toAddress: toAddress.trim(), amountSol: Number(amount) }))
         : selectedToken
           ? await sendEvmToken({
               chainKey, privateKeyHex: session.evm.privateKey, tokenAddress: selectedToken.address,
@@ -858,7 +902,12 @@ function WalletDashboard({ session, onLock, onReset, onSend, P }) {
         </div>
         {WALLET_CHAIN_ORDER.map((key, i) =>
           key === "solana" ? (
-            <SolanaBalanceRow key={`${key}-${refreshKey}`} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
+            <React.Fragment key={`${key}-${refreshKey}`}>
+              <SolanaBalanceRow solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
+              {SPL_TOKENS.map((token) => (
+                <SplTokenBalanceRow key={token.symbol} token={token} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
+              ))}
+            </React.Fragment>
           ) : (
             <React.Fragment key={`${key}-${refreshKey}`}>
               <EvmBalanceRow chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} />

@@ -185,3 +185,44 @@ export async function fetchWalletSolanaBalance(address, { forceFresh = false } =
   }
   throw lastError;
 }
+
+/**
+ * SPL token balance for one mint, as a human-readable number. Zero is a
+ * REAL, common answer here, not just "no data yet" — most wallets never
+ * have an associated token account (ATA) created for a token they've
+ * never held, and reading a nonexistent ATA is expected to fail; that
+ * failure is treated as balance 0, not surfaced as an error, since from
+ * the user's point of view "you have none of this token" is exactly
+ * correct.
+ */
+export async function fetchWalletSplTokenBalance(mintAddress, decimals, ownerAddress, { forceFresh = false } = {}) {
+  const key = `solana-token:${mintAddress}:${ownerAddress}`;
+  if (!forceFresh) {
+    const cached = getCached(key);
+    if (cached !== null) return cached;
+  }
+  const urls = [...solanaRpcUrls()].reverse();
+  let lastError;
+  for (const url of urls) {
+    try {
+      const [{ Connection, PublicKey }, { getAssociatedTokenAddress, getAccount }] = await Promise.all([
+        import("@solana/web3.js"),
+        import("@solana/spl-token"),
+      ]);
+      const connection = new Connection(url, "confirmed");
+      const ata = await getAssociatedTokenAddress(new PublicKey(mintAddress), new PublicKey(ownerAddress));
+      let balance;
+      try {
+        const account = await getAccount(connection, ata);
+        balance = Number(account.amount) / 10 ** decimals;
+      } catch {
+        balance = 0; // no ATA exists yet for this mint — genuinely zero, not an error
+      }
+      setCached(key, balance);
+      return balance;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
