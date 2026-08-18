@@ -53,17 +53,36 @@ function truncate(address, head = 6, tail = 4) {
   return address.length > head + tail ? `${address.slice(0, head)}…${address.slice(-tail)}` : address;
 }
 
+// Small icon-circle header, matching the main site's WelcomeScreen/
+// LockedScreen pattern exactly (an icon-in-a-tinted-circle above the
+// title). innerHTML here is a fixed literal SVG string written in this
+// file — never derived from a dApp, an origin, or any other untrusted
+// input — which is the one case this file's own module doc allows it;
+// everywhere else (origin strings, dApp-supplied messages) stays on the
+// h() helper's textContent-only path.
+function iconCircle(svgMarkup) {
+  const wrap = document.createElement("div");
+  wrap.className = "icon-circle";
+  wrap.innerHTML = svgMarkup;
+  return wrap;
+}
+const WALLET_ICON_SVG = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#E8801A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>';
+const LOCK_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9A9AA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+
 // ---------------------------------------------------------------------
 // Onboarding + unlock
 // ---------------------------------------------------------------------
 
 function renderWelcome(onDone) {
   mount(
-    h("div", { class: "panel" },
+    h("div", { class: "panel", style: "display:flex;flex-direction:column;align-items:center;text-align:center;" },
+      iconCircle(WALLET_ICON_SVG),
       h("h1", {}, "Mango Wallet"),
       h("p", {}, "Self-custodial, generated and stored only in this browser extension. Mango never sees your recovery phrase or private keys."),
-      h("button", { class: "btn-primary", onclick: () => renderCreateReveal(onDone) }, "Create a new wallet"),
-      h("button", { class: "btn-secondary", onclick: () => renderImportPhrase(onDone) }, "I already have a recovery phrase"),
+      h("div", { style: "width:100%;margin-top:8px;" },
+        h("button", { class: "btn-primary", onclick: () => renderCreateReveal(onDone) }, "Create a new wallet"),
+        h("button", { class: "btn-secondary", onclick: () => renderImportPhrase(onDone) }, "I already have a recovery phrase"),
+      ),
     ),
   );
 }
@@ -167,11 +186,14 @@ function renderUnlock(onDone) {
       }
     });
     mount(
-      h("div", { class: "panel" },
+      h("div", { class: "panel", style: "display:flex;flex-direction:column;align-items:center;text-align:center;" },
+        iconCircle(LOCK_ICON_SVG),
         h("h1", {}, "Unlock Mango Wallet"),
-        pw,
-        error ? h("div", { class: "error" }, error) : null,
-        unlockBtn,
+        h("div", { style: "width:100%;margin-top:4px;" },
+          pw,
+          error ? h("div", { class: "error", style: "text-align:left;" }, error) : null,
+          unlockBtn,
+        ),
       ),
     );
   }
