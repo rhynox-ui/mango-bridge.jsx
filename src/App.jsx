@@ -431,25 +431,29 @@ function TopMenuDropdown({ P, onOpenDocs }) {
           >
             <BookOpen size={15} color={P.textMuted} /> Docs
           </button>
-          <a
-            href="https://x.com/Mango_protocol" target="_blank" rel="noopener noreferrer"
-            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium"
-            style={{ color: P.textPrimary }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M18.9 2H22l-7.6 8.7L23.3 22h-6.8l-5.3-6.9L5 22H1.9l8.1-9.3L1 2h7l4.8 6.3L18.9 2Zm-1.2 18h1.9L7.4 4H5.4l12.3 16Z" fill={P.textMuted} />
-            </svg>
-            X (Twitter)
-          </a>
-          <a
-            href="https://t.me/mango_protocol" target="_blank" rel="noopener noreferrer"
-            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium"
-            style={{ color: P.textPrimary }}
-          >
-            <Send size={15} color={P.textMuted} /> Telegram
-          </a>
         </div>
       )}
+    </div>
+  );
+}
+
+// Small, always-visible social row — deliberately separate from
+// TopMenuDropdown (which stays for Docs and whatever else the site grows
+// into) since these two want to be visible at a glance, not a tap away.
+// Sits in normal document flow at the bottom of whichever tab's content is
+// showing, above the fixed bottom nav, so it's consistent across Bridge,
+// Wallet, and every other tab rather than only appearing on one.
+function SocialLinksRow({ P }) {
+  return (
+    <div className="flex items-center gap-2 mt-4">
+      <a href="https://x.com/Mango_protocol" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+          <path d="M18.9 2H22l-7.6 8.7L23.3 22h-6.8l-5.3-6.9L5 22H1.9l8.1-9.3L1 2h7l4.8 6.3L18.9 2Zm-1.2 18h1.9L7.4 4H5.4l12.3 16Z" fill={P.textSecondary} />
+        </svg>
+      </a>
+      <a href="https://t.me/mango_protocol" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <Send size={13} color={P.textSecondary} />
+      </a>
     </div>
   );
 }
@@ -2626,6 +2630,7 @@ export default function MangoBridge() {
               </div>
             </>
           )}
+          <SocialLinksRow P={P} />
         </div>
       </div>
 
