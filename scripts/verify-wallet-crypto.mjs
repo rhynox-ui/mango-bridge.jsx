@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { createHmac } from "node:crypto";
-import { generateMnemonic, isValidMnemonic, deriveAccounts, deriveAccountAtIndex, normalizeMnemonic, EVM_DERIVATION_PATH, SOLANA_DERIVATION_PATH } from "../src/wallet/keys.js";
+import { generateMnemonic, isValidMnemonic, deriveAccounts, deriveAccountAtIndex, normalizeMnemonic, suggestBip39Words, BIP39_WORDLIST, EVM_DERIVATION_PATH, SOLANA_DERIVATION_PATH } from "../src/wallet/keys.js";
 import { encryptSecret, decryptSecret } from "../src/wallet/vault.js";
 import { derivePath, getMasterKeyFromSeed } from "ed25519-hd-key";
 import { parseEvmPrivateKey, parseSolanaPrivateKey, parseImportedPrivateKey, KeyImportError } from "../src/wallet/walletKeyImport.js";
@@ -211,5 +211,29 @@ await (async () => {
     assert.equal(solanaResult.chain, "solana");
   });
 })();
+
+// --- suggestBip39Words: real word-autocomplete backing the phrase-entry UI ---
+
+check("BIP39_WORDLIST is the real, standard 2048-word BIP-39 English list", () => {
+  assert.equal(BIP39_WORDLIST.length, 2048);
+  assert.equal(BIP39_WORDLIST[0], "abandon"); // first word of the real, published list
+  assert.equal(BIP39_WORDLIST[2047], "zoo"); // last word of the real, published list
+});
+
+check("suggestBip39Words returns real prefix matches, case-insensitively", () => {
+  assert.deepEqual(suggestBip39Words("aban"), ["abandon"]);
+  assert.deepEqual(suggestBip39Words("ABAN"), ["abandon"]);
+  assert.ok(suggestBip39Words("ab").includes("about"));
+});
+
+check("suggestBip39Words respects its limit and returns [] for an empty prefix", () => {
+  assert.equal(suggestBip39Words("a", 3).length, 3);
+  assert.deepEqual(suggestBip39Words(""), []);
+  assert.deepEqual(suggestBip39Words("   "), []);
+});
+
+check("suggestBip39Words returns [] for a prefix no real BIP-39 word starts with", () => {
+  assert.deepEqual(suggestBip39Words("zzzzz"), []);
+});
 
 console.log(`\n${n}/${n} checks passed`);

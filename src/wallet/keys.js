@@ -26,6 +26,26 @@ import bs58 from "bs58";
 export const EVM_DERIVATION_PATH = "m/44'/60'/0'/0/0";
 export const SOLANA_DERIVATION_PATH = "m/44'/501'/0'/0'";
 
+// The real, standard BIP-39 English wordlist (2048 words) — the same list
+// bip39.generateMnemonic/validateMnemonic already check phrases against
+// internally. Exported so the UI can offer real autocomplete while typing
+// a recovery phrase, rather than guessing at word completions.
+export const BIP39_WORDLIST = bip39.wordlists.english;
+
+/** Up to `limit` real BIP-39 words starting with `prefix` (case-insensitive). Empty prefix returns no suggestions — nothing useful to suggest before the user's typed anything. */
+export function suggestBip39Words(prefix, limit = 5) {
+  const normalized = prefix.trim().toLowerCase();
+  if (!normalized) return [];
+  const out = [];
+  for (const word of BIP39_WORDLIST) {
+    if (word.startsWith(normalized)) {
+      out.push(word);
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}
+
 export function evmDerivationPathForIndex(index) {
   return `m/44'/60'/0'/0/${index}`;
 }

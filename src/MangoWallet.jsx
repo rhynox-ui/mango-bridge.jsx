@@ -66,7 +66,7 @@ import { PublicKey } from "@solana/web3.js";
 import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
 import { ChainBadge } from "./App.jsx";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
-import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic } from "./wallet/keys.js";
+import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic, suggestBip39Words } from "./wallet/keys.js";
 import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault } from "./wallet/vault.js";
 import { parseImportedPrivateKey, KeyImportError } from "./wallet/walletKeyImport.js";
 import { fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, fetchWalletSplTokenBalance, getWalletChain } from "./wallet/walletRpc.js";
@@ -399,8 +399,30 @@ function ExtensionModal({ onClose, P }) {
   );
 }
 
+// Detects the REAL installed extension — the same rdns it announces via
+// EIP-6963 in inpage.js — never just assumed from the browser. Requests
+// a fresh announcement on mount (the standard's own handshake) since the
+// extension's content script may finish injecting a beat after this
+// component's first render.
+function useExtensionInstalled() {
+  const [installed, setInstalled] = useState(() => typeof window !== "undefined" && window.ethereum?.isMangoWallet === true);
+  useEffect(() => {
+    if (installed || typeof window === "undefined") return;
+    function onAnnounce(e) {
+      if (e.detail?.info?.rdns === "app.mango.wallet") setInstalled(true);
+    }
+    window.addEventListener("eip6963:announceProvider", onAnnounce);
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    const recheckTimer = setTimeout(() => { if (window.ethereum?.isMangoWallet) setInstalled(true); }, 400);
+    return () => { window.removeEventListener("eip6963:announceProvider", onAnnounce); clearTimeout(recheckTimer); };
+  }, [installed]);
+  return installed;
+}
+
 function WelcomeScreen({ onCreate, onImport, P }) {
   const [showExtension, setShowExtension] = useState(false);
+  const extensionInstalled = useExtensionInstalled();
+
   return (
     <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
       <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
@@ -413,13 +435,20 @@ function WelcomeScreen({ onCreate, onImport, P }) {
         </div>
       </div>
       <div className="w-full flex flex-col gap-2 mt-2">
+        {extensionInstalled && (
+          <div className="flex items-center justify-center gap-1.5 text-[11.5px] mb-1" style={{ color: LIME_DEEP }}>
+            <Check size={12} /> Browser extension detected
+          </div>
+        )}
         <PrimaryButton onClick={onCreate} P={P}>Create a new wallet</PrimaryButton>
         <button onClick={onImport} className="w-full py-3 rounded-full text-[13.5px] font-medium" style={{ background: P.pillBg, color: P.textPrimary }}>
           I already have a recovery phrase
         </button>
-        <button onClick={() => setShowExtension(true)} className="w-full py-2.5 rounded-full text-[12.5px] font-medium flex items-center justify-center gap-1.5" style={{ color: P.textMuted }}>
-          <Puzzle size={13} /> Get the browser extension
-        </button>
+        {!extensionInstalled && (
+          <button onClick={() => setShowExtension(true)} className="w-full py-2.5 rounded-full text-[12.5px] font-medium flex items-center justify-center gap-1.5" style={{ color: P.textMuted }}>
+            <Puzzle size={13} /> Get the browser extension
+          </button>
+        )}
       </div>
       {showExtension && <ExtensionModal onClose={() => setShowExtension(false)} P={P} />}
     </div>
@@ -463,6 +492,31 @@ function CreateRevealStep({ mnemonic, onNext, onBack, P }) {
   );
 }
 
+// Real BIP-39 word autocomplete — the same 2048-word list bip39 itself
+// validates a phrase against (see keys.js's suggestBip39Words), not a
+// guessed or partial word list. Shared by every screen that takes typed
+// recovery-phrase words: importing a phrase, and confirming it during
+// wallet creation.
+function WordSuggestionRow({ suggestions, onPick, P }) {
+  if (suggestions.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap mb-2">
+      {suggestions.map((word) => (
+        <button
+          key={word}
+          type="button"
+          onMouseDown={(e) => e.preventDefault()} // keeps the input/textarea focused through the click, so typing can continue right after picking a word
+          onClick={() => onPick(word)}
+          className="px-2.5 py-1 rounded-full text-[12px] font-mono font-medium"
+          style={{ background: P.pillBg, color: P.textPrimary }}
+        >
+          {word}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function CreateConfirmStep({ mnemonic, onConfirmed, onBack, P }) {
   const words = mnemonic.split(" ");
   // Three random, distinct positions — same real purpose as MetaMask/Phantom's
@@ -486,15 +540,24 @@ function CreateConfirmStep({ mnemonic, onConfirmed, onBack, P }) {
       <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>Enter the requested words from what you wrote down.</div>
       <div className="flex flex-col gap-2.5 mb-4">
         {checkIndices.map((i) => (
-          <div key={i} className="flex items-center gap-2.5">
-            <span className="text-[12px] w-16 shrink-0" style={{ color: P.textMuted }}>Word #{i + 1}</span>
-            <input
-              value={inputs[i] || ""}
-              onChange={(e) => setInputs((s) => ({ ...s, [i]: e.target.value }))}
-              {...NO_CAPTURE_ATTRS}
-              className="flex-1 px-3 py-2 rounded-lg text-[13px] font-mono"
-              style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
-            />
+          <div key={i}>
+            <div className="flex items-center gap-2.5">
+              <span className="text-[12px] w-16 shrink-0" style={{ color: P.textMuted }}>Word #{i + 1}</span>
+              <input
+                value={inputs[i] || ""}
+                onChange={(e) => setInputs((s) => ({ ...s, [i]: e.target.value }))}
+                {...NO_CAPTURE_ATTRS}
+                className="flex-1 px-3 py-2 rounded-lg text-[13px] font-mono"
+                style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+              />
+            </div>
+            <div className="pl-[76px] mt-1.5">
+              <WordSuggestionRow
+                suggestions={suggestBip39Words(inputs[i] || "", 4)}
+                onPick={(word) => setInputs((s) => ({ ...s, [i]: word }))}
+                P={P}
+              />
+            </div>
           </div>
         ))}
       </div>
@@ -555,11 +618,27 @@ function VerifyPasswordStep({ title, helpText, buttonLabel, onVerify, onBack, P 
   );
 }
 
+// The word currently being typed in a phrase textarea — the trailing
+// non-whitespace run, or "" if the text is empty or ends in whitespace
+// (the user just finished a word, nothing partial to suggest yet).
+function currentWordBeingTyped(text) {
+  if (text === "" || /\s$/.test(text)) return "";
+  return text.match(/(\S+)$/)?.[1] ?? "";
+}
+// Swaps just the trailing partial word for a full one, keeping everything
+// typed before it, and appends a trailing space so typing continues
+// straight into the next word.
+function replaceCurrentWord(text, word) {
+  return text.replace(/\S+$/, "") + word + " ";
+}
+
 function ImportPhraseStep({ onImported, onBack, P }) {
   const [phrase, setPhrase] = useState("");
   const [error, setError] = useState("");
+  const textareaRef = useRef(null);
   const normalized = normalizeMnemonic(phrase);
   const wordCount = phrase.trim() ? normalized.split(" ").length : 0;
+  const suggestions = suggestBip39Words(currentWordBeingTyped(phrase), 5);
 
   function handleContinue() {
     if (!isValidMnemonic(normalized)) { setError("That doesn't look like a valid recovery phrase — check the word order and spelling."); return; }
@@ -567,10 +646,16 @@ function ImportPhraseStep({ onImported, onBack, P }) {
     onImported(normalized);
   }
 
+  function handlePickSuggestion(word) {
+    setPhrase((prev) => replaceCurrentWord(prev, word));
+    textareaRef.current?.focus();
+  }
+
   return (
     <ScreenShell title="Import wallet" onBack={onBack} P={P}>
       <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>Enter your 12 or 24-word recovery phrase, separated by spaces.</div>
       <textarea
+        ref={textareaRef}
         value={phrase}
         onChange={(e) => setPhrase(e.target.value)}
         placeholder="word1 word2 word3 ..."
@@ -579,6 +664,7 @@ function ImportPhraseStep({ onImported, onBack, P }) {
         className="w-full px-3.5 py-3 rounded-xl text-[13px] font-mono resize-none mb-2"
         style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
       />
+      <WordSuggestionRow suggestions={suggestions} onPick={handlePickSuggestion} P={P} />
       <div className="text-[11px] mb-3" style={{ color: P.textMuted }}>{wordCount > 0 ? `${wordCount} words` : " "}</div>
       {error && <div className="text-[11.5px] mb-3" style={{ color: "#D92D20" }}>{error}</div>}
       <PrimaryButton onClick={handleContinue} disabled={!phrase.trim()} P={P}>Continue</PrimaryButton>
