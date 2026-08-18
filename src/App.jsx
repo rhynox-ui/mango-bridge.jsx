@@ -1819,6 +1819,11 @@ function DocsModal({ onClose, P }) {
           <p>A Solana-sourced transfer is signed and submitted through Relay's own official SDK, using Solana's real transaction format — not the same signing mechanism used for every EVM-to-EVM route in this app. Solana-to-EVM and EVM-to-Solana are both supported.</p>
         </DocSection>
 
+        <DocSection title="Mango Wallet" P={P}>
+          <p className="mb-2"><span className="font-medium" style={{ color: P.textPrimary }}>Coming soon.</span> A self-custodial wallet built directly into the site — your recovery phrase is generated and encrypted entirely in your own browser, and is never sent to Mango in any form, encrypted or not. One recovery phrase covers a single address usable across every EVM chain Mango supports, plus a separate Solana address, the same way MetaMask and Phantom derive theirs.</p>
+          <p>Still in testing before it's opened up publicly — this is a different trust model from the Telegram bot's wallet, which is necessarily custodial since Telegram itself can't sign transactions locally.</p>
+        </DocSection>
+
         <DocSection title="Bridge Routing Engine" P={P}>
           <p className="mb-2">The routing engine automatically determines the optimal bridge based on:</p>
           <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
