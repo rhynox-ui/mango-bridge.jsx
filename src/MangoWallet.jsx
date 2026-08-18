@@ -137,22 +137,23 @@ function PrimaryButton({ onClick, disabled, children, P }) {
 // Balances
 // ---------------------------------------------------------------------------
 
-function EvmBalanceRow({ chainKey, evmAddress, P, isFirst }) {
+function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh }) {
   // Uses walletRpc.js's own independent viem client — deliberately not
   // wagmi's shared useBalance/config, which the Bridge tab's connected-wallet
   // flows use. See walletRpc.js for why: keeps this tab's 13-chain balance
   // polling from contending with real bridge activity for the same RPC
-  // endpoints.
+  // endpoints. forceFresh (true only right after the manual refresh button)
+  // bypasses walletRpc.js's 15s cache; every other mount reads through it.
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchWalletNativeBalance(chainKey, evmAddress)
+    fetchWalletNativeBalance(chainKey, evmAddress, { forceFresh })
       .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); } })
       .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [chainKey, evmAddress]);
+  }, [chainKey, evmAddress, forceFresh]);
   return (
     <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: isFirst ? "none" : `1px solid ${P.divider}` }}>
       <div className="flex items-center gap-2.5">
@@ -167,17 +168,17 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst }) {
   );
 }
 
-function SolanaBalanceRow({ solanaAddress, P }) {
+function SolanaBalanceRow({ solanaAddress, P, forceFresh }) {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchWalletSolanaBalance(solanaAddress)
+    fetchWalletSolanaBalance(solanaAddress, { forceFresh })
       .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); } })
       .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [solanaAddress]);
+  }, [solanaAddress, forceFresh]);
   return (
     <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: `1px solid ${P.divider}` }}>
       <div className="flex items-center gap-2.5">
@@ -499,8 +500,8 @@ function WalletDashboard({ session, onLock, onReset, P }) {
         </div>
         {WALLET_CHAIN_ORDER.map((key, i) =>
           key === "solana"
-            ? <SolanaBalanceRow key={`${key}-${refreshKey}`} solanaAddress={session.solana.address} P={P} />
-            : <EvmBalanceRow key={`${key}-${refreshKey}`} chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} />
+            ? <SolanaBalanceRow key={`${key}-${refreshKey}`} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
+            : <EvmBalanceRow key={`${key}-${refreshKey}`} chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} />
         )}
       </div>
 

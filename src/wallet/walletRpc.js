@@ -24,6 +24,24 @@ import { solanaRpcUrls } from "../solanaRpc.js";
 
 const clientCache = new Map();
 
+// Short-lived, in-memory balance cache — same TTL and same reasoning as
+// multiAssetBalances.js's own cache: cuts redundant RPC round trips when
+// this tab re-renders (switching away and back, an unrelated state
+// update remounting a row) within a few seconds, without letting a
+// balance go stale for long. The explicit refresh button bypasses this
+// via forceFresh, same contract as multiAssetBalances.js.
+const BALANCE_CACHE_TTL_MS = 15_000;
+const balanceCache = new Map();
+function getCached(key) {
+  const entry = balanceCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt >= BALANCE_CACHE_TTL_MS) return null;
+  return entry.data;
+}
+function setCached(key, data) {
+  balanceCache.set(key, { data, fetchedAt: Date.now() });
+}
+
 export function getWalletPublicClient(chainKey) {
   if (clientCache.has(chainKey)) return clientCache.get(chainKey);
   const chain = CHAIN_KEY_TO_WAGMI_MAINNET[chainKey];
@@ -41,10 +59,17 @@ export function getWalletPublicClient(chainKey) {
 }
 
 /** Native-asset balance for one EVM chain, as a human-readable number. Every native asset this app supports uses 18 decimals. */
-export async function fetchWalletNativeBalance(chainKey, address) {
+export async function fetchWalletNativeBalance(chainKey, address, { forceFresh = false } = {}) {
+  const key = `evm:${chainKey}:${address}`;
+  if (!forceFresh) {
+    const cached = getCached(key);
+    if (cached !== null) return cached;
+  }
   const client = getWalletPublicClient(chainKey);
   const wei = await client.getBalance({ address });
-  return Number(wei) / 1e18;
+  const balance = Number(wei) / 1e18;
+  setCached(key, balance);
+  return balance;
 }
 
 /**
@@ -58,7 +83,12 @@ export async function fetchWalletNativeBalance(chainKey, address) {
  * fabricate an unverified second public URL to force separation, this
  * stays honest about that gap.
  */
-export async function fetchWalletSolanaBalance(address) {
+export async function fetchWalletSolanaBalance(address, { forceFresh = false } = {}) {
+  const key = `solana:${address}`;
+  if (!forceFresh) {
+    const cached = getCached(key);
+    if (cached !== null) return cached;
+  }
   const urls = [...solanaRpcUrls()].reverse();
   let lastError;
   for (const url of urls) {
@@ -66,7 +96,9 @@ export async function fetchWalletSolanaBalance(address) {
       const { Connection, PublicKey } = await import("@solana/web3.js");
       const connection = new Connection(url, "confirmed");
       const lamports = await connection.getBalance(new PublicKey(address));
-      return lamports / 1e9;
+      const balance = lamports / 1e9;
+      setCached(key, balance);
+      return balance;
     } catch (err) {
       lastError = err;
     }
