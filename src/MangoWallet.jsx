@@ -24,23 +24,23 @@
 //   token transfers on both chain families with a real fee estimate
 //   shown before confirming; unlimited HD-derived accounts under one seed
 //   (same "Add account" model OKX Wallet uses — see keys.js's
-//   deriveAccountAtIndex); standalone private-key import/export as a
-//   separate, single-chain concept from HD accounts (matching OKX's own
+//   deriveAccountAtIndex); multiple independent seed-phrase WALLETS too
+//   (OKX's separate "Add wallet" — a different seed entirely, new or
+//   imported, each with its own unlimited accounts, all under the one
+//   password set at onboarding); standalone private-key import/export as
+//   a separate, single-chain concept from either (matching OKX's own
 //   restriction: a raw imported key has no seed to derive siblings from);
-//   custom names for both HD accounts and imported keys. All of this is
-//   offline-verified (real transaction construction/signing/encoding,
-//   checked against this sandbox's own tools) but NOT broadcast-tested
-//   against a live network — this sandbox's egress proxy blocks RPC and
-//   price-API traffic entirely (confirmed via direct curl, same
-//   limitation documented in solana-program/README.md for the Solana
-//   program side of this project) — needs real-world testing on the
-//   deployed site before WALLET_LIVE flips to true.
+//   custom names for wallets, HD accounts, and imported keys alike. All
+//   of this is offline-verified (real transaction construction/signing/
+//   encoding, checked against this sandbox's own tools) but NOT
+//   broadcast-tested against a live network — this sandbox's egress
+//   proxy blocks RPC and price-API traffic entirely (confirmed via direct
+//   curl, same limitation documented in solana-program/README.md for the
+//   Solana program side of this project) — needs real-world testing on
+//   the deployed site before WALLET_LIVE flips to true.
 // - Not yet built: an aggregate portfolio USD total (needs balance state
 //   lifted out of each independent row), a dApp-facing provider (EIP-1193
-//   injection), browser-extension packaging, and multiple independent
-//   WALLETS (a different seed phrase entirely — OKX's separate "Add
-//   wallet" concept, distinct from "Add account"). Only a single
-//   wallet with unlimited accounts is built so far.
+//   injection), browser-extension packaging.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 // Static, named imports only — same convention App.jsx's AssetIcon/ChainIcon
@@ -475,6 +475,35 @@ function SetPasswordStep({ onSet, onBack, P, title, helpText }) {
   );
 }
 
+// Used when finishing "Add wallet" — unlike SetPasswordStep (onboarding
+// the very first wallet), every later wallet is encrypted under the
+// password that already protects this browser's vault, so this just
+// verifies it rather than setting a new one.
+function VerifyPasswordStep({ title, helpText, buttonLabel, onVerify, onBack, P }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit() {
+    setBusy(true);
+    setError("");
+    const ok = await onVerify(password);
+    setBusy(false);
+    if (!ok) setError("Incorrect password.");
+  }
+
+  return (
+    <ScreenShell title={title} onBack={onBack} P={P}>
+      <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>{helpText}</div>
+      <PasswordField value={password} onChange={setPassword} placeholder="Password" P={P} autoFocus />
+      {error && <div className="text-[11.5px] mt-2" style={{ color: "#D92D20" }}>{error}</div>}
+      <div className="mt-3">
+        <PrimaryButton onClick={handleSubmit} disabled={!password || busy} P={P}>{busy ? "Adding…" : buttonLabel}</PrimaryButton>
+      </div>
+    </ScreenShell>
+  );
+}
+
 function ImportPhraseStep({ onImported, onBack, P }) {
   const [phrase, setPhrase] = useState("");
   const [error, setError] = useState("");
@@ -542,7 +571,7 @@ function LockedScreen({ onUnlock, P }) {
 // Unlocked dashboard
 // ---------------------------------------------------------------------------
 
-function RevealPhraseModal({ onClose, P }) {
+function RevealPhraseModal({ walletId, onClose, P }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [phrase, setPhrase] = useState(null);
@@ -550,7 +579,8 @@ function RevealPhraseModal({ onClose, P }) {
   async function handleReveal() {
     const vault = loadVault();
     try {
-      const decrypted = await decryptSecret(vault.mnemonicRecord, password);
+      const walletEntry = vault.wallets.find((w) => w.id === walletId);
+      const decrypted = await decryptSecret(walletEntry.mnemonicRecord, password);
       setPhrase(decrypted);
       setError("");
     } catch {
@@ -595,7 +625,8 @@ function RevealPrivateKeyModal({ session, activeKey, onClose, P }) {
     const vault = loadVault();
     try {
       if (activeKey.type === "hd") {
-        await decryptSecret(vault.mnemonicRecord, password); // just confirms the password — the key itself is already in session, derived at unlock
+        const walletEntry = vault.wallets.find((w) => w.id === activeKey.walletId);
+        await decryptSecret(walletEntry.mnemonicRecord, password); // just confirms the password — the key itself is already in session, derived at unlock
       } else {
         const entry = (vault.importedKeys ?? []).find((k) => k.id === activeKey.id);
         await decryptSecret(entry.record, password);
@@ -700,10 +731,10 @@ function ResetWalletModal({ onClose, onConfirmReset, P }) {
       <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
         <div className="flex items-center gap-2 mb-3">
           <AlertTriangle size={16} color="#D92D20" />
-          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Remove this wallet</span>
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Remove all wallets</span>
         </div>
         <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>
-          This deletes the encrypted wallet stored in this browser. If you haven't backed up your recovery phrase, everything in this wallet is lost permanently — Mango cannot recover it. Type REMOVE to confirm.
+          This deletes every wallet and imported key stored in this browser, not just the active one. If you haven't backed up each recovery phrase and private key, everything is lost permanently — Mango cannot recover it. Type REMOVE to confirm.
         </div>
         <input
           value={confirmText}
@@ -974,14 +1005,14 @@ function SendScreen({ session, onBack, P }) {
   );
 }
 
-// "Account N ▾" — matches the real OKX Wallet pattern this was built
-// against: tapping it lists every HD-derived account under the current
-// seed phrase (checkmark on the active one) plus an "Add account" row.
-// Multiple independent WALLETS (a different seed phrase entirely,
-// OKX's separate "Add wallet") aren't built yet — see this file's
-// top-of-file STATUS block.
+// "{Wallet} / Account N ▾" — matches the real OKX Wallet pattern this
+// was built against: tapping it lists every wallet (each its own seed
+// phrase), every HD-derived account nested under its wallet (checkmark on
+// the active one), an "Add account" row per wallet, and — at the bottom —
+// "New wallet" / "Import wallet" for adding a whole separate seed-phrase
+// identity, distinct from "Add account" under an existing one.
 function keysEqual(a, b) {
-  return a.type === b.type && (a.type === "hd" ? a.index === b.index : a.id === b.id);
+  return a.type === b.type && (a.type === "hd" ? a.walletId === b.walletId && a.index === b.index : a.id === b.id);
 }
 
 function hdAccountLabel(accountLabels, index) {
@@ -1011,16 +1042,24 @@ function RenameModal({ initialLabel, onSave, onClose, P }) {
   );
 }
 
-function AccountSwitcher({ accounts, importedKeys, accountLabels, activeKey, onSwitch, onAddAccount, onImportKey, onRenameAccount, P }) {
+function AccountSwitcher({
+  wallets, importedKeys, activeKey, onSwitch, onAddAccountFor, onAddWalletNew, onAddWalletImport, onImportKey, onRenameAccount, onRenameWallet, P,
+}) {
   const [open, setOpen] = useState(false);
-  const [renaming, setRenaming] = useState(null); // { key, currentLabel } | null
+  const [renaming, setRenaming] = useState(null); // { currentLabel, onSave } | null
   const ref = useRef(null);
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
-  const activeLabel = activeKey.type === "hd" ? hdAccountLabel(accountLabels, activeKey.index) : (importedKeys.find((k) => k.id === activeKey.id)?.label ?? "Imported");
+
+  const activeWallet = activeKey.type === "hd" ? wallets.find((w) => w.id === activeKey.walletId) : null;
+  const activeImported = activeKey.type === "imported" ? importedKeys.find((k) => k.id === activeKey.id) : null;
+  const activeLabel = activeWallet
+    ? (wallets.length > 1 ? `${activeWallet.label} / ${hdAccountLabel(activeWallet.accountLabels, activeKey.index)}` : hdAccountLabel(activeWallet.accountLabels, activeKey.index))
+    : (activeImported?.label ?? "Imported");
+
   return (
     <div className="relative" ref={ref}>
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[12.5px] font-medium" style={{ color: P.textPrimary }}>
@@ -1028,27 +1067,47 @@ function AccountSwitcher({ accounts, importedKeys, accountLabels, activeKey, onS
         <ChevronDown size={13} color={P.textMuted} />
       </button>
       {open && (
-        <div className="absolute left-0 z-30 mt-2 w-64 rounded-xl overflow-hidden shadow-2xl py-1" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, maxHeight: "min(60vh, 360px)", overflowY: "auto" }}>
-          {accounts.map((acc, i) => {
-            const key = { type: "hd", index: i };
-            const label = hdAccountLabel(accountLabels, i);
-            return (
-              <div key={`hd-${i}`} className="w-full flex items-center gap-2 px-3.5 py-2.5">
-                <button onClick={() => { onSwitch(key); setOpen(false); }} className="flex-1 flex items-center justify-between gap-2 text-left">
-                  <div className="flex flex-col">
-                    <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{label}</span>
-                    <span className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{acc.evm.address.slice(0, 6)}…{acc.evm.address.slice(-4)}</span>
-                  </div>
-                  {keysEqual(key, activeKey) && <Check size={14} color={LIME} />}
-                </button>
-                <button onClick={() => setRenaming({ key, currentLabel: label })} className="shrink-0" style={{ color: P.textMuted }}>
-                  <Pencil size={13} />
+        <div className="absolute left-0 z-30 mt-2 w-72 rounded-xl overflow-hidden shadow-2xl py-1" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, maxHeight: "min(70vh, 420px)", overflowY: "auto" }}>
+          {wallets.map((wallet) => (
+            <div key={wallet.id}>
+              <div className="flex items-center gap-2 px-3.5 pt-2.5 pb-1" style={{ borderTop: `1px solid ${P.divider}` }}>
+                <span className="text-[10px] font-semibold uppercase tracking-wide flex-1 truncate" style={{ color: P.textMuted }}>{wallet.label}</span>
+                <button
+                  onClick={() => setRenaming({ currentLabel: wallet.label, onSave: (newLabel) => onRenameWallet(wallet.id, newLabel) })}
+                  className="shrink-0" style={{ color: P.textMuted }}
+                >
+                  <Pencil size={11} />
                 </button>
               </div>
-            );
-          })}
+              {wallet.accounts.map((acc, i) => {
+                const key = { type: "hd", walletId: wallet.id, index: i };
+                const label = hdAccountLabel(wallet.accountLabels, i);
+                return (
+                  <div key={`${wallet.id}-${i}`} className="w-full flex items-center gap-2 px-3.5 py-2.5">
+                    <button onClick={() => { onSwitch(key); setOpen(false); }} className="flex-1 flex items-center justify-between gap-2 text-left">
+                      <div className="flex flex-col">
+                        <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{label}</span>
+                        <span className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{acc.evm.address.slice(0, 6)}…{acc.evm.address.slice(-4)}</span>
+                      </div>
+                      {keysEqual(key, activeKey) && <Check size={14} color={LIME} />}
+                    </button>
+                    <button onClick={() => setRenaming({ currentLabel: label, onSave: (newLabel) => onRenameAccount(key, newLabel) })} className="shrink-0" style={{ color: P.textMuted }}>
+                      <Pencil size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+              <button
+                onClick={() => { onAddAccountFor(wallet.id); setOpen(false); }}
+                className="w-full flex items-center gap-2 pl-5 pr-3.5 py-2 text-left"
+                style={{ color: P.textSecondary }}
+              >
+                <Plus size={13} color={P.textMuted} /> <span className="text-[12.5px]">Add account</span>
+              </button>
+            </div>
+          ))}
           {importedKeys.length > 0 && (
-            <div className="text-[10px] font-medium uppercase tracking-wide px-3.5 pt-2.5 pb-1" style={{ color: P.textMuted, borderTop: `1px solid ${P.divider}` }}>Imported</div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide px-3.5 pt-2.5 pb-1" style={{ color: P.textMuted, borderTop: `1px solid ${P.divider}` }}>Imported</div>
           )}
           {importedKeys.map((k) => {
             const key = { type: "imported", id: k.id };
@@ -1061,28 +1120,29 @@ function AccountSwitcher({ accounts, importedKeys, accountLabels, activeKey, onS
                   </div>
                   {keysEqual(key, activeKey) && <Check size={14} color={LIME} />}
                 </button>
-                <button onClick={() => setRenaming({ key, currentLabel: k.label })} className="shrink-0" style={{ color: P.textMuted }}>
+                <button onClick={() => setRenaming({ currentLabel: k.label, onSave: (newLabel) => onRenameAccount(key, newLabel) })} className="shrink-0" style={{ color: P.textMuted }}>
                   <Pencil size={13} />
                 </button>
               </div>
             );
           })}
-          <button
-            onClick={() => { onAddAccount(); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left"
-            style={{ color: P.textPrimary, borderTop: `1px solid ${P.divider}` }}
-          >
-            <Plus size={14} color={P.textMuted} /> Add account
-          </button>
-          <button onClick={() => { onImportKey(); setOpen(false); }} className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left" style={{ color: P.textPrimary }}>
-            <Download size={14} color={P.textMuted} /> Import private key
-          </button>
+          <div style={{ borderTop: `1px solid ${P.divider}` }}>
+            <button onClick={() => { onAddWalletNew(); setOpen(false); }} className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left" style={{ color: P.textPrimary }}>
+              <Plus size={14} color={P.textMuted} /> New wallet
+            </button>
+            <button onClick={() => { onAddWalletImport(); setOpen(false); }} className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left" style={{ color: P.textPrimary }}>
+              <Download size={14} color={P.textMuted} /> Import wallet
+            </button>
+            <button onClick={() => { onImportKey(); setOpen(false); }} className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left" style={{ color: P.textPrimary }}>
+              <Download size={14} color={P.textMuted} /> Import private key
+            </button>
+          </div>
         </div>
       )}
       {renaming && (
         <RenameModal
           initialLabel={renaming.currentLabel}
-          onSave={(newLabel) => onRenameAccount(renaming.key, newLabel)}
+          onSave={renaming.onSave}
           onClose={() => setRenaming(null)}
           P={P}
         />
@@ -1128,11 +1188,14 @@ function AddAccountModal({ onClose, onAdd, P }) {
   );
 }
 
-function WalletDashboard({ session, accounts, importedKeys, accountLabels, activeKey, onSwitchAccount, onAddAccount, onImportKey, onRenameAccount, onLock, onReset, onSend, P }) {
+function WalletDashboard({
+  session, wallets, importedKeys, activeKey, onSwitchAccount, onAddAccount, onAddWalletNew, onAddWalletImport,
+  onImportKey, onRenameAccount, onRenameWallet, onLock, onReset, onSend, P,
+}) {
   const [showReveal, setShowReveal] = useState(false);
   const [showRevealKey, setShowRevealKey] = useState(false);
   const [showReset, setShowReset] = useState(false);
-  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [addAccountFor, setAddAccountFor] = useState(null); // walletId | null
   const [showImportKey, setShowImportKey] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [justCopied, setJustCopied] = useState(false);
@@ -1150,9 +1213,11 @@ function WalletDashboard({ session, accounts, importedKeys, accountLabels, activ
       <div className="rounded-2xl p-4" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
         <div className="flex items-center justify-between mb-4">
           <AccountSwitcher
-            accounts={accounts} importedKeys={importedKeys} accountLabels={accountLabels} activeKey={activeKey}
-            onSwitch={onSwitchAccount} onAddAccount={() => setShowAddAccount(true)} onImportKey={() => setShowImportKey(true)}
-            onRenameAccount={onRenameAccount}
+            wallets={wallets} importedKeys={importedKeys} activeKey={activeKey}
+            onSwitch={onSwitchAccount} onAddAccountFor={(walletId) => setAddAccountFor(walletId)}
+            onAddWalletNew={onAddWalletNew} onAddWalletImport={onAddWalletImport}
+            onImportKey={() => setShowImportKey(true)}
+            onRenameAccount={onRenameAccount} onRenameWallet={onRenameWallet}
             P={P}
           />
           <button onClick={onLock} className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: P.textMuted }}>
@@ -1220,7 +1285,7 @@ function WalletDashboard({ session, accounts, importedKeys, accountLabels, activ
         </button>
       </div>
 
-      {showReveal && <RevealPhraseModal onClose={() => setShowReveal(false)} P={P} />}
+      {showReveal && <RevealPhraseModal walletId={activeKey.walletId} onClose={() => setShowReveal(false)} P={P} />}
       {showRevealKey && <RevealPrivateKeyModal session={session} activeKey={activeKey} onClose={() => setShowRevealKey(false)} P={P} />}
       {showReset && (
         <ResetWalletModal
@@ -1229,7 +1294,9 @@ function WalletDashboard({ session, accounts, importedKeys, accountLabels, activ
           P={P}
         />
       )}
-      {showAddAccount && <AddAccountModal onClose={() => setShowAddAccount(false)} onAdd={onAddAccount} P={P} />}
+      {addAccountFor && (
+        <AddAccountModal onClose={() => setAddAccountFor(null)} onAdd={(password) => onAddAccount(addAccountFor, password)} P={P} />
+      )}
       {showImportKey && <ImportKeyModal onClose={() => setShowImportKey(false)} onImport={onImportKey} P={P} />}
     </div>
   );
@@ -1239,43 +1306,45 @@ function WalletDashboard({ session, accounts, importedKeys, accountLabels, activ
 // Top-level state machine
 // ---------------------------------------------------------------------------
 
+function genId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function MangoWalletInner({ P }) {
   const [screen, setScreen] = useState(() => (loadVault() ? "locked" : "welcome"));
   const [pendingMnemonic, setPendingMnemonic] = useState(null); // in-memory only, during onboarding
   const [pendingImportPhrase, setPendingImportPhrase] = useState(null);
-  // Array of { evm, solana } — one entry per HD-derived account, index 0
-  // being the wallet's default identity. In-memory only while unlocked.
-  // Deliberately does NOT include the mnemonic itself: it's only needed
-  // transiently, to derive an account (at unlock, or when adding a new
-  // one — see handleAddAccount, which re-prompts for the password rather
-  // than keeping the mnemonic sitting in long-lived React state —
-  // inspectable via React DevTools — for the entire unlocked session.
-  const [accounts, setAccounts] = useState([]);
-  // Standalone imported keys — NOT derived from the mnemonic, each tied
-  // to exactly one chain (see walletKeyImport.js's module doc for why).
-  // { id, chain, address, label, privateKey } — privateKey in-memory only
-  // while unlocked, same as every other private key in this file.
+  const [pendingNewWalletMnemonic, setPendingNewWalletMnemonic] = useState(null); // in-memory only, during "add wallet"
+  // Array of { id, label, accounts: [{ evm, solana }], accountLabels }
+  // — one entry per independent seed-phrase WALLET (OKX's "Add wallet"),
+  // each with its own unlimited HD-derived accounts (OKX's "Add
+  // account", nested one level down). In-memory only while unlocked.
+  // Deliberately does NOT include any mnemonic itself: each is only
+  // needed transiently, to derive an account — at unlock, or when adding
+  // a new account/wallet — rather than kept sitting in long-lived React
+  // state (inspectable via React DevTools) for the entire session.
+  const [wallets, setWallets] = useState([]);
+  // Standalone imported keys — NOT derived from any mnemonic, each tied
+  // to exactly one chain (see walletKeyImport.js's module doc for why),
+  // and — matching OKX's own flat treatment — not nested under any
+  // wallet. { id, chain, address, label, privateKey } — privateKey
+  // in-memory only while unlocked, same as every other private key here.
   const [importedKeys, setImportedKeys] = useState([]);
-  // Which account is active — an HD index or a specific imported key's id.
-  const [activeKey, setActiveKey] = useState({ type: "hd", index: 0 });
-  // Custom names — { [hdIndex]: label } — purely cosmetic, safe to store
-  // in cleartext (no different from the addresses already cached alongside).
-  const [accountLabels, setAccountLabels] = useState({});
+  // Which account is active — an HD {walletId, index} pair, or a
+  // specific imported key's id.
+  const [activeKey, setActiveKey] = useState({ type: "hd", walletId: null, index: 0 });
 
   async function finalizeWallet(mnemonic, password) {
     const account0 = deriveAccountAtIndex(mnemonic, 0);
     const mnemonicRecord = await encryptSecret(mnemonic, password);
+    const id = genId("wallet");
     saveVault({
-      mnemonicRecord,
-      accountCount: 1,
-      addresses: { evm: [account0.evm.address], solana: [account0.solana.address] },
+      wallets: [{ id, label: "Wallet 1", mnemonicRecord, accountCount: 1, accountLabels: {} }],
       importedKeys: [],
-      accountLabels: {},
     });
-    setAccounts([account0]);
+    setWallets([{ id, label: "Wallet 1", accounts: [account0], accountLabels: {} }]);
     setImportedKeys([]);
-    setAccountLabels({});
-    setActiveKey({ type: "hd", index: 0 });
+    setActiveKey({ type: "hd", walletId: id, index: 0 });
     setPendingMnemonic(null);
     setPendingImportPhrase(null);
     setScreen("dashboard");
@@ -1284,19 +1353,22 @@ function MangoWalletInner({ P }) {
   async function handleUnlock(password) {
     const vault = loadVault();
     try {
-      const mnemonic = await decryptSecret(vault.mnemonicRecord, password);
-      const derived = [];
-      for (let i = 0; i < vault.accountCount; i++) derived.push(deriveAccountAtIndex(mnemonic, i));
+      const decryptedWallets = [];
+      for (const w of vault.wallets) {
+        const mnemonic = await decryptSecret(w.mnemonicRecord, password);
+        const accounts = [];
+        for (let i = 0; i < w.accountCount; i++) accounts.push(deriveAccountAtIndex(mnemonic, i));
+        decryptedWallets.push({ id: w.id, label: w.label, accounts, accountLabels: w.accountLabels ?? {} });
+      }
       const decryptedImports = await Promise.all(
         (vault.importedKeys ?? []).map(async (entry) => ({
           id: entry.id, chain: entry.chain, address: entry.address, label: entry.label,
           privateKey: await decryptSecret(entry.record, password),
         }))
       );
-      setAccounts(derived);
+      setWallets(decryptedWallets);
       setImportedKeys(decryptedImports);
-      setAccountLabels(vault.accountLabels ?? {});
-      setActiveKey({ type: "hd", index: 0 });
+      setActiveKey({ type: "hd", walletId: decryptedWallets[0].id, index: 0 });
       setScreen("dashboard");
       return true;
     } catch {
@@ -1304,31 +1376,50 @@ function MangoWalletInner({ P }) {
     }
   }
 
-  /** Derives the next HD account. Needs the password again since the mnemonic isn't kept in memory between unlock and this — see the accounts state comment above. */
-  async function handleAddAccount(password) {
+  /** Derives the next HD account under one specific wallet. Needs the password again since no mnemonic is kept in memory between unlock and this — see the wallets state comment above. */
+  async function handleAddAccount(walletId, password) {
     const vault = loadVault();
-    const mnemonic = await decryptSecret(vault.mnemonicRecord, password); // throws on wrong password — caller (AddAccountModal) handles that
-    const nextIndex = accounts.length;
+    const walletEntry = vault.wallets.find((w) => w.id === walletId);
+    const mnemonic = await decryptSecret(walletEntry.mnemonicRecord, password); // throws on wrong password — caller (AddAccountModal) handles that
+    const wallet = wallets.find((w) => w.id === walletId);
+    const nextIndex = wallet.accounts.length;
     const newAccount = deriveAccountAtIndex(mnemonic, nextIndex);
-    const nextAccounts = [...accounts, newAccount];
-    saveVault({
-      mnemonicRecord: vault.mnemonicRecord,
-      accountCount: nextAccounts.length,
-      addresses: { evm: nextAccounts.map((a) => a.evm.address), solana: nextAccounts.map((a) => a.solana.address) },
-      importedKeys: vault.importedKeys ?? [],
-      accountLabels: vault.accountLabels ?? {},
-    });
-    setAccounts(nextAccounts);
-    setActiveKey({ type: "hd", index: nextIndex });
+    const nextVaultWallets = vault.wallets.map((w) => (w.id === walletId ? { ...w, accountCount: nextIndex + 1 } : w));
+    saveVault({ wallets: nextVaultWallets, importedKeys: vault.importedKeys ?? [] });
+    setWallets((prev) => prev.map((w) => (w.id === walletId ? { ...w, accounts: [...w.accounts, newAccount] } : w)));
+    setActiveKey({ type: "hd", walletId, index: nextIndex });
+  }
+
+  /** Adds a whole new seed-phrase wallet — a different seed entirely, new or imported (caller decides which), encrypted under the vault's EXISTING password. Returns false on a wrong password rather than throwing, so VerifyPasswordStep can show an inline error the same way LockedScreen's onUnlock does. */
+  async function handleAddWallet(mnemonic, password) {
+    const vault = loadVault();
+    try {
+      await decryptSecret(vault.wallets[0].mnemonicRecord, password); // proves this is really the vault's password before anything gets encrypted with it
+    } catch {
+      return false;
+    }
+    const mnemonicRecord = await encryptSecret(mnemonic, password);
+    const id = genId("wallet");
+    const label = `Wallet ${vault.wallets.length + 1}`;
+    const nextVaultWallets = [...vault.wallets, { id, label, mnemonicRecord, accountCount: 1, accountLabels: {} }];
+    saveVault({ wallets: nextVaultWallets, importedKeys: vault.importedKeys ?? [] });
+    const account0 = deriveAccountAtIndex(mnemonic, 0);
+    setWallets((prev) => [...prev, { id, label, accounts: [account0], accountLabels: {} }]);
+    setActiveKey({ type: "hd", walletId: id, index: 0 });
+    setPendingNewWalletMnemonic(null);
+    setScreen("dashboard");
+    return true;
   }
 
   /** Renames an HD account or an imported key. Purely cosmetic — no password needed, unlike anything that touches key material. */
   function handleRenameAccount(key, newLabel) {
     const vault = loadVault();
     if (key.type === "hd") {
-      const nextLabels = { ...(vault.accountLabels ?? {}), [key.index]: newLabel };
-      saveVault({ ...vault, accountLabels: nextLabels });
-      setAccountLabels(nextLabels);
+      const nextVaultWallets = vault.wallets.map((w) =>
+        w.id === key.walletId ? { ...w, accountLabels: { ...(w.accountLabels ?? {}), [key.index]: newLabel } } : w
+      );
+      saveVault({ ...vault, wallets: nextVaultWallets });
+      setWallets((prev) => prev.map((w) => (w.id === key.walletId ? { ...w, accountLabels: { ...w.accountLabels, [key.index]: newLabel } } : w)));
     } else {
       const nextImportedKeys = (vault.importedKeys ?? []).map((entry) => (entry.id === key.id ? { ...entry, label: newLabel } : entry));
       saveVault({ ...vault, importedKeys: nextImportedKeys });
@@ -1336,13 +1427,21 @@ function MangoWalletInner({ P }) {
     }
   }
 
+  /** Renames a whole wallet (the seed-phrase group itself, not one account under it). */
+  function handleRenameWallet(walletId, newLabel) {
+    const vault = loadVault();
+    const nextVaultWallets = vault.wallets.map((w) => (w.id === walletId ? { ...w, label: newLabel } : w));
+    saveVault({ ...vault, wallets: nextVaultWallets });
+    setWallets((prev) => prev.map((w) => (w.id === walletId ? { ...w, label: newLabel } : w)));
+  }
+
   /** Imports a standalone private key. Requires the vault's existing password (not a new one) — throws on a wrong password or an unparseable key; caller (ImportKeyModal) handles both. */
   async function handleImportPrivateKey(rawInput, password) {
     const vault = loadVault();
-    await decryptSecret(vault.mnemonicRecord, password); // confirms this is really the wallet's password before we encrypt anything with it
+    await decryptSecret(vault.wallets[0].mnemonicRecord, password); // confirms this is really the wallet's password before we encrypt anything with it
     const parsed = parseImportedPrivateKey(rawInput);
     const record = await encryptSecret(parsed.privateKey, password);
-    const id = `imported-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = genId("imported");
     const label = `Imported ${parsed.chain === "evm" ? "EVM" : "Solana"}`;
     const nextImportedKeys = [...(vault.importedKeys ?? []), { id, chain: parsed.chain, address: parsed.address, label, record }];
     saveVault({ ...vault, importedKeys: nextImportedKeys });
@@ -1351,19 +1450,19 @@ function MangoWalletInner({ P }) {
   }
 
   function handleLock() {
-    setAccounts([]); // discard in-memory keys — nothing else to "lock", they're gone
+    setWallets([]); // discard in-memory keys — nothing else to "lock", they're gone
     setImportedKeys([]);
-    setActiveKey({ type: "hd", index: 0 });
+    setActiveKey({ type: "hd", walletId: null, index: 0 });
     setScreen("locked");
   }
 
   function handleReset() {
-    setAccounts([]);
+    setWallets([]);
     setImportedKeys([]);
-    setAccountLabels({});
-    setActiveKey({ type: "hd", index: 0 });
+    setActiveKey({ type: "hd", walletId: null, index: 0 });
     setPendingMnemonic(null);
     setPendingImportPhrase(null);
+    setPendingNewWalletMnemonic(null);
     setScreen("welcome");
   }
 
@@ -1371,7 +1470,8 @@ function MangoWalletInner({ P }) {
   // an imported key has exactly one and the other is null. Every consumer
   // of `session` below must treat a null evm/solana as "this chain isn't
   // available for the current account," not crash on it.
-  const activeHdAccount = activeKey.type === "hd" ? (accounts[activeKey.index] ?? null) : null;
+  const activeWallet = activeKey.type === "hd" ? (wallets.find((w) => w.id === activeKey.walletId) ?? null) : null;
+  const activeHdAccount = activeWallet ? (activeWallet.accounts[activeKey.index] ?? null) : null;
   const activeImportedKey = activeKey.type === "imported" ? (importedKeys.find((k) => k.id === activeKey.id) ?? null) : null;
   const session = activeHdAccount
     ? { evm: activeHdAccount.evm, solana: activeHdAccount.solana }
@@ -1434,17 +1534,65 @@ function MangoWalletInner({ P }) {
   if (screen === "send") {
     return <SendScreen session={session} onBack={() => setScreen("dashboard")} P={P} />;
   }
+  // "Add wallet" — a whole separate seed phrase, new or imported, distinct
+  // from "Add account" (which just derives another account under an
+  // existing wallet's seed). Reuses the same reveal/confirm onboarding
+  // steps as the very first wallet; only the final step differs — instead
+  // of setting a brand-new password, it verifies the vault's existing one.
+  if (screen === "add-wallet-reveal") {
+    return (
+      <CreateRevealStep
+        mnemonic={pendingNewWalletMnemonic}
+        onBack={() => setScreen("dashboard")}
+        onNext={() => setScreen("add-wallet-confirm")}
+        P={P}
+      />
+    );
+  }
+  if (screen === "add-wallet-confirm") {
+    return (
+      <CreateConfirmStep
+        mnemonic={pendingNewWalletMnemonic}
+        onBack={() => setScreen("add-wallet-reveal")}
+        onConfirmed={() => setScreen("add-wallet-verify-password")}
+        P={P}
+      />
+    );
+  }
+  if (screen === "add-wallet-import-phrase") {
+    return (
+      <ImportPhraseStep
+        onBack={() => setScreen("dashboard")}
+        onImported={(phrase) => { setPendingNewWalletMnemonic(phrase); setScreen("add-wallet-verify-password"); }}
+        P={P}
+      />
+    );
+  }
+  if (screen === "add-wallet-verify-password") {
+    return (
+      <VerifyPasswordStep
+        title="Add wallet"
+        helpText="One password unlocks every wallet in this browser — enter it to finish adding this one."
+        buttonLabel="Add wallet"
+        onBack={() => setScreen("dashboard")}
+        onVerify={(password) => handleAddWallet(pendingNewWalletMnemonic, password)}
+        P={P}
+      />
+    );
+  }
   return (
     <WalletDashboard
       session={session}
-      accounts={accounts}
+      wallets={wallets}
       importedKeys={importedKeys}
-      accountLabels={accountLabels}
       activeKey={activeKey}
       onSwitchAccount={setActiveKey}
       onAddAccount={handleAddAccount}
+      onAddWalletNew={() => { setPendingNewWalletMnemonic(generateMnemonic()); setScreen("add-wallet-reveal"); }}
+      onAddWalletImport={() => setScreen("add-wallet-import-phrase")}
       onImportKey={handleImportPrivateKey}
       onRenameAccount={handleRenameAccount}
+      onRenameWallet={handleRenameWallet}
       onLock={handleLock}
       onReset={handleReset}
       onSend={() => setScreen("send")}

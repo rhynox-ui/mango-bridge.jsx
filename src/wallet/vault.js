@@ -18,16 +18,20 @@
 // output is the caller's responsibility to discard from memory (and never
 // log) once used.
 //
-// Schema v2 — accounts (unlimited, HD-derived under the one mnemonic,
-// same real model OKX Wallet uses: seed-phrase wallets support "add
-// account", private-key imports don't) plus standalone imported keys.
-// v1 (single mnemonic, no accounts/imports) predates this and is treated
-// as absent rather than migrated — this wallet was still gated behind
-// WALLET_LIVE=false for its entire v1 lifetime, so there's no real
-// user data to preserve.
+// Schema v3 — multiple independent seed-phrase WALLETS (OKX's "Add
+// wallet": a different seed entirely, each with its own unlimited set of
+// HD-derived accounts) plus standalone imported keys, which stay a flat,
+// non-nested list (matching OKX's own treatment: an imported key is its
+// own single-account, single-chain entry, not nested under any wallet).
+// All wallets share the one password set at onboarding — re-entering it
+// is how "add wallet" and "add account" both prove they're not a
+// stranger with browser access. v2 (a single implicit wallet, no
+// multi-wallet support) and v1 before it are treated as absent rather
+// than migrated — this wallet has been gated behind WALLET_LIVE=false for
+// its entire pre-v3 lifetime, so there's no real user data to preserve.
 
 const STORAGE_KEY = "mango_wallet_vault_v1"; // key name is legacy; the JSON payload itself is versioned (see below)
-const VAULT_SCHEMA_VERSION = 2;
+const VAULT_SCHEMA_VERSION = 3;
 const PBKDF2_ITERATIONS = 600_000;
 
 function toBase64(bytes) {
@@ -75,20 +79,20 @@ export async function decryptSecret(record, password) {
 }
 
 /**
- * Persists the full vault: the encrypted mnemonic, how many HD accounts
- * exist, their (non-secret) cached addresses per chain/index, and any
- * standalone imported keys (each independently encrypted, same password).
+ * Persists the full vault: every seed-phrase wallet (each independently
+ * encrypted, though all under the same password — see module doc) with
+ * its own account count and account labels, plus any standalone imported
+ * keys (each independently encrypted too).
+ *
+ * wallets: [{ id, label, mnemonicRecord, accountCount, accountLabels }]
  */
-export function saveVault({ mnemonicRecord, accountCount, addresses, importedKeys, accountLabels }) {
+export function saveVault({ wallets, importedKeys }) {
   window.localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
       version: VAULT_SCHEMA_VERSION,
-      mnemonicRecord,
-      accountCount,
-      addresses,
+      wallets: wallets ?? [],
       importedKeys: importedKeys ?? [],
-      accountLabels: accountLabels ?? {},
     })
   );
 }
@@ -98,7 +102,7 @@ export function loadVault() {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed.version !== VAULT_SCHEMA_VERSION) return null; // pre-accounts v1 record — see module doc
+    if (parsed.version !== VAULT_SCHEMA_VERSION) return null; // pre-multi-wallet v1/v2 record — see module doc
     return parsed;
   } catch {
     return null;
