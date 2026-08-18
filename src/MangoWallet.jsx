@@ -36,15 +36,16 @@ import {
   NetworkMonad, NetworkSonic, NetworkMantle, NetworkBlast, NetworkBerachain, NetworkWorld, NetworkSeiNetwork,
 } from "@web3icons/react";
 import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon } from "lucide-react";
-import { isAddress } from "viem";
+import { isAddress, parseUnits } from "viem";
 import { PublicKey } from "@solana/web3.js";
 import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
 import { ChainBadge } from "./App.jsx";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
 import { generateMnemonic, isValidMnemonic, deriveAccounts, normalizeMnemonic } from "./wallet/keys.js";
 import { encryptMnemonic, decryptMnemonic, saveVault, loadVault, clearVault } from "./wallet/vault.js";
-import { fetchWalletNativeBalance, fetchWalletSolanaBalance, getWalletChain } from "./wallet/walletRpc.js";
-import { estimateEvmSendFee, sendEvmNative, estimateSolanaSendFee, sendSolanaNative } from "./wallet/sendTransaction.js";
+import { fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, getWalletChain } from "./wallet/walletRpc.js";
+import { estimateEvmSendFee, sendEvmNative, estimateSolanaSendFee, sendSolanaNative, estimateEvmTokenSendFee, sendEvmToken } from "./wallet/sendTransaction.js";
+import { tokensForWalletChain } from "./wallet/walletTokens.js";
 import {
   WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL,
 } from "./wallet/walletChains.js";
@@ -217,6 +218,27 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh }) {
       <div className="flex items-center gap-1.5 text-[13px] font-mono font-medium" style={{ color: P.textPrimary }}>
         <span>{loading ? "…" : balance !== null ? balance.toFixed(4) : "—"}</span>
         <span className="text-[11px] font-sans" style={{ color: P.textMuted }}>{NATIVE_SYMBOL_BY_CHAIN[chainKey]}</span>
+      </div>
+    </div>
+  );
+}
+
+function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh }) {
+  const [balance, setBalance] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchWalletTokenBalance(chainKey, token.address, token.decimals, evmAddress, { forceFresh })
+      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [chainKey, token.address, token.decimals, evmAddress, forceFresh]);
+  return (
+    <div className="flex items-center justify-between px-4 py-2 pl-11" style={{ borderTop: `1px solid ${P.divider}` }}>
+      <span className="text-[11.5px]" style={{ color: P.textMuted }}>{token.symbol}</span>
+      <div className="flex items-center gap-1.5 text-[12px] font-mono" style={{ color: P.textSecondary }}>
+        <span>{loading ? "…" : balance !== null ? fmt(balance, balance < 1 ? 4 : 2) : "—"}</span>
       </div>
     </div>
   );
@@ -571,8 +593,35 @@ function SendChainPicker({ value, onChange, P }) {
   );
 }
 
+function SendAssetPicker({ chainKey, value, onChange, P }) {
+  const tokens = tokensForWalletChain(chainKey);
+  if (tokens.length === 0) return null; // nothing to pick between — this chain has no verified token, native is the only option
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <button
+        onClick={() => onChange("native")}
+        className="px-2.5 py-1 rounded-full text-[11.5px] font-medium"
+        style={{ background: value === "native" ? P.ctaBg : P.pillBg, color: value === "native" ? P.ctaText : P.textSecondary }}
+      >
+        {NATIVE_SYMBOL_BY_CHAIN[chainKey]}
+      </button>
+      {tokens.map((t) => (
+        <button
+          key={t.symbol}
+          onClick={() => onChange(t.symbol)}
+          className="px-2.5 py-1 rounded-full text-[11.5px] font-medium"
+          style={{ background: value === t.symbol ? P.ctaBg : P.pillBg, color: value === t.symbol ? P.ctaText : P.textSecondary }}
+        >
+          {t.symbol}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function SendScreen({ session, onBack, P }) {
   const [chainKey, setChainKey] = useState("ethereum");
+  const [assetSymbol, setAssetSymbol] = useState("native");
   const [toAddress, setToAddress] = useState("");
   const [amount, setAmount] = useState("");
   const [phase, setPhase] = useState("form"); // form | confirm | sending | done | error
@@ -582,15 +631,29 @@ function SendScreen({ session, onBack, P }) {
   const [errorMessage, setErrorMessage] = useState("");
 
   const isSolana = chainKey === "solana";
+  const selectedToken = isSolana || assetSymbol === "native" ? null : tokensForWalletChain(chainKey).find((t) => t.symbol === assetSymbol);
+  const assetLabel = selectedToken ? selectedToken.symbol : NATIVE_SYMBOL_BY_CHAIN[chainKey];
   const addressValid = isValidChainAddress(chainKey, toAddress);
   const amountValid = Number(amount) > 0;
+
+  function handleChainChange(nextChainKey) {
+    setChainKey(nextChainKey);
+    setAssetSymbol("native"); // a token picked for the previous chain almost certainly doesn't exist on the new one
+  }
 
   async function handleContinue() {
     setFeeError("");
     setFeeEstimate(null);
     setPhase("confirm");
     try {
-      const fee = isSolana ? estimateSolanaSendFee() : await estimateEvmSendFee(chainKey);
+      const fee = isSolana
+        ? estimateSolanaSendFee()
+        : selectedToken
+          ? await estimateEvmTokenSendFee({
+              chainKey, tokenAddress: selectedToken.address, fromAddress: session.evm.address,
+              toAddress: toAddress.trim(), amountRaw: parseUnits(String(amount), selectedToken.decimals),
+            })
+          : await estimateEvmSendFee(chainKey);
       setFeeEstimate(fee);
     } catch (err) {
       setFeeError(err?.message || "Couldn't estimate the network fee — check your connection and try again.");
@@ -603,7 +666,12 @@ function SendScreen({ session, onBack, P }) {
     try {
       const sendResult = isSolana
         ? await sendSolanaNative({ secretKeyBase58: session.solana.privateKey, toAddress: toAddress.trim(), amountSol: Number(amount) })
-        : await sendEvmNative({ chainKey, privateKeyHex: session.evm.privateKey, toAddress: toAddress.trim(), amountEth: amount });
+        : selectedToken
+          ? await sendEvmToken({
+              chainKey, privateKeyHex: session.evm.privateKey, tokenAddress: selectedToken.address,
+              tokenDecimals: selectedToken.decimals, toAddress: toAddress.trim(), amountToken: amount,
+            })
+          : await sendEvmNative({ chainKey, privateKeyHex: session.evm.privateKey, toAddress: toAddress.trim(), amountEth: amount });
       setResult(sendResult);
       setPhase("done");
     } catch (err) {
@@ -631,7 +699,7 @@ function SendScreen({ session, onBack, P }) {
           <span className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
             <Check size={19} color={LIME_DEEP} />
           </span>
-          <div className="text-[13.5px]" style={{ color: P.textPrimary }}>{amount} {NATIVE_SYMBOL_BY_CHAIN[chainKey]} sent</div>
+          <div className="text-[13.5px]" style={{ color: P.textPrimary }}>{amount} {assetLabel} sent</div>
           {explorerUrl && (
             <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[12px] mt-1" style={{ color: P.textSecondary }}>
               View on explorer <ExternalLink size={12} />
@@ -658,7 +726,7 @@ function SendScreen({ session, onBack, P }) {
         <div className="flex flex-col gap-2.5 mb-4">
           <div className="flex items-center justify-between px-3 py-2.5 rounded-lg" style={{ background: P.input }}>
             <span className="text-[11.5px]" style={{ color: P.textMuted }}>Amount</span>
-            <span className="text-[13px] font-mono" style={{ color: P.textPrimary }}>{amount} {NATIVE_SYMBOL_BY_CHAIN[chainKey]}</span>
+            <span className="text-[13px] font-mono" style={{ color: P.textPrimary }}>{amount} {assetLabel}</span>
           </div>
           <div className="flex items-center justify-between px-3 py-2.5 rounded-lg" style={{ background: P.input }}>
             <span className="text-[11.5px]" style={{ color: P.textMuted }}>To</span>
@@ -682,7 +750,8 @@ function SendScreen({ session, onBack, P }) {
   return (
     <ScreenShell title="Send" onBack={onBack} P={P}>
       <div className="flex flex-col gap-3 mb-4">
-        <SendChainPicker value={chainKey} onChange={setChainKey} P={P} />
+        <SendChainPicker value={chainKey} onChange={handleChainChange} P={P} />
+        <SendAssetPicker chainKey={chainKey} value={assetSymbol} onChange={setAssetSymbol} P={P} />
         <input
           value={toAddress}
           onChange={(e) => setToAddress(e.target.value)}
@@ -700,7 +769,7 @@ function SendScreen({ session, onBack, P }) {
             className="font-display bg-transparent text-[20px] font-semibold w-full"
             style={{ color: P.textPrimary }}
           />
-          <span className="text-[12.5px] font-medium shrink-0" style={{ color: P.textMuted }}>{NATIVE_SYMBOL_BY_CHAIN[chainKey]}</span>
+          <span className="text-[12.5px] font-medium shrink-0" style={{ color: P.textMuted }}>{assetLabel}</span>
         </div>
       </div>
       <PrimaryButton onClick={handleContinue} disabled={!addressValid || !amountValid} P={P}>Continue</PrimaryButton>
@@ -754,9 +823,16 @@ function WalletDashboard({ session, onLock, onReset, onSend, P }) {
           </button>
         </div>
         {WALLET_CHAIN_ORDER.map((key, i) =>
-          key === "solana"
-            ? <SolanaBalanceRow key={`${key}-${refreshKey}`} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
-            : <EvmBalanceRow key={`${key}-${refreshKey}`} chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} />
+          key === "solana" ? (
+            <SolanaBalanceRow key={`${key}-${refreshKey}`} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
+          ) : (
+            <React.Fragment key={`${key}-${refreshKey}`}>
+              <EvmBalanceRow chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} />
+              {tokensForWalletChain(key).map((token) => (
+                <TokenBalanceRow key={token.symbol} chainKey={key} token={token} evmAddress={session.evm.address} P={P} forceFresh={refreshKey > 0} />
+              ))}
+            </React.Fragment>
+          )
         )}
       </div>
 

@@ -1,11 +1,10 @@
 // src/wallet/sendTransaction.js
 //
-// Real signing + broadcast for Mango Wallet — native-asset sends only for
-// now (no ERC-20/SPL token transfers yet), one chain family at a time.
-// Everything here signs with the private key already held in memory from
-// the unlocked session (see MangoWallet.jsx's session state) — nothing
-// here ever persists or transmits that key anywhere except as a locally-
-// computed signature.
+// Real signing + broadcast for Mango Wallet — native-asset and verified
+// ERC-20/token sends, one chain family at a time. Everything here signs
+// with the private key already held in memory from the unlocked session
+// (see MangoWallet.jsx's session state) — nothing here ever persists or
+// transmits that key anywhere except as a locally-computed signature.
 //
 // EVM sends reuse walletRpc.js's fallback transport (safe here — retrying
 // an identical already-signed raw transaction against a second RPC node is
@@ -15,8 +14,12 @@
 // getWalletSolanaConnection's own comment for why that one case is
 // different.
 
-import { parseEther } from "viem";
+import { parseEther, parseUnits, encodeFunctionData } from "viem";
 import { getWalletPublicClient, getWalletClientFor, getWalletSolanaConnection } from "./walletRpc.js";
+
+const ERC20_TRANSFER_ABI = [
+  { type: "function", name: "transfer", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }], stateMutability: "nonpayable" },
+];
 
 const EVM_NATIVE_TRANSFER_GAS_LIMIT = 21_000n; // protocol-fixed cost of a plain native transfer, same on every EVM chain
 
@@ -56,6 +59,47 @@ export async function sendEvmNative({ chainKey, privateKeyHex, toAddress, amount
     to: toAddress,
     value: parseEther(String(amountEth)),
     gas: EVM_NATIVE_TRANSFER_GAS_LIMIT,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+  });
+  return { hash };
+}
+
+/**
+ * Real fee estimate for an ERC-20 transfer. Unlike a plain native
+ * transfer, an ERC-20 transfer's gas cost is NOT a fixed protocol
+ * constant — it depends on the token contract's own logic (some tokens
+ * do more than a bare balance update) — so gasLimit here comes from a
+ * live estimateGas call against the real encoded transfer, not a guess.
+ */
+export async function estimateEvmTokenSendFee({ chainKey, tokenAddress, fromAddress, toAddress, amountRaw }) {
+  const client = getWalletPublicClient(chainKey);
+  const data = encodeFunctionData({ abi: ERC20_TRANSFER_ABI, functionName: "transfer", args: [toAddress, amountRaw] });
+  const [gasLimit, { maxFeePerGas, maxPriorityFeePerGas }] = await Promise.all([
+    client.estimateGas({ account: fromAddress, to: tokenAddress, data }),
+    client.estimateFeesPerGas(),
+  ]);
+  const feeWei = gasLimit * maxFeePerGas;
+  return { gasLimit, maxFeePerGas, maxPriorityFeePerGas, feeNative: Number(feeWei) / 1e18 };
+}
+
+/**
+ * Sends an ERC-20 token from the wallet's derived EVM account. amountToken
+ * is the human-readable amount (e.g. "12.5"); parsed against the token's
+ * own real decimals, never assumed to be 18 like a native asset.
+ */
+export async function sendEvmToken({ chainKey, privateKeyHex, tokenAddress, tokenDecimals, toAddress, amountToken }) {
+  const walletClient = await getWalletClientFor(chainKey, privateKeyHex);
+  const amountRaw = parseUnits(String(amountToken), tokenDecimals);
+  const { gasLimit, maxFeePerGas, maxPriorityFeePerGas } = await estimateEvmTokenSendFee({
+    chainKey, tokenAddress, fromAddress: walletClient.account.address, toAddress, amountRaw,
+  });
+  const hash = await walletClient.writeContract({
+    address: tokenAddress,
+    abi: ERC20_TRANSFER_ABI,
+    functionName: "transfer",
+    args: [toAddress, amountRaw],
+    gas: gasLimit,
     maxFeePerGas,
     maxPriorityFeePerGas,
   });

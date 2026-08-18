@@ -2385,7 +2385,7 @@ export default function MangoBridge() {
       <FloatingMangoDecor P={P} />
 
       {/* Top nav */}
-      <div className="flex items-center justify-between px-6 py-4 relative" style={{ borderBottom: `1px solid ${P.divider}`, zIndex: 1, paddingTop: "calc(16px + env(safe-area-inset-top, 0px))" }}>
+      <div className="flex items-center justify-between px-6 py-4 relative" style={{ borderBottom: `1px solid ${P.divider}`, zIndex: 45, paddingTop: "calc(16px + env(safe-area-inset-top, 0px))" }}>
         <div className="flex items-center gap-2.5">
           <TopMenuDropdown P={P} onOpenDocs={() => setShowDocs(true)} />
           <MangoLogo size={24} color={P.textPrimary} />

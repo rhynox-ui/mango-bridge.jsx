@@ -23,6 +23,10 @@ import { RPC_FALLBACKS, CHAIN_KEY_TO_WAGMI_MAINNET } from "../wagmi.js";
 import { solanaRpcUrls } from "../solanaRpc.js";
 import { WALLET_ONLY_EVM_CHAINS } from "./walletChains.js";
 
+const ERC20_BALANCE_ABI = [
+  { type: "function", name: "balanceOf", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
+];
+
 // Wallet-visible EVM chains = every chain the Bridge already knows about,
 // PLUS the wallet-only additions in walletChains.js (Polygon, Optimism,
 // etc.) that the Bridge doesn't yet support routing/fees for. RPC_FALLBACKS
@@ -115,6 +119,20 @@ export async function fetchWalletNativeBalance(chainKey, address, { forceFresh =
   const client = getWalletPublicClient(chainKey);
   const wei = await client.getBalance({ address });
   const balance = Number(wei) / 1e18;
+  setCached(key, balance);
+  return balance;
+}
+
+/** ERC-20 balance for one token on one chain, as a human-readable number (using the token's own real decimals, not assumed). */
+export async function fetchWalletTokenBalance(chainKey, tokenAddress, decimals, address, { forceFresh = false } = {}) {
+  const key = `evm-token:${chainKey}:${tokenAddress}:${address}`;
+  if (!forceFresh) {
+    const cached = getCached(key);
+    if (cached !== null) return cached;
+  }
+  const client = getWalletPublicClient(chainKey);
+  const raw = await client.readContract({ address: tokenAddress, abi: ERC20_BALANCE_ABI, functionName: "balanceOf", args: [address] });
+  const balance = Number(raw) / 10 ** decimals;
   setCached(key, balance);
   return balance;
 }

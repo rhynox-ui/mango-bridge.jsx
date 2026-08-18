@@ -29,7 +29,7 @@
 
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { parseEther, formatEther, parseTransaction } from "viem";
+import { parseEther, formatEther, parseTransaction, parseUnits, formatUnits, encodeFunctionData, toFunctionSelector, decodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mainnet } from "wagmi/chains";
 import { Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
@@ -40,8 +40,15 @@ function sourceContains(relativePath, substring) {
 }
 
 let n = 0;
-function check(label, fn) {
-  fn();
+// Awaits fn() before counting/printing — a check whose assertion lives
+// inside a Promise (several of these sign transactions, which viem's
+// account.signTransaction returns as one) must not be reported as passed
+// until that promise actually resolves. The original version of this
+// helper called fn() without awaiting it, which let a genuinely failing
+// async assertion print "ok" immediately and then crash the process much
+// later, disconnected from which check actually failed.
+async function check(label, fn) {
+  await fn();
   n++;
   console.log(`ok ${n} - ${label}`);
 }
@@ -50,11 +57,11 @@ function check(label, fn) {
 
 const EVM_NATIVE_TRANSFER_GAS_LIMIT = 21_000n;
 
-check("sendTransaction.js uses the real, protocol-fixed native-transfer gas limit (21,000)", () => {
+await check("sendTransaction.js uses the real, protocol-fixed native-transfer gas limit (21,000)", () => {
   assert.ok(sourceContains("../src/wallet/sendTransaction.js", "EVM_NATIVE_TRANSFER_GAS_LIMIT = 21_000n"));
 });
 
-check("EIP-1559 fee formula matches gasLimit x (baseFee + priorityFee)", () => {
+await check("EIP-1559 fee formula matches gasLimit x (baseFee + priorityFee)", () => {
   const baseFee = 20_000_000_000n; // 20 gwei, a plausible mainnet value — not fetched, just a fixed input for this arithmetic check
   const priorityFee = 1_500_000_000n; // 1.5 gwei
   const maxFeePerGas = baseFee + priorityFee;
@@ -64,7 +71,7 @@ check("EIP-1559 fee formula matches gasLimit x (baseFee + priorityFee)", () => {
   assert.ok(Math.abs(feeNative - 0.0004515) < 1e-9);
 });
 
-check("a real EIP-1559 transaction signs offline (no RPC) and round-trips through parseTransaction", () => {
+await check("a real EIP-1559 transaction signs offline (no RPC) and round-trips through parseTransaction", () => {
   const privateKey = `0x${"11".repeat(32)}`;
   const account = privateKeyToAccount(privateKey);
   const toAddress = "0x000000000000000000000000000000000000dEaD";
@@ -98,20 +105,77 @@ check("a real EIP-1559 transaction signs offline (no RPC) and round-trips throug
     });
 });
 
-check("parseEther/formatEther round-trip exactly for a typical send amount", () => {
+await check("parseEther/formatEther round-trip exactly for a typical send amount", () => {
   assert.equal(formatEther(parseEther("1.23456789")), "1.23456789");
+});
+
+// --- ERC-20 token sends: real selector, decimal-aware parsing, a real offline-signed transfer ---
+
+const ERC20_TRANSFER_ABI = [
+  { type: "function", name: "transfer", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }], stateMutability: "nonpayable" },
+];
+
+await check("sendTransaction.js's ERC-20 ABI matches the real transfer(address,uint256) selector (0xa9059cbb) — independently derived, not just self-consistent", () => {
+  // toFunctionSelector computes keccak256("transfer(address,uint256)") itself,
+  // via a different viem codepath than encodeFunctionData below — comparing
+  // the two, plus the widely-documented literal value, is a real
+  // cross-check, not circular.
+  const derivedSelector = toFunctionSelector("transfer(address,uint256)");
+  assert.equal(derivedSelector, "0xa9059cbb");
+  const encoded = encodeFunctionData({ abi: ERC20_TRANSFER_ABI, functionName: "transfer", args: ["0x000000000000000000000000000000000000dEaD", 1n] });
+  assert.equal(encoded.slice(0, 10), derivedSelector);
+});
+
+await check("parseUnits/formatUnits round-trip exactly at USDC's real 6 decimals (not assumed to be 18 like a native asset)", () => {
+  assert.equal(formatUnits(parseUnits("1234.56", 6), 6), "1234.56");
+});
+
+await check("a real ERC-20 transfer transaction signs offline and its encoded call data decodes back to the exact recipient/amount", () => {
+  const privateKey = `0x${"22".repeat(32)}`;
+  const account = privateKeyToAccount(privateKey);
+  const tokenAddress = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // real USDC address on Ethereum, same one chainData.js uses
+  const recipient = "0x000000000000000000000000000000000000dEaD";
+  const amountRaw = parseUnits("500", 6); // 500 USDC
+  const data = encodeFunctionData({ abi: ERC20_TRANSFER_ABI, functionName: "transfer", args: [recipient, amountRaw] });
+
+  return account
+    .signTransaction({
+      to: tokenAddress,
+      value: 0n,
+      data,
+      chainId: mainnet.id,
+      nonce: 0,
+      maxFeePerGas: 30_000_000_000n,
+      maxPriorityFeePerGas: 1_000_000_000n,
+      gas: 65_000n, // a plausible ERC-20 transfer gas limit for this offline test — the real code estimates this live, never hardcodes it
+      type: "eip1559",
+    })
+    .then((signed) => {
+      const parsed = parseTransaction(signed);
+      assert.equal(parsed.to.toLowerCase(), tokenAddress.toLowerCase());
+      // A zero value RLP-encodes as an empty byte string, which viem
+      // decodes back as `undefined` rather than `0n` — real, benign
+      // behavior (this transaction correctly carries no ETH value), not a
+      // bug; treat the two as equivalent here rather than assuming a
+      // literal 0n survives the round-trip.
+      assert.ok(parsed.value === 0n || typeof parsed.value === "undefined");
+      const decoded = decodeFunctionData({ abi: ERC20_TRANSFER_ABI, data: parsed.data });
+      assert.equal(decoded.functionName, "transfer");
+      assert.equal(decoded.args[0].toLowerCase(), recipient.toLowerCase());
+      assert.equal(decoded.args[1], amountRaw);
+    });
 });
 
 // --- Solana: real base fee constant + an offline-signed transfer transaction ---
 
-check("sendTransaction.js's Solana base fee constant is the real, documented per-signature value (5000 lamports)", () => {
+await check("sendTransaction.js's Solana base fee constant is the real, documented per-signature value (5000 lamports)", () => {
   assert.ok(
     sourceContains("../src/wallet/sendTransaction.js", "SOLANA_BASE_FEE_LAMPORTS = 5000"),
     "expected SOLANA_BASE_FEE_LAMPORTS = 5000 in sendTransaction.js — if this constant changed, update this check deliberately, don't just silence it"
   );
 });
 
-check("a real SOL transfer transaction signs offline and its signature verifies", () => {
+await check("a real SOL transfer transaction signs offline and its signature verifies", () => {
   const fromKeypair = Keypair.generate();
   const toKeypair = Keypair.generate();
   const dummyBlockhash = Keypair.generate().publicKey.toBase58(); // any base58 32-byte value is structurally valid here — signing/serialization don't need a REAL recent blockhash, only broadcast does
@@ -136,9 +200,13 @@ check("a real SOL transfer transaction signs offline and its signature verifies"
   assert.equal(roundTripped.instructions[0].programId.toBase58(), SystemProgram.programId.toBase58());
 });
 
-check("wallet address validation rejects malformed addresses for both chains", () => {
+await check("wallet address validation rejects malformed addresses for both chains", () => {
   assert.throws(() => new PublicKey("not-a-real-solana-address"));
   assert.doesNotThrow(() => new PublicKey(Keypair.generate().publicKey.toBase58()));
+});
+
+await check("sendTransaction.js's ERC-20 fee estimate uses a live estimateGas call, not a hardcoded gas limit like the native-transfer path", () => {
+  assert.ok(sourceContains("../src/wallet/sendTransaction.js", "client.estimateGas("));
 });
 
 console.log(`\n${n}/${n} checks passed`);
