@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mango Wallet — Privacy Policy</title>
+<meta name="description" content="Privacy policy for the Mango Wallet browser extension: what data it collects (none), what it stores locally, and why each permission exists." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0A0A0B; color: #F5F5F6;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 56px 24px 96px; }
+  h1 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 28px; font-weight: 700; margin: 0 0 6px; }
+  .updated { color: #57575D; font-size: 13px; margin-bottom: 40px; }
+  h2 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 17px; font-weight: 600; margin: 36px 0 10px; }
+  p { color: #C9C9CC; font-size: 14.5px; margin: 0 0 14px; }
+  ul { color: #C9C9CC; font-size: 14.5px; padding-left: 20px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+  code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; background: #151517; border: 1px solid #232326; border-radius: 4px; padding: 1px 5px; }
+  .callout { background: #151517; border: 1px solid #232326; border-radius: 12px; padding: 16px 18px; margin: 20px 0; }
+  a { color: #FF9A2E; }
+  .back { display: inline-block; margin-top: 40px; font-size: 13px; color: #9A9AA0; text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Mango Wallet — Privacy Policy</h1>
+  <div class="updated">Last updated: August 18, 2026</div>
+
+  <div class="callout">
+    <p style="margin:0">Short version: Mango Wallet does not collect, transmit, or have access to your recovery phrase, private keys, password, or any personal data. Everything sensitive is generated and stored entirely in your own browser.</p>
+  </div>
+
+  <h2>What Mango Wallet is</h2>
+  <p>Mango Wallet is a self-custodial browser extension for EVM-compatible chains and Solana. "Self-custodial" means your recovery phrase and private keys are generated on your device, encrypted on your device, and never sent to Mango's servers or anyone else's — not in plain form, not encrypted, not in any form.</p>
+
+  <h2>What we collect</h2>
+  <p>Nothing. Mango Wallet has no backend, no analytics SDK, and no telemetry. We cannot see your balances, your addresses, your transaction history, or your identity through this extension.</p>
+
+  <h2>What's stored, and where</h2>
+  <p>Your recovery phrase and private keys are encrypted with a password you choose (AES-256-GCM, with the encryption key derived via PBKDF2-SHA256 at 600,000 iterations) and saved using the <code>chrome.storage</code> API, which keeps data local to your browser profile on your device. Nothing in that storage is ever transmitted anywhere by this extension.</p>
+
+  <h2>Network requests this extension makes</h2>
+  <p>To show balances and send transactions, the extension talks directly from your browser to public blockchain RPC endpoints (the same kind of public infrastructure MetaMask, Phantom, and every other wallet use) — never through a Mango-operated server. Those RPC providers can see the requests your browser sends them (that's how any blockchain RPC call works), but Mango itself is not in that path and does not log or relay it.</p>
+
+  <h2>Why each permission is requested</h2>
+  <ul>
+    <li><code>storage</code> — save your encrypted wallet vault locally, so it's there the next time you open the extension.</li>
+    <li><code>windows</code> — open the approval popup when a website asks to connect or asks you to sign something, the same pattern every browser wallet extension uses.</li>
+    <li><code>host_permissions: &lt;all_urls&gt;</code> — inject the wallet's provider (<code>window.ethereum</code> / <code>window.solana</code>) into pages so dApps can detect and connect to Mango Wallet, exactly like MetaMask or Phantom. This does not let Mango read page content or browsing activity; it only makes the provider object available for a site to call if it chooses to.</li>
+  </ul>
+
+  <h2>Third parties</h2>
+  <p>Mango Wallet does not use any third-party analytics, advertising, or tracking scripts. The only outside parties it talks to are the public blockchain RPC endpoints described above, chosen for being real, independently verifiable public infrastructure.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If this policy changes, the "Last updated" date above will change with it. Material changes will be reflected here before they take effect.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy or the extension can be sent through Mango's usual channels at <a href="https://mangoprotocol.site">mangoprotocol.site</a>.</p>
+
+  <a class="back" href="https://mangoprotocol.site">← Back to Mango</a>
+</main>
+</body>
+</html>
