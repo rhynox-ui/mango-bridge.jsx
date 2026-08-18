@@ -21,6 +21,16 @@
 import { createPublicClient, http, fallback } from "viem";
 import { RPC_FALLBACKS, CHAIN_KEY_TO_WAGMI_MAINNET } from "../wagmi.js";
 import { solanaRpcUrls } from "../solanaRpc.js";
+import { WALLET_ONLY_EVM_CHAINS } from "./walletChains.js";
+
+// Wallet-visible EVM chains = every chain the Bridge already knows about,
+// PLUS the wallet-only additions in walletChains.js (Polygon, Optimism,
+// etc.) that the Bridge doesn't yet support routing/fees for. RPC_FALLBACKS
+// only has entries for the Bridge's original chains — wallet-only chains
+// fall through to their own wagmi/chains-provided default RPC below,
+// which is real and verified, just single-endpoint (no second fallback
+// sourced yet for these).
+const ALL_WALLET_CHAINS = { ...CHAIN_KEY_TO_WAGMI_MAINNET, ...WALLET_ONLY_EVM_CHAINS };
 
 const clientCache = new Map();
 
@@ -44,7 +54,7 @@ function setCached(key, data) {
 
 export function getWalletPublicClient(chainKey) {
   if (clientCache.has(chainKey)) return clientCache.get(chainKey);
-  const chain = CHAIN_KEY_TO_WAGMI_MAINNET[chainKey];
+  const chain = ALL_WALLET_CHAINS[chainKey];
   if (!chain) throw new Error(`No mainnet chain configured for key "${chainKey}"`);
 
   const urls = (RPC_FALLBACKS[chain.id] || []).filter(Boolean);

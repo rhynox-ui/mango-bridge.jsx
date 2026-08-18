@@ -43,6 +43,7 @@ import {
   Send,
   Rocket,
   Globe,
+  Menu,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
@@ -397,6 +398,56 @@ function ChainDropdown({ value, exclude, onChange, P }) {
               </button>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Consolidates what used to be two separate always-visible top-bar icons
+// (X, Telegram) plus the bottom-nav's Docs entry into one menu, so the top
+// bar stays uncluttered as more links get added over time — Terms, Risk
+// Disclosure, or anything else the site grows into can go here without
+// needing more top-bar real estate or more bottom-nav tabs.
+function TopMenuDropdown({ P, onOpenDocs }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <Menu size={14} color={P.textSecondary} />
+      </button>
+      {open && (
+        <div className="absolute left-0 z-30 mt-2 w-48 rounded-xl overflow-hidden shadow-2xl py-1" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <button
+            onClick={() => { onOpenDocs(); setOpen(false); }}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-[13px] font-medium"
+            style={{ color: P.textPrimary }}
+          >
+            <BookOpen size={15} color={P.textMuted} /> Docs
+          </button>
+          <a
+            href="https://x.com/Mango_protocol" target="_blank" rel="noopener noreferrer"
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium"
+            style={{ color: P.textPrimary }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path d="M18.9 2H22l-7.6 8.7L23.3 22h-6.8l-5.3-6.9L5 22H1.9l8.1-9.3L1 2h7l4.8 6.3L18.9 2Zm-1.2 18h1.9L7.4 4H5.4l12.3 16Z" fill={P.textMuted} />
+            </svg>
+            X (Twitter)
+          </a>
+          <a
+            href="https://t.me/mango_protocol" target="_blank" rel="noopener noreferrer"
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[13px] font-medium"
+            style={{ color: P.textPrimary }}
+          >
+            <Send size={15} color={P.textMuted} /> Telegram
+          </a>
         </div>
       )}
     </div>
@@ -2327,18 +2378,11 @@ export default function MangoBridge() {
       {/* Top nav */}
       <div className="flex items-center justify-between px-6 py-4 relative" style={{ borderBottom: `1px solid ${P.divider}`, zIndex: 1, paddingTop: "calc(16px + env(safe-area-inset-top, 0px))" }}>
         <div className="flex items-center gap-2.5">
+          <TopMenuDropdown P={P} onOpenDocs={() => setShowDocs(true)} />
           <MangoLogo size={24} color={P.textPrimary} />
           <span className="font-display text-[11px] font-semibold tracking-tight" style={{ color: P.textPrimary }}>Mango Protocol</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <a href="https://x.com/Mango_protocol" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-              <path d="M18.9 2H22l-7.6 8.7L23.3 22h-6.8l-5.3-6.9L5 22H1.9l8.1-9.3L1 2h7l4.8 6.3L18.9 2Zm-1.2 18h1.9L7.4 4H5.4l12.3 16Z" fill={P.textSecondary} />
-            </svg>
-          </a>
-          <a href="https://t.me/mango_protocol" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-            <Send size={13} color={P.textSecondary} />
-          </a>
           <button onClick={toggleTheme} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
             {theme === "light" ? <Moon size={13} color={P.textSecondary} /> : <Sun size={13} color={P.textSecondary} />}
           </button>
@@ -2603,13 +2647,6 @@ export default function MangoBridge() {
               </button>
             );
           })}
-          <button
-            onClick={() => setShowDocs(true)}
-            className="flex items-center gap-1 px-2.5 py-2.5 rounded-full text-[11.5px] font-medium whitespace-nowrap shrink-0"
-            style={{ color: P.textSecondary }}
-          >
-            <BookOpen size={14} /> Docs
-          </button>
         </div>
       </div>
 

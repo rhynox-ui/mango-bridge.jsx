@@ -23,6 +23,14 @@
 //   and prove it live before anything touches real transfers.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+// Static, named imports only — same convention App.jsx's AssetIcon/ChainIcon
+// already established for this package. A namespace import with dynamic
+// property access (Web3Icons[name]) defeats tree-shaking and can pull the
+// entire icon library into the bundle; these 13 are exactly what's used.
+import {
+  NetworkPolygon, NetworkOptimism, NetworkZksync, NetworkLinea, NetworkScroll, NetworkGnosis,
+  NetworkMonad, NetworkSonic, NetworkMantle, NetworkBlast, NetworkBerachain, NetworkWorld, NetworkSeiNetwork,
+} from "@web3icons/react";
 import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
 import { ChainBadge } from "./App.jsx";
@@ -30,20 +38,49 @@ import { MAINNET_CHAIN_IDS } from "./chainData.js";
 import { generateMnemonic, isValidMnemonic, deriveAccounts, normalizeMnemonic } from "./wallet/keys.js";
 import { encryptMnemonic, decryptMnemonic, saveVault, loadVault, clearVault } from "./wallet/vault.js";
 import { fetchWalletNativeBalance, fetchWalletSolanaBalance } from "./wallet/walletRpc.js";
+import {
+  WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL,
+} from "./wallet/walletChains.js";
 
-const WALLET_CHAIN_ORDER = Object.keys(MAINNET_CHAIN_IDS);
+// Every chain the Bridge already supports, PLUS the wallet-only additions
+// from walletChains.js — see that file for why those stay wallet-scoped
+// rather than also being added to the Bridge's own chain list.
+const WALLET_CHAIN_ORDER = [...Object.keys(MAINNET_CHAIN_IDS), ...WALLET_ONLY_CHAIN_ORDER];
 const CHAIN_LABEL = {
   ethereum: "Ethereum", base: "Base", bnb: "BNB Chain", robinhood: "Robinhood Chain",
   stable: "Stable", solana: "Solana", arbitrum: "Arbitrum One", avalanche: "Avalanche",
   abstract: "Abstract", hyperevm: "HyperEVM", ink: "Ink", plasma: "Plasma",
   unichain: "Unichain", xlayer: "X Layer",
+  ...WALLET_ONLY_CHAIN_LABEL,
 };
 const NATIVE_SYMBOL_BY_CHAIN = {
   ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", stable: "USDT0", solana: "SOL",
   arbitrum: "ETH", avalanche: "AVAX", abstract: "ETH", hyperevm: "HYPE",
   ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB",
+  ...WALLET_ONLY_NATIVE_SYMBOL,
 };
 const MIN_PASSWORD_LENGTH = 8;
+
+// App.jsx's ChainBadge only knows the Bridge's own chain set — for the
+// wallet-only additions, render the verified @web3icons/react icon
+// directly instead. Keyed by chain id rather than by the export-name
+// string from walletChains.js, so the icon components above stay real
+// static imports (see the import comment) rather than a dynamic lookup.
+const WALLET_ONLY_ICON = {
+  polygon: NetworkPolygon, optimism: NetworkOptimism, zksync: NetworkZksync,
+  linea: NetworkLinea, scroll: NetworkScroll, gnosis: NetworkGnosis,
+  monad: NetworkMonad, sonic: NetworkSonic, mantle: NetworkMantle,
+  blast: NetworkBlast, berachain: NetworkBerachain, worldchain: NetworkWorld, sei: NetworkSeiNetwork,
+};
+function WalletChainBadge({ id, size = 18 }) {
+  const Icon = WALLET_ONLY_ICON[id];
+  if (!Icon) return <ChainBadge id={id} size={size} />;
+  return (
+    <span className="flex items-center justify-center rounded-full shrink-0 overflow-hidden" style={{ width: size, height: size }}>
+      <Icon variant="branded" size={size} />
+    </span>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Small shared building blocks
@@ -157,7 +194,7 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh }) {
   return (
     <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: isFirst ? "none" : `1px solid ${P.divider}` }}>
       <div className="flex items-center gap-2.5">
-        <ChainBadge id={chainKey} size={24} />
+        <WalletChainBadge id={chainKey} size={24} />
         <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{CHAIN_LABEL[chainKey]}</span>
       </div>
       <div className="flex items-center gap-1.5 text-[13px] font-mono font-medium" style={{ color: P.textPrimary }}>
@@ -465,19 +502,54 @@ function ResetWalletModal({ onClose, onConfirmReset, P }) {
   );
 }
 
+// One quick-action circle — same visual language OKX/MetaMask/Trust all
+// use for Send/Receive/History. Only Receive is wired to something real
+// right now (copies the relevant address); Send and History are shown,
+// not hidden, but explicitly disabled rather than faked — this phase has
+// no signing/broadcast built yet (see this file's top-of-file STATUS
+// block), and a clickable button that does nothing real would be a worse
+// experience than an honestly-disabled one.
+function QuickAction({ icon: Icon, label, onClick, disabled, P }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="flex flex-col items-center gap-1.5"
+      style={{ opacity: disabled ? 0.4 : 1, cursor: disabled ? "default" : "pointer" }}
+    >
+      <span className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: P.pillBg }}>
+        <Icon size={17} color={P.textPrimary} />
+      </span>
+      <span className="text-[11px] font-medium" style={{ color: P.textSecondary }}>{label}</span>
+    </button>
+  );
+}
+
 function WalletDashboard({ session, onLock, onReset, P }) {
   const [showReveal, setShowReveal] = useState(false);
   const [showReset, setShowReset] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [justCopied, setJustCopied] = useState(false);
+
+  function handleReceive() {
+    navigator.clipboard.writeText(session.evm.address);
+    setJustCopied(true);
+    setTimeout(() => setJustCopied(false), 1500);
+  }
 
   return (
     <div className="flex flex-col gap-3">
       <div className="rounded-2xl p-4" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>Your addresses</span>
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>Mango Wallet</span>
           <button onClick={onLock} className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: P.textMuted }}>
             <Lock size={11} /> Lock
           </button>
+        </div>
+        <div className="flex items-center justify-around mb-4">
+          <QuickAction icon={ArrowLeft} label="Send" disabled P={P} />
+          <QuickAction icon={justCopied ? Check : Download} label={justCopied ? "Copied" : "Receive"} onClick={handleReceive} P={P} />
+          <QuickAction icon={RefreshCw} label="Refresh" onClick={() => setRefreshKey((k) => k + 1)} P={P} />
         </div>
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: P.input }}>
@@ -534,7 +606,7 @@ function WalletDashboard({ session, onLock, onReset, P }) {
 // Top-level state machine
 // ---------------------------------------------------------------------------
 
-export function MangoWalletTab({ P }) {
+function MangoWalletInner({ P }) {
   const [screen, setScreen] = useState(() => (loadVault() ? "locked" : "welcome"));
   const [pendingMnemonic, setPendingMnemonic] = useState(null); // in-memory only, during onboarding
   const [pendingImportPhrase, setPendingImportPhrase] = useState(null);
@@ -632,4 +704,47 @@ export function MangoWalletTab({ P }) {
     return <LockedScreen onUnlock={handleUnlock} P={P} />;
   }
   return <WalletDashboard session={session} onLock={handleLock} onReset={handleReset} P={P} />;
+}
+
+// ---------------------------------------------------------------------------
+// Public gate
+// ---------------------------------------------------------------------------
+
+// Same pattern Launchpad.jsx uses for its Solana tab: the real, working
+// implementation above stays fully built and testable, but the public site
+// shows "Coming soon" until this flips to true — a deliberate choice given
+// this generates and stores real private keys, and hasn't gone through a
+// security review yet. Flip this one line when that's done; nothing else
+// about the implementation needs to change.
+export const WALLET_LIVE = false;
+
+// Internal-only bypass for testing the real flow before launch — mirrors
+// main.jsx's existing `?test=solana` convention. Not documented anywhere
+// public; anyone who doesn't already know this exists sees "Coming soon",
+// same as every other visitor.
+function hasPreviewOverride() {
+  try {
+    return new URLSearchParams(window.location.search).get("wallet") === "preview";
+  } catch {
+    return false;
+  }
+}
+
+function WalletComingSoon({ P }) {
+  return (
+    <div className="rounded-2xl p-8 flex flex-col items-center text-center gap-2" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+      <Wallet size={22} color={P.textMuted} />
+      <div className="text-[16px] font-semibold" style={{ color: P.textPrimary }}>Coming soon</div>
+      <div className="text-[12px]" style={{ color: P.textMuted }}>
+        A self-custodial wallet, built directly into Mango — your keys never leave your browser.
+      </div>
+    </div>
+  );
+}
+
+export function MangoWalletTab({ P }) {
+  if (!WALLET_LIVE && !hasPreviewOverride()) {
+    return <WalletComingSoon P={P} />;
+  }
+  return <MangoWalletInner P={P} />;
 }
