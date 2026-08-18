@@ -52,20 +52,57 @@ function setCached(key, data) {
   balanceCache.set(key, { data, fetchedAt: Date.now() });
 }
 
-export function getWalletPublicClient(chainKey) {
-  if (clientCache.has(chainKey)) return clientCache.get(chainKey);
+export function getWalletChain(chainKey) {
   const chain = ALL_WALLET_CHAINS[chainKey];
   if (!chain) throw new Error(`No mainnet chain configured for key "${chainKey}"`);
+  return chain;
+}
 
+function getWalletTransport(chain) {
   const urls = (RPC_FALLBACKS[chain.id] || []).filter(Boolean);
   const reversedPriority = [...urls].reverse(); // opposite of wagmi.js's transportFor()
-  const transport = reversedPriority.length > 0
+  return reversedPriority.length > 0
     ? fallback(reversedPriority.map((url) => http(url)), { rank: true })
     : http(); // no override configured for this chain — chain's own default RPC
+}
 
-  const client = createPublicClient({ chain, transport });
+export function getWalletPublicClient(chainKey) {
+  if (clientCache.has(chainKey)) return clientCache.get(chainKey);
+  const chain = getWalletChain(chainKey);
+  const client = createPublicClient({ chain, transport: getWalletTransport(chain) });
   clientCache.set(chainKey, client);
   return client;
+}
+
+/**
+ * A viem WalletClient for signing/sending FROM the wallet's own derived
+ * account — same transport (and same "separate from the Bridge" reasoning)
+ * as getWalletPublicClient, just with a local account attached so it can
+ * sign. Not cached (a fresh account import per call is cheap and avoids
+ * holding a signer keyed to a private key past when it's needed).
+ */
+export async function getWalletClientFor(chainKey, privateKeyHex) {
+  const { createWalletClient } = await import("viem");
+  const { privateKeyToAccount } = await import("viem/accounts");
+  const chain = getWalletChain(chainKey);
+  const account = privateKeyToAccount(privateKeyHex);
+  return createWalletClient({ account, chain, transport: getWalletTransport(chain) });
+}
+
+/**
+ * A real Solana Connection using the same reversed-priority endpoint choice
+ * as fetchWalletSolanaBalance — but single-endpoint, deliberately not
+ * wrapped in fallback-and-retry like the read path is. Retrying a SIGNED
+ * broadcast against a second, independently-tracked RPC node risks a real
+ * double-send if the first attempt actually landed but only the
+ * confirmation was lost — same reasoning the Telegram bot's
+ * sendExecution.service.ts already documents for exactly this class of
+ * call.
+ */
+export async function getWalletSolanaConnection() {
+  const { Connection } = await import("@solana/web3.js");
+  const urls = [...solanaRpcUrls()].reverse();
+  return new Connection(urls[0], "confirmed");
 }
 
 /** Native-asset balance for one EVM chain, as a human-readable number. Every native asset this app supports uses 18 decimals. */

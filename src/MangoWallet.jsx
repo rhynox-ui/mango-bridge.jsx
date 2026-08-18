@@ -15,12 +15,16 @@
 //   one Solana address derived from a single seed (same derivation paths
 //   MetaMask/Phantom use — see src/wallet/keys.js for why that matters),
 //   live native-balance display across every chain this app supports,
-//   password-gated reveal of the recovery phrase, wallet reset.
-// - Not yet built: sending/signing transactions from this wallet, a
-//   dApp-facing provider (EIP-1193 injection), browser-extension
-//   packaging. Those are the next phases — see the conversation this was
-//   scoped in. This phase's job is to get key generation/storage right
-//   and prove it live before anything touches real transfers.
+//   password-gated reveal of the recovery phrase, wallet reset, sending
+//   native-asset transfers (see src/wallet/sendTransaction.js) with a
+//   real fee estimate shown before confirming — offline-verified (real
+//   EIP-1559/SLIP transaction construction and signing, checked against
+//   this sandbox's own tools) but NOT yet broadcast-tested against a live
+//   network, since this sandbox's egress proxy blocks RPC traffic
+//   entirely (confirmed via direct curl — same limitation documented in
+//   solana-program/README.md for the Solana side of this project).
+// - Not yet built: token (ERC-20/SPL) sends, a dApp-facing provider
+//   (EIP-1193 injection), browser-extension packaging.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 // Static, named imports only — same convention App.jsx's AssetIcon/ChainIcon
@@ -31,16 +35,29 @@ import {
   NetworkPolygon, NetworkOptimism, NetworkZksync, NetworkLinea, NetworkScroll, NetworkGnosis,
   NetworkMonad, NetworkSonic, NetworkMantle, NetworkBlast, NetworkBerachain, NetworkWorld, NetworkSeiNetwork,
 } from "@web3icons/react";
-import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert } from "lucide-react";
+import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon } from "lucide-react";
+import { isAddress } from "viem";
+import { PublicKey } from "@solana/web3.js";
 import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
 import { ChainBadge } from "./App.jsx";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
 import { generateMnemonic, isValidMnemonic, deriveAccounts, normalizeMnemonic } from "./wallet/keys.js";
 import { encryptMnemonic, decryptMnemonic, saveVault, loadVault, clearVault } from "./wallet/vault.js";
-import { fetchWalletNativeBalance, fetchWalletSolanaBalance } from "./wallet/walletRpc.js";
+import { fetchWalletNativeBalance, fetchWalletSolanaBalance, getWalletChain } from "./wallet/walletRpc.js";
+import { estimateEvmSendFee, sendEvmNative, estimateSolanaSendFee, sendSolanaNative } from "./wallet/sendTransaction.js";
 import {
   WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL,
 } from "./wallet/walletChains.js";
+
+const SOLANA_EXPLORER_TX_URL = "https://solscan.io/tx/";
+
+function isValidChainAddress(chainKey, address) {
+  if (!address || !address.trim()) return false;
+  if (chainKey === "solana") {
+    try { new PublicKey(address.trim()); return true; } catch { return false; }
+  }
+  return isAddress(address.trim());
+}
 
 // Every chain the Bridge already supports, PLUS the wallet-only additions
 // from walletChains.js — see that file for why those stay wallet-scoped
@@ -503,12 +520,9 @@ function ResetWalletModal({ onClose, onConfirmReset, P }) {
 }
 
 // One quick-action circle — same visual language OKX/MetaMask/Trust all
-// use for Send/Receive/History. Only Receive is wired to something real
-// right now (copies the relevant address); Send and History are shown,
-// not hidden, but explicitly disabled rather than faked — this phase has
-// no signing/broadcast built yet (see this file's top-of-file STATUS
-// block), and a clickable button that does nothing real would be a worse
-// experience than an honestly-disabled one.
+// use for Send/Receive/History. Receive and Send are wired to something
+// real; a disabled one stays honestly disabled rather than faked, never
+// clickable-but-does-nothing.
 function QuickAction({ icon: Icon, label, onClick, disabled, P }) {
   return (
     <button
@@ -525,7 +539,176 @@ function QuickAction({ icon: Icon, label, onClick, disabled, P }) {
   );
 }
 
-function WalletDashboard({ session, onLock, onReset, P }) {
+function SendChainPicker({ value, onChange, P }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
+        <span className="flex items-center gap-2">
+          <WalletChainBadge id={value} size={20} />
+          <span className="text-[13.5px] font-medium" style={{ color: P.textPrimary }}>{CHAIN_LABEL[value]}</span>
+        </span>
+        <ChevronDown size={14} color={P.textMuted} />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 z-30 mt-2 rounded-xl overflow-hidden shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, maxHeight: "min(50vh, 320px)", overflowY: "auto" }}>
+          {WALLET_CHAIN_ORDER.map((key) => (
+            <button key={key} onClick={() => { onChange(key); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left">
+              <WalletChainBadge id={key} size={18} />
+              <span className="text-[13px]" style={{ color: P.textPrimary }}>{CHAIN_LABEL[key]}</span>
+              {key === value && <Check size={13} color={LIME} className="ml-auto" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SendScreen({ session, onBack, P }) {
+  const [chainKey, setChainKey] = useState("ethereum");
+  const [toAddress, setToAddress] = useState("");
+  const [amount, setAmount] = useState("");
+  const [phase, setPhase] = useState("form"); // form | confirm | sending | done | error
+  const [feeEstimate, setFeeEstimate] = useState(null);
+  const [feeError, setFeeError] = useState("");
+  const [result, setResult] = useState(null);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const isSolana = chainKey === "solana";
+  const addressValid = isValidChainAddress(chainKey, toAddress);
+  const amountValid = Number(amount) > 0;
+
+  async function handleContinue() {
+    setFeeError("");
+    setFeeEstimate(null);
+    setPhase("confirm");
+    try {
+      const fee = isSolana ? estimateSolanaSendFee() : await estimateEvmSendFee(chainKey);
+      setFeeEstimate(fee);
+    } catch (err) {
+      setFeeError(err?.message || "Couldn't estimate the network fee — check your connection and try again.");
+    }
+  }
+
+  async function handleConfirmSend() {
+    setPhase("sending");
+    setErrorMessage("");
+    try {
+      const sendResult = isSolana
+        ? await sendSolanaNative({ secretKeyBase58: session.solana.privateKey, toAddress: toAddress.trim(), amountSol: Number(amount) })
+        : await sendEvmNative({ chainKey, privateKeyHex: session.evm.privateKey, toAddress: toAddress.trim(), amountEth: amount });
+      setResult(sendResult);
+      setPhase("done");
+    } catch (err) {
+      setErrorMessage(err?.message || "The transaction failed to send.");
+      setPhase("error");
+    }
+  }
+
+  const explorerUrl = (() => {
+    if (!result) return null;
+    if (isSolana) return `${SOLANA_EXPLORER_TX_URL}${result.signature}`;
+    try {
+      const chain = getWalletChain(chainKey);
+      const base = chain.blockExplorers?.default?.url;
+      return base ? `${base}/tx/${result.hash}` : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  if (phase === "done") {
+    return (
+      <ScreenShell title="Sent" onBack={onBack} P={P}>
+        <div className="flex flex-col items-center text-center gap-2 py-4">
+          <span className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
+            <Check size={19} color={LIME_DEEP} />
+          </span>
+          <div className="text-[13.5px]" style={{ color: P.textPrimary }}>{amount} {NATIVE_SYMBOL_BY_CHAIN[chainKey]} sent</div>
+          {explorerUrl && (
+            <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[12px] mt-1" style={{ color: P.textSecondary }}>
+              View on explorer <ExternalLink size={12} />
+            </a>
+          )}
+        </div>
+        <PrimaryButton onClick={onBack} P={P}>Done</PrimaryButton>
+      </ScreenShell>
+    );
+  }
+
+  if (phase === "error") {
+    return (
+      <ScreenShell title="Send failed" onBack={onBack} P={P}>
+        <div className="text-[12.5px] mb-4" style={{ color: "#D92D20" }}>{errorMessage}</div>
+        <PrimaryButton onClick={() => setPhase("confirm")} P={P}>Try again</PrimaryButton>
+      </ScreenShell>
+    );
+  }
+
+  if (phase === "confirm" || phase === "sending") {
+    return (
+      <ScreenShell title="Review send" onBack={() => setPhase("form")} P={P}>
+        <div className="flex flex-col gap-2.5 mb-4">
+          <div className="flex items-center justify-between px-3 py-2.5 rounded-lg" style={{ background: P.input }}>
+            <span className="text-[11.5px]" style={{ color: P.textMuted }}>Amount</span>
+            <span className="text-[13px] font-mono" style={{ color: P.textPrimary }}>{amount} {NATIVE_SYMBOL_BY_CHAIN[chainKey]}</span>
+          </div>
+          <div className="flex items-center justify-between px-3 py-2.5 rounded-lg" style={{ background: P.input }}>
+            <span className="text-[11.5px]" style={{ color: P.textMuted }}>To</span>
+            <span className="text-[12px] font-mono" style={{ color: P.textPrimary }}>{toAddress.slice(0, 8)}…{toAddress.slice(-6)}</span>
+          </div>
+          <div className="flex items-center justify-between px-3 py-2.5 rounded-lg" style={{ background: P.input }}>
+            <span className="text-[11.5px]" style={{ color: P.textMuted }}>Network fee</span>
+            <span className="text-[12px] font-mono" style={{ color: P.textPrimary }}>
+              {feeError ? "—" : feeEstimate ? `${fmt(isSolana ? feeEstimate.feeSol : feeEstimate.feeNative, 6)} ${NATIVE_SYMBOL_BY_CHAIN[chainKey]}` : "Estimating…"}
+            </span>
+          </div>
+        </div>
+        {feeError && <div className="text-[11.5px] mb-3" style={{ color: "#D92D20" }}>{feeError}</div>}
+        <PrimaryButton onClick={handleConfirmSend} disabled={!feeEstimate || phase === "sending"} P={P}>
+          {phase === "sending" ? "Sending…" : "Confirm and send"}
+        </PrimaryButton>
+      </ScreenShell>
+    );
+  }
+
+  return (
+    <ScreenShell title="Send" onBack={onBack} P={P}>
+      <div className="flex flex-col gap-3 mb-4">
+        <SendChainPicker value={chainKey} onChange={setChainKey} P={P} />
+        <input
+          value={toAddress}
+          onChange={(e) => setToAddress(e.target.value)}
+          placeholder={`Recipient's ${CHAIN_LABEL[chainKey]} address`}
+          className="w-full px-3.5 py-3 rounded-xl text-[13px] font-mono"
+          style={{ background: P.input, border: `1px solid ${toAddress && !addressValid ? "#D92D20" : P.panelBorder}`, color: P.textPrimary }}
+        />
+        {toAddress && !addressValid && <div className="text-[11px]" style={{ color: "#D92D20" }}>Invalid {CHAIN_LABEL[chainKey]} address</div>}
+        <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
+          <input
+            type="number" min="0" step="any"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0"
+            className="font-display bg-transparent text-[20px] font-semibold w-full"
+            style={{ color: P.textPrimary }}
+          />
+          <span className="text-[12.5px] font-medium shrink-0" style={{ color: P.textMuted }}>{NATIVE_SYMBOL_BY_CHAIN[chainKey]}</span>
+        </div>
+      </div>
+      <PrimaryButton onClick={handleContinue} disabled={!addressValid || !amountValid} P={P}>Continue</PrimaryButton>
+    </ScreenShell>
+  );
+}
+
+function WalletDashboard({ session, onLock, onReset, onSend, P }) {
   const [showReveal, setShowReveal] = useState(false);
   const [showReset, setShowReset] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -547,7 +730,7 @@ function WalletDashboard({ session, onLock, onReset, P }) {
           </button>
         </div>
         <div className="flex items-center justify-around mb-4">
-          <QuickAction icon={ArrowLeft} label="Send" disabled P={P} />
+          <QuickAction icon={SendIcon} label="Send" onClick={onSend} P={P} />
           <QuickAction icon={justCopied ? Check : Download} label={justCopied ? "Copied" : "Receive"} onClick={handleReceive} P={P} />
           <QuickAction icon={RefreshCw} label="Refresh" onClick={() => setRefreshKey((k) => k + 1)} P={P} />
         </div>
@@ -703,7 +886,10 @@ function MangoWalletInner({ P }) {
   if (screen === "locked") {
     return <LockedScreen onUnlock={handleUnlock} P={P} />;
   }
-  return <WalletDashboard session={session} onLock={handleLock} onReset={handleReset} P={P} />;
+  if (screen === "send") {
+    return <SendScreen session={session} onBack={() => setScreen("dashboard")} P={P} />;
+  }
+  return <WalletDashboard session={session} onLock={handleLock} onReset={handleReset} onSend={() => setScreen("send")} P={P} />;
 }
 
 // ---------------------------------------------------------------------------
