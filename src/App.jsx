@@ -52,6 +52,7 @@ import { getRelayQuote, executeRelayQuote, canRelayHandle, sendRelayProtocolFee,
 import { executeSolanaSourcedTransfer, sendSolanaProtocolFee } from "./relaySdkSolanaExecution.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
 import { LaunchpadTab } from "./Launchpad.jsx";
+import { MangoWalletTab } from "./MangoWallet.jsx";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
 
 // ---------------------------------------------------------------------------
@@ -2402,6 +2403,8 @@ export default function MangoBridge() {
             <PortfolioTab address={address} connected={connected} P={P} />
           ) : tab === "launchpad" ? (
             <LaunchpadTab P={P} theme={theme} deepLinkTokenAddress={deepLinkTokenAddress} launchpadNetwork={launchpadNetwork} />
+          ) : tab === "wallet" ? (
+            <MangoWalletTab P={P} />
           ) : (
             <>
               {/* You send */}
@@ -2583,6 +2586,7 @@ export default function MangoBridge() {
           {[
             { id: "bridge", label: "Bridge", icon: ArrowUpDown },
             { id: "launchpad", label: "Launch", icon: Rocket },
+            { id: "wallet", label: "Wallet", icon: Wallet },
             { id: "history", label: "History", icon: HistoryIcon },
             { id: "portfolio", label: "Portfolio", icon: Briefcase },
           ].map((n) => {

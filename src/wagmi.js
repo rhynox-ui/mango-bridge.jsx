@@ -38,7 +38,11 @@ function alchemyUrl(slug) {
   return ALCHEMY_API_KEY ? `https://${slug}.g.alchemy.com/v2/${ALCHEMY_API_KEY}` : null;
 }
 
-const RPC_FALLBACKS = {
+// Exported so other, independent RPC clients (see src/wallet/walletRpc.js)
+// can reuse these same verified endpoints without duplicating/guessing new
+// ones — while still building a genuinely separate transport/connection
+// pool, not sharing this file's wagmi Config or its React Query cache.
+export const RPC_FALLBACKS = {
   1: ["https://ethereum.reth.rs/rpc", "https://ethereum.publicnode.com"], // Ethereum — no Ethereum Foundation-run public RPC exists; viem's own current default (Paradigm's Reth node) plus PublicNode
   8453: ["https://mainnet.base.org", "https://base.publicnode.com"], // Base — official (Coinbase-run) + PublicNode
   56: ["https://bsc-dataseed.bnbchain.org", "https://bsc-dataseed1.defibit.io"], // BNB Chain — both real, team-run endpoints (the second is one of BNB Chain's own community-validator mirrors), replacing the Thirdweb default entirely
