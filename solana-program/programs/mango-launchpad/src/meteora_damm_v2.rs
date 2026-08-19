@@ -27,23 +27,47 @@ use anchor_lang::prelude::*;
 //    `invoke_signed`, never importing their crate's types at all. This is
 //    exactly what this file's constants are for.
 //
-// 2. The genuinely hard, NOT-yet-solved part: DAMM v2's `PoolFeeParameters`
-//    packs its base-fee schedule into an opaque `BaseFeeParameters { data:
-//    [u8; 27] }` — one of three different fee-scheduler encodings
-//    (market-cap, rate-limiter, time-scheduler), serialized by Meteora's
-//    own `base_fee_serde` module. Hand-deriving that byte layout from
-//    source alone, for an instruction that will move a graduated curve's
-//    ENTIRE real SOL + token reserves in one shot, is not something this
-//    project's own standard allows shipping without a real way to verify
-//    it — there's no local Solana toolchain in this sandbox to test the
-//    encoding against the actual deployed program (see lib.rs's STATUS
-//    block for the same constraint on the rest of this program).
+// 2. RESOLVED (as of the second research pass): DAMM v2's `BaseFeeParameters
+//    { data: [u8; 27] }` looked opaque at first, but Meteora's own
+//    base_fee_serde.rs shows `data` is just Borsh-serialized as one of three
+//    plain structs, selected by a mode byte at offset 26. The simplest one,
+//    `BorshFeeTimeScheduler` (cliff_fee_numerator: u64, number_of_period:
+//    u16, period_frequency: u64, reduction_factor: u64, base_fee_mode: u8 —
+//    verified via their own `static_assertions::const_assert_eq!` to total
+//    exactly 27 bytes), collapses into a genuinely static fee when
+//    number_of_period = 0. encode_static_base_fee_parameters() below builds
+//    this by hand — no crate dependency needed, matching the manual-CPI
+//    approach from point 1. Still real, source-verified — not published/
+//    stable API, so re-check against Meteora's current source if this is
+//    ever touched again after enough time has passed.
 //
-// 3. Also unsolved: converting this program's LINEAR virtual-reserve curve
-//    (virtual_sol_reserves / virtual_token_reserves) into DAMM v2's
-//    `sqrt_price` (Q64.64) and `liquidity` (concentrated-liquidity, not a
-//    simple constant-product value) parameters. This is a real, derivable
-//    math conversion, just not yet derived or checked here.
+// 3. STILL unsolved, but the SHAPE of the problem is now known (third
+//    research pass, into liquidity_handler/concentrated_liquidity.rs).
+//    DAMM v2's real formula, confirmed from source, not guessed:
+//      token_a_amount = liquidity * (1/sqrt_price - 1/sqrt_max_price)
+//      token_b_amount = liquidity * (sqrt_price - sqrt_min_price)
+//    (token_a = the new project token, token_b = SOL/WSOL — matches the
+//    Uniswap v3 amount0/amount1 shape exactly, and confirms
+//    sqrt_price = sqrt(token_b/token_a), same as Meteora's own doc
+//    comment on InitializeCustomizablePoolParameters.sqrt_price said).
+//    For a full-range position (sqrt_min/max_price at the protocol's
+//    own MIN_SQRT_PRICE/MAX_SQRT_PRICE constants), this reduces to the
+//    familiar liquidity ≈ sqrt(token_a_amount * token_b_amount) and
+//    sqrt_price ≈ sqrt(token_b_amount/token_a_amount) — but "reduces to,
+//    approximately" is exactly the problem: getting this bit-exact
+//    requires 256-bit integer arithmetic (Meteora's own implementation
+//    uses the `ruint` crate's U256 for their sqrt_u256 and
+//    mul_div_u256), spanning an enormous dynamic range (MIN_SQRT_PRICE
+//    ≈ 4.3e9 to MAX_SQRT_PRICE ≈ 7.9e28) where a rounding mismatch of
+//    even one unit could make the CPI's deposit fail or leave dust.
+//    Reimplementing that by hand (to avoid the Anchor-version dependency
+//    conflict from point 1) is a real, large, precision-critical
+//    undertaking — a genuinely different kind of task than point 2's
+//    byte-layout replication, and not something to ship without a real
+//    way to test each step against the actual deployed DAMM v2 program
+//    as it's built, which this sandbox still doesn't have (see lib.rs's
+//    STATUS block — devnet access exists only via an external Codespace
+//    session, not here).
 //
 // What IS safe to trust from this file: the program ID and every PDA seed
 // constant below, and the derive_* helper functions built from them — pure
@@ -109,6 +133,39 @@ pub fn derive_position_nft_account(position_nft_mint: &Pubkey) -> (Pubkey, u8) {
     )
 }
 
+// DAMM v2's own fee-numerator convention — verified from
+// programs/cp-amm/src/constants.rs's `fee` module. Deliberately a
+// separate constant from this program's own BPS_DENOMINATOR (10_000,
+// see constants.rs) — these are two different programs' two different
+// fee conventions, not interchangeable.
+pub const DAMM_V2_FEE_DENOMINATOR: u64 = 1_000_000_000;
+// BaseFeeMode::FeeTimeSchedulerLinear — first variant, so Rust's default
+// enum discriminant is 0. Verified against state/fee.rs's enum
+// definition, not assumed.
+pub const BASE_FEE_MODE_TIME_SCHEDULER_LINEAR: u8 = 0;
+
+/// Builds DAMM v2's `BaseFeeParameters.data` (a `[u8; 27]`) for a
+/// genuinely static, non-decaying fee — no time-scheduler decay, no
+/// rate-limiter, no market-cap tie-in. `fee_bps` uses the SAME basis-
+/// point convention as this program's own fee constants (e.g. 100 =
+/// 1%, matching SELL_FEE_BPS_POST_GRADUATION), converted internally to
+/// DAMM v2's own numerator/DAMM_V2_FEE_DENOMINATOR convention.
+///
+/// Byte layout (Borsh field order from BorshFeeTimeScheduler, verified
+/// against Meteora's own source — see the module doc above):
+///   [0..8)   cliff_fee_numerator: u64 LE
+///   [8..10)  number_of_period: u16 LE — 0 here, so no decay ever applies
+///   [10..18) period_frequency: u64 LE — 0, irrelevant when period=0
+///   [18..26) reduction_factor: u64 LE — 0, irrelevant when period=0
+///   [26]     base_fee_mode: u8
+pub fn encode_static_base_fee_parameters(fee_bps: u16) -> [u8; 27] {
+    let cliff_fee_numerator: u64 = (fee_bps as u64) * DAMM_V2_FEE_DENOMINATOR / 10_000;
+    let mut bytes = [0u8; 27];
+    bytes[0..8].copy_from_slice(&cliff_fee_numerator.to_le_bytes());
+    bytes[26] = BASE_FEE_MODE_TIME_SCHEDULER_LINEAR;
+    bytes
+}
+
 // ============================================================================
 // Unit tests — same "actually verifiable in this sandbox" principle as
 // curve.rs's tests. These don't prove the migration instruction is
@@ -143,5 +200,43 @@ mod tests {
         let mint_y = Pubkey::new_unique();
         let mint_z = Pubkey::new_unique();
         assert_ne!(derive_customizable_pool(&mint_x, &mint_y), derive_customizable_pool(&mint_x, &mint_z));
+    }
+
+    #[test]
+    fn static_base_fee_matches_hand_computed_layout() {
+        // 100 bps (1%) — same convention as SELL_FEE_BPS_POST_GRADUATION.
+        let bytes = encode_static_base_fee_parameters(100);
+        assert_eq!(bytes.len(), 27);
+
+        let cliff_fee_numerator = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        assert_eq!(cliff_fee_numerator, 10_000_000); // 1% of 1_000_000_000
+
+        let number_of_period = u16::from_le_bytes(bytes[8..10].try_into().unwrap());
+        assert_eq!(number_of_period, 0, "must be 0 so the decay math never applies — this is a flat fee, not a schedule");
+
+        // period_frequency and reduction_factor: irrelevant when
+        // number_of_period is 0, but pinned at 0 anyway for a clean,
+        // unambiguous encoding rather than leaving them undefined.
+        assert_eq!(&bytes[10..18], &[0u8; 8]);
+        assert_eq!(&bytes[18..26], &[0u8; 8]);
+
+        assert_eq!(bytes[26], BASE_FEE_MODE_TIME_SCHEDULER_LINEAR);
+    }
+
+    #[test]
+    fn static_base_fee_zero_bps_is_a_real_zero_fee() {
+        let bytes = encode_static_base_fee_parameters(0);
+        let cliff_fee_numerator = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        assert_eq!(cliff_fee_numerator, 0);
+    }
+
+    #[test]
+    fn static_base_fee_max_bps_does_not_overflow() {
+        // 10_000 bps = 100% — the ceiling this program's own InvalidFeeBps
+        // check allows elsewhere (see update_global.rs). Confirms the u64
+        // arithmetic here has no overflow risk even at the extreme.
+        let bytes = encode_static_base_fee_parameters(10_000);
+        let cliff_fee_numerator = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        assert_eq!(cliff_fee_numerator, DAMM_V2_FEE_DENOMINATOR);
     }
 }

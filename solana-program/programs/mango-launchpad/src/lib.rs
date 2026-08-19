@@ -23,39 +23,44 @@ pub use instructions::*;
 // ============================================================================
 // STATUS — read this before trusting anything below.
 //
-// This program has been verified with `cargo check` against the native
-// (non-BPF) target — real compiler-level checking of types, borrow rules,
-// and Anchor's macro expansion, which caught and fixed real issues while
-// writing it. curve.rs additionally has real, passing `cargo test` unit
-// tests (pure arithmetic, no Solana runtime needed) — these caught one
-// genuine, non-hypothetical bug: the original buy/sell math rounded
-// output amounts in the TRADER's favor instead of the pool's on every
-// single trade (bounded to ~1 base unit, not practically exploitable at
-// Solana's real transaction cost, but still the wrong direction for an
-// AMM to round in). Fixed by switching to the single-division closed-form
-// formula — see curve.rs's module comment for the concrete numbers. This
-// is the level of confidence unit tests can actually provide: real
-// arithmetic correctness, not proof the full Anchor program (PDA
-// derivation, CPI signer seeds, account validation) behaves correctly end
-// to end. It has NOT been:
-//   - built to an actual deployable BPF/SBF binary (`anchor build` /
-//     `cargo build-sbf`) — the Solana CLI's installer domain
-//     (release.anza.xyz) is blocked by this sandbox's egress policy, the
-//     same class of restriction that blocked direct RPC access to
-//     Robinhood Chain earlier in this project. No local toolchain exists
-//     here to do this.
-//   - run against a local validator or devnet — same reason, no `solana`
-//     CLI available. This means none of the Accounts structs' PDA seeds,
-//     CPI calls, or account constraints have ever actually executed —
-//     only compiled.
-//   - audited.
+// REAL DEVNET VERIFICATION, achieved 2026-08-16: this program was built to
+// an actual BPF/SBF binary (`cargo build-sbf`), deployed to devnet at
+// FCGmRZL2yV2wyMiN21zn2Z1zqgTyA8taR5sYNKChnpK5, and exercised end to end
+// with real transactions — initialize, create_launch (a real fresh test
+// token), buy (0.01 SOL), and sell all executed successfully against the
+// live deployed program (scripts/solana-devnet-smoke-test.mjs). This is
+// the first time this program's actual on-chain logic — PDA derivation,
+// CPI signer seeds, account constraints, the mint/freeze-authority
+// revocation in create.rs — has ever run, as opposed to just compiled.
+// The buy's real output was cross-checked by hand against the curve
+// formula and landed within rounding of the expected value, confirming
+// the fee-adjusted constant-product math is correct on a live cluster,
+// not just in curve.rs's unit tests.
+//
+// This was NOT achievable from the sandbox this program was originally
+// written in — that environment (and, separately, a "trusted network
+// access" cloud environment tried later, including via Alchemy's RPC)
+// both blocked all Solana RPC traffic categorically. The real build,
+// deploy, and smoke test above were run from a GitHub Codespace with
+// genuine network access, walked through interactively.
+//
+// What this DOES prove: the program's core trading loop (init, launch,
+// buy, sell) works correctly against a real Solana cluster. What this
+// does NOT prove: claim_creator_fees/claim_protocol_fees and
+// update_global have not yet been exercised on devnet (only compiled +
+// unit-tested); no security audit has happened; the program ID's deploy
+// keypair currently lives only in one Codespace's `target/deploy/`
+// directory (never committed, correctly — that's the private key) — if
+// that's lost before a real backup, the program's address changes again,
+// same as happened twice already during this verification process (see
+// git history: GoNqEH... then FCGmRZL... are prior, abandoned IDs whose
+// keypairs no longer exist).
 //
 // This is the same honesty standard this project has held EVM contracts
-// to all along: a real compile check is real evidence, it is not proof of
-// correctness, and it is not a substitute for a real build + real tests +
-// a real audit before this touches a single real dollar. Treat this
-// exactly like an unverified draft until someone with the actual Solana
-// toolchain builds and tests it for real.
+// to all along: real devnet execution is real evidence for the paths
+// actually exercised, not a substitute for a full test suite covering
+// every instruction, a real audit, or a deliberate mainnet-readiness
+// decision before this touches a single real dollar.
 //
 // Known, deliberate gaps, not oversights:
 //   - No graduation/migration instruction yet. buy.rs/sell.rs flip

@@ -103,3 +103,8 @@ implying a one-click store install that doesn't exist yet.
 
 `icons/icon{16,32,48,128}.png` are generated from the repo's own
 `logo.png` (512×512) — not separately designed assets.
+
+## Contact
+
+Questions about this extension — Chrome Web Store review, permissions,
+or anything else — go to mango@mangoprotocol.site.

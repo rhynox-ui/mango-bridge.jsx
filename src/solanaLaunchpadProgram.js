@@ -5,20 +5,26 @@
 // TransactionInstruction builders for create_launch / buy / sell / claim.
 //
 // STATUS — read before wiring this into any UI:
-// This targets a program that has NEVER been deployed anywhere (see
-// solana-program/programs/mango-launchpad/src/lib.rs's own STATUS block —
-// verified via `cargo check` + `cargo test` only, never built to BPF, never
-// run on a validator or devnet). Every account layout and instruction
-// argument order below is copied directly from that program's own Rust
-// source (the actual Accounts structs and handler signatures), not
-// guessed — high confidence on "does this match the Rust", zero evidence
-// yet on "does the Rust itself behave correctly on a real cluster".
-// Deliberately NOT imported by any live UI component yet (Launchpad.jsx's
-// Solana tab still shows "Coming soon") — a button that calls a program
-// address with no deployed program behind it would fail 100% of the time,
-// which is worse UX than an honest placeholder. Wire this in once the
-// program is actually deployed to devnet and this module's output has
-// been checked against a real transaction there.
+// This module's own instruction builders (buildInitializeInstruction,
+// buildCreateLaunchInstruction, buildBuyInstruction, buildSellInstruction)
+// have been REAL-VERIFIED end to end against a live devnet deployment
+// (FCGmRZL2yV2wyMiN21zn2Z1zqgTyA8taR5sYNKChnpK5) — see
+// scripts/solana-devnet-smoke-test.mjs and the matching STATUS update in
+// solana-program's lib.rs for the full result. This is no longer "matches
+// the Rust source, unverified against a real cluster" — the exact
+// TransactionInstructions these functions build have actually executed
+// correctly on-chain.
+//
+// Still deliberately NOT imported by any live UI component (Launchpad.jsx's
+// Solana tab still shows "Coming soon") — real devnet verification of the
+// core trading loop is a real milestone, not the same thing as "ready to
+// expose to real users with real money." claim_creator_fees/
+// claim_protocol_fees/update_global haven't been devnet-tested yet, there's
+// been no security audit, and the deployed program's keypair currently
+// lives in exactly one place (a Codespace's target/deploy/ directory,
+// never committed) — losing it means the address changes again. Wiring
+// this into the UI is a real, deliberate next step, not something blocked
+// on verification anymore, but it hasn't happened yet.
 //
 // Anchor instruction discriminators are sha256("global:<ix_name>")[0:8] —
 // Anchor's standard, stable, unchanged convention. Precomputed offline
