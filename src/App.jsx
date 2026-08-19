@@ -43,6 +43,7 @@ import {
   Rocket,
   Globe,
   Menu,
+  Mail,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
@@ -368,6 +369,9 @@ function SocialLinksRow({ P }) {
       </a>
       <a href="https://t.me/mango_protocol" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
         <Send size={13} color={P.textSecondary} />
+      </a>
+      <a href="mailto:mango@mangoprotocol.site" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <Mail size={13} color={P.textSecondary} />
       </a>
     </div>
   );
@@ -1959,6 +1963,13 @@ function DocsModal({ onClose, P }) {
             <Send size={14} /> Join our Telegram
           </a>
         </div>
+        <a
+          href="mailto:mango@mangoprotocol.site"
+          className="flex items-center justify-center gap-2 w-full py-3 mt-2 rounded-xl text-[13px] font-medium"
+          style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+        >
+          <Mail size={14} /> mango@mangoprotocol.site
+        </a>
       </div>
     </div>
   );

@@ -140,3 +140,7 @@ const quote = await mango.getBridgeQuote({
 **Built, deployed, and confirmed working end to end** — every endpoint below was tested directly against the live API at `mangoprotocol.site/api/v1/`, not just built and assumed: launchpad token listing, detail, and trade quotes; launchpad launch (real, correctly-encoded unsigned tx data, verified against the deployed Factory's actual ABI); bridge chain listing; bridge quotes including a real Solana chain ID and real Relay-returned transaction steps.
 
 **No published npm package yet** — `sdk/mango-sdk.js` is a real, working file in this repo; it just isn't distributed as an installable package yet.
+
+## Contact
+
+API questions, bug reports, or integration help: mango@mangoprotocol.site.

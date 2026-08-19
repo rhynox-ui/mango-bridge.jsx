@@ -181,7 +181,11 @@ See `API.md` for the full public REST API reference and `sdk/mango-sdk.js` for t
 - This app is **non-custodial** — it never holds, pools, or has custody of user funds at any point. Every transfer moves directly from the user's wallet through the underlying protocol's own contracts.
 - Different routes carry genuinely different trust models. Canonical bridges (CCTP, OP Stack, Arbitrum) rely on audited contracts with no operator discretion. Wormhole relies on a guardian validator set. Relay relies on a solver network. The app discloses which applies to a given route before confirming a transfer.
 - No formal third-party security audit of this app's own integration code has been performed. Contract addresses have been independently verified against official sources for every route in production, but that is not a substitute for an audit.
-- If you find a security issue, please report it responsibly rather than exploiting it.
+- If you find a security issue, please report it responsibly rather than exploiting it — email mango@mangoprotocol.site.
+
+## Contact
+
+Questions, bug reports, or anything else: mango@mangoprotocol.site.
 
 ## License
 

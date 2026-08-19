@@ -6,8 +6,16 @@
 // signer seeds, account constraints) has ever executed, as opposed to
 // just compiling. Runs the whole real flow against devnet: initialize
 // (once, skipped if Global already exists) -> create_launch (fresh test
-// token) -> buy -> sell, using src/solanaLaunchpadProgram.js's real
-// instruction builders — same code path any real client would use.
+// token) -> buy -> sell -> claim_creator_fees -> claim_protocol_fees ->
+// update_global, using src/solanaLaunchpadProgram.js's real instruction
+// builders — same code path any real client would use.
+//
+// The claim_* and update_global steps matter specifically because they
+// were NOT covered by the first real devnet run (init/create_launch/buy/
+// sell only) — update_global in particular had a real, confirmed bug
+// (missing #[account(mut)] on Global, fixed in commit 1c1a211) that
+// `cargo check` couldn't catch and only real execution against a live
+// account can actually confirm is fixed.
 //
 // This must run from an environment with real devnet RPC access — the
 // sandbox this program was developed in cannot reach any Solana RPC at
@@ -131,7 +139,34 @@ async function main() {
   console.log(`\nFinal token balance: ${finalTokenBalance.value.uiAmountString}`);
   console.log(`Final SOL balance: ${finalSolBalance / 1e9} SOL`);
 
-  console.log("\n=== SMOKE TEST PASSED — initialize, create_launch, buy, and sell all executed successfully on devnet. ===");
+  // --- Step 5: claim_creator_fees — payer was also the creator (create_launch
+  // signed by payer above), so there's real accrued SOL (from the sell's 4%
+  // fee) and tokens (from the buy's 1% fee) to actually claim, not a no-op. ---
+  const claimCreatorIx = program.buildClaimCreatorFeesInstruction({
+    creator: payer.publicKey,
+    mint: mintKeypair.publicKey,
+  });
+  await sendIx(connection, "claim_creator_fees", claimCreatorIx, [payer]);
+
+  // --- Step 6: claim_protocol_fees — permissionless (any payer), sweeps to
+  // the real, configured protocol_fee_wallet from constants.rs's default. ---
+  const claimProtocolIx = program.buildClaimProtocolFeesInstruction({
+    payer: payer.publicKey,
+    mint: mintKeypair.publicKey,
+    protocolFeeWallet: program.DEFAULT_PROTOCOL_FEE_WALLET,
+  });
+  await sendIx(connection, "claim_protocol_fees", claimProtocolIx, [payer]);
+
+  // --- Step 7: update_global — a real, no-op-content call (every field
+  // omitted) specifically to exercise the has_one=authority check and the
+  // #[account(mut)] write path for real, since that exact combination was
+  // the site of a confirmed compiles-clean-but-wrong-at-runtime bug. ---
+  const updateGlobalIx = program.buildUpdateGlobalInstruction({ authority: payer.publicKey });
+  await sendIx(connection, "update_global", updateGlobalIx, [payer]);
+
+  console.log(
+    "\n=== SMOKE TEST PASSED — initialize, create_launch, buy, sell, claim_creator_fees, claim_protocol_fees, and update_global all executed successfully on devnet. ==="
+  );
 }
 
 main().catch((err) => {
