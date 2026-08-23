@@ -2578,8 +2578,8 @@ export default function MangoBridge() {
               </div>
             </>
           )}
-          <SocialLinksRow P={P} />
           <DownloadApkRow P={P} />
+          <SocialLinksRow P={P} />
         </div>
       </div>
 
