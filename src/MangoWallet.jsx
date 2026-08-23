@@ -78,9 +78,10 @@ import {
   NetworkPolygon, NetworkOptimism, NetworkZksync, NetworkLinea, NetworkScroll, NetworkGnosis,
   NetworkMonad, NetworkSonic, NetworkMantle, NetworkBlast, NetworkBerachain, NetworkWorld, NetworkSeiNetwork,
 } from "@web3icons/react";
-import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle } from "lucide-react";
+import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle, QrCode, X as XIcon } from "lucide-react";
 import { isAddress, parseUnits } from "viem";
 import { PublicKey } from "@solana/web3.js";
+import jsQR from "jsqr";
 import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
 import { ChainBadge } from "./chainBadges.jsx";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
@@ -112,6 +113,21 @@ function isValidChainAddress(chainKey, address) {
     try { new PublicKey(address.trim()); return true; } catch { return false; }
   }
   return isAddress(address.trim());
+}
+
+// A scanned QR can be a bare address, an EIP-681 URI ("ethereum:0xAddr" or
+// "ethereum:0xAddr@1?value=..."), or a Solana Pay URI
+// ("solana:Addr?amount=..."). Real wallets (MetaMask, Phantom) accept all
+// three shapes from a scanned code, not just a bare address, so this
+// strips the scheme/chain-id/query portion down to the address itself
+// rather than rejecting anything that isn't already plain text.
+function parseScannedAddress(raw) {
+  const text = (raw || "").trim();
+  const schemeMatch = text.match(/^(ethereum|solana|bitcoin):(.+)$/i);
+  const afterScheme = schemeMatch ? schemeMatch[2] : text;
+  const scheme = schemeMatch ? schemeMatch[1].toLowerCase() : null;
+  const address = afterScheme.split(/[?@]/)[0].trim();
+  return { address, isEvmScheme: scheme === "ethereum", isSolanaScheme: scheme === "solana" };
 }
 
 // Every chain the Bridge already supports, PLUS the wallet-only additions
@@ -1227,6 +1243,108 @@ function SendAssetPicker({ chainKey, value, onChange, P }) {
   );
 }
 
+// Real camera-based QR scanning via getUserMedia + jsQR (a pure-JS
+// decoder, no native/wasm dependency — every browser this needs to run in
+// doesn't ship the native BarcodeDetector API). Decodes frames drawn to
+// an offscreen canvas at animation-frame rate until one comes back with
+// data, then hands the raw decoded text to the caller to parse.
+//
+// This can only ever be reached from inside the extension's own popup —
+// see this file's module doc: Send only renders there, never on the
+// site. That's a real, documented rough edge worth being honest about:
+// Chrome's camera permission prompt inside an extension action popup has
+// historically been less reliable than in a normal tab (some versions
+// close the popup before the user can grant it). This fails with a clear
+// message rather than pretending the camera always works — the existing
+// manual-paste address field is still right there as a fallback.
+function QrScanModal({ onDetected, onClose, P }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const rafRef = useRef(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    function scanLoop() {
+      const video = videoRef.current;
+      if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) {
+        rafRef.current = requestAnimationFrame(scanLoop);
+        return;
+      }
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const result = jsQR(imageData.data, imageData.width, imageData.height);
+      if (result?.data) {
+        onDetected(result.data);
+        return;
+      }
+      rafRef.current = requestAnimationFrame(scanLoop);
+    }
+
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+        streamRef.current = stream;
+        const video = videoRef.current;
+        video.srcObject = stream;
+        await video.play();
+        scanLoop();
+      } catch (err) {
+        if (cancelled) return;
+        setError(
+          err?.name === "NotAllowedError"
+            ? "Camera access was denied — allow it for this extension in your browser settings, or paste the address instead."
+            : "Couldn't access the camera on this device — paste the address instead."
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.85)" }}>
+      <div className="w-full max-w-sm rounded-2xl overflow-hidden" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
+          <span className="font-display text-[14px] font-semibold" style={{ color: P.textPrimary }}>Scan wallet address</span>
+          <button onClick={onClose} style={{ color: P.textMuted }}><XIcon size={16} /></button>
+        </div>
+        {error ? (
+          <div className="p-6 flex flex-col items-center text-center gap-2">
+            <AlertTriangle size={20} color="#D92D20" />
+            <div className="text-[12.5px]" style={{ color: P.textMuted }}>{error}</div>
+          </div>
+        ) : (
+          <div className="relative" style={{ aspectRatio: "1 / 1", background: "#000" }}>
+            <video ref={videoRef} muted playsInline className="w-full h-full object-cover" />
+            <div className="absolute inset-6 rounded-xl pointer-events-none" style={{ border: "2px solid rgba(255,255,255,0.6)" }} />
+          </div>
+        )}
+        <div className="p-3">
+          <button
+            onClick={onClose}
+            className="w-full py-2.5 rounded-xl text-[12.5px] font-medium"
+            style={{ background: P.input, color: P.textSecondary }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SendScreen({ session, onBack, P }) {
   // An imported single-chain account only offers that one chain — an HD
   // account (both evm + solana) offers everything, same as before.
@@ -1240,6 +1358,7 @@ function SendScreen({ session, onBack, P }) {
   const [feeError, setFeeError] = useState("");
   const [result, setResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [showScanner, setShowScanner] = useState(false);
 
   const isSolana = chainKey === "solana";
   const selectedToken = assetSymbol === "native"
@@ -1252,6 +1371,22 @@ function SendScreen({ session, onBack, P }) {
   function handleChainChange(nextChainKey) {
     setChainKey(nextChainKey);
     setAssetSymbol("native"); // a token picked for the previous chain almost certainly doesn't exist on the new one
+  }
+
+  // A scanned code's own scheme (ethereum:/solana:) is a stronger signal
+  // than whatever chain happens to be selected right now — if it disagrees
+  // with the current EVM-vs-Solana family, switch to match it rather than
+  // filling in an address the picker will just flag as invalid.
+  function handleScanned(rawText) {
+    const { address, isEvmScheme, isSolanaScheme } = parseScannedAddress(rawText);
+    setShowScanner(false);
+    if (isSolanaScheme && chainKey !== "solana" && availableChains.includes("solana")) {
+      handleChainChange("solana");
+    } else if (isEvmScheme && chainKey === "solana") {
+      const firstEvmChain = availableChains.find((k) => k !== "solana");
+      if (firstEvmChain) handleChainChange(firstEvmChain);
+    }
+    setToAddress(address);
   }
 
   async function handleContinue() {
@@ -1370,14 +1505,26 @@ function SendScreen({ session, onBack, P }) {
       <div className="flex flex-col gap-3 mb-4">
         <SendChainPicker value={chainKey} onChange={handleChainChange} chains={availableChains} P={P} />
         <SendAssetPicker chainKey={chainKey} value={assetSymbol} onChange={setAssetSymbol} P={P} />
-        <input
-          value={toAddress}
-          onChange={(e) => setToAddress(e.target.value)}
-          placeholder={`Recipient's ${CHAIN_LABEL[chainKey]} address`}
-          className="w-full px-3.5 py-3 rounded-xl text-[13px] font-mono"
-          style={{ background: P.input, border: `1px solid ${toAddress && !addressValid ? "#D92D20" : P.panelBorder}`, color: P.textPrimary }}
-        />
+        <div className="flex items-center gap-2 w-full px-3.5 py-1 rounded-xl" style={{ background: P.input, border: `1px solid ${toAddress && !addressValid ? "#D92D20" : P.panelBorder}` }}>
+          <input
+            value={toAddress}
+            onChange={(e) => setToAddress(e.target.value)}
+            placeholder={`Recipient's ${CHAIN_LABEL[chainKey]} address`}
+            className="flex-1 min-w-0 py-2 bg-transparent text-[13px] font-mono"
+            style={{ color: P.textPrimary }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowScanner(true)}
+            aria-label="Scan a QR code"
+            className="shrink-0 flex items-center justify-center w-7 h-7 rounded-lg"
+            style={{ background: P.pillBg, color: P.textSecondary }}
+          >
+            <QrCode size={15} />
+          </button>
+        </div>
         {toAddress && !addressValid && <div className="text-[11px]" style={{ color: "#D92D20" }}>Invalid {CHAIN_LABEL[chainKey]} address</div>}
+        {showScanner && <QrScanModal onDetected={handleScanned} onClose={() => setShowScanner(false)} P={P} />}
         <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
           <input
             type="number" min="0" step="any"
