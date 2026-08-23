@@ -1,7 +1,7 @@
 // api/referralStore.js
 //
 // Real, persistent referral points ledger — the referral program's
-// signup bonus (1000 points) and per-referral reward (200 points) need
+// signup bonus (1000 points) and per-referral reward (100 points) need
 // a server-side, tamper-resistant store keyed by wallet address: an
 // on-device-only points counter would be trivially editable by the
 // user themselves, so it wouldn't be a real reward system. Points are
@@ -25,10 +25,10 @@
 import { Redis } from "@upstash/redis";
 
 const REFERRAL_SIGNUP_BONUS = 1000;
-const REFERRAL_REWARD = 200;
+const REFERRAL_REWARD = 100;
 const MAX_REFERRALS_PER_DAY = 30;
 const DAILY_KEY_TTL_SECONDS = 60 * 60 * 25; // slightly over 24h so a slow clock never lets a key expire early
-const DAILY_CHECKIN_POINTS = 50;
+const DAILY_CHECKIN_POINTS = 150;
 const DAILY_CHECKIN_COOLDOWN_SECONDS = 60 * 60 * 24;
 
 let redis = null;
