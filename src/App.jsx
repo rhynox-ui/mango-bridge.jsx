@@ -44,6 +44,7 @@ import {
   Globe,
   Menu,
   Mail,
+  Download,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
@@ -374,6 +375,33 @@ function SocialLinksRow({ P }) {
         <Mail size={13} color={P.textSecondary} />
       </a>
     </div>
+  );
+}
+
+// Direct Android APK download for people who'd rather install the app
+// than the browser extension. This repo is the website, not mango-mobile —
+// no APK is built or hosted here, so this links out to mango-mobile's
+// published GitHub Release. Deliberately NOT a link to a specific Actions
+// run's artifacts: those sit behind a GitHub sign-in wall even on a public
+// repo (unlike a Release asset) and expire on the workflow's retention
+// window (commonly 90 days), so a run-artifact link would eventually
+// 404 and never worked for a signed-out visitor to begin with. A Release
+// asset is the one GitHub-hosted download shape that's actually public
+// and durable — this only resolves to a real file once mango-mobile is a
+// public repo with at least one Release published (its android-release.yml
+// workflow is what publishes one).
+function DownloadApkRow({ P }) {
+  return (
+    <a
+      href="https://github.com/rhynox-ui/mango-mobile/releases/latest"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-2 mt-3 px-4 py-2.5 rounded-full text-[12.5px] font-semibold w-fit"
+      style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+    >
+      <Download size={14} color={P.textSecondary} />
+      Download Mango APK
+    </a>
   );
 }
 
@@ -2557,6 +2585,7 @@ export default function MangoBridge() {
             </>
           )}
           <SocialLinksRow P={P} />
+          <DownloadApkRow P={P} />
         </div>
       </div>
 
