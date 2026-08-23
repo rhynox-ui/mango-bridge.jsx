@@ -44,6 +44,7 @@ import {
   Globe,
   Menu,
   Mail,
+  Download,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
@@ -374,6 +375,27 @@ function SocialLinksRow({ P }) {
         <Mail size={13} color={P.textSecondary} />
       </a>
     </div>
+  );
+}
+
+// Direct Android APK download — the actual signed release APK is checked
+// into public/mango-app.apk (same pattern as public/mango-wallet-extension.zip
+// just above it), so Vite/Vercel serve it as a real static file at this
+// site's own origin. A plain same-origin link, not a link out to GitHub:
+// no sign-in wall, no expiring artifact retention window, works for any
+// visitor. The `download` attribute names the saved file explicitly so a
+// browser doesn't just save it as "mango-app".
+function DownloadApkRow({ P }) {
+  return (
+    <a
+      href="/mango-app.apk"
+      download="mango-app.apk"
+      className="flex items-center gap-2 mt-3 px-4 py-2.5 rounded-full text-[12.5px] font-semibold w-fit"
+      style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+    >
+      <Download size={14} color={P.textSecondary} />
+      Download Mango APK
+    </a>
   );
 }
 
@@ -2557,6 +2579,7 @@ export default function MangoBridge() {
             </>
           )}
           <SocialLinksRow P={P} />
+          <DownloadApkRow P={P} />
         </div>
       </div>
 
