@@ -1,0 +1,143 @@
+// api/referralStore.js
+//
+// Real, persistent referral points ledger — the referral program's
+// signup bonus (1000 points) and per-referral reward (100 points) need
+// a server-side, tamper-resistant store keyed by wallet address: an
+// on-device-only points counter would be trivially editable by the
+// user themselves, so it wouldn't be a real reward system. Points are
+// keyed by wallet address rather than any account/login, so re-
+// importing the same seed phrase on any device reunites the wallet
+// with its existing points automatically — no separate sync needed.
+//
+// Uses Upstash Redis (NOT Vercel's own now-defunct KV/Postgres
+// products, deprecated Dec 2024) via the standard @upstash/redis
+// client, which reads UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN
+// from the environment automatically once the Upstash integration is
+// connected in the Vercel dashboard's Storage tab.
+//
+// Deliberately a different backing store than rateLimit.js's Vercel
+// Blob counters: Blob's read-check-write is explicitly documented
+// there as non-atomic (an acceptable, named tradeoff for a soft
+// rate-limit counter). A real points balance needs true atomic
+// increments — Redis's HINCRBY/HSETNX are exactly that, and are what
+// every guarantee below actually relies on.
+
+import { Redis } from "@upstash/redis";
+
+const REFERRAL_SIGNUP_BONUS = 1000;
+const REFERRAL_REWARD = 100;
+const MAX_REFERRALS_PER_DAY = 30;
+const DAILY_KEY_TTL_SECONDS = 60 * 60 * 25; // slightly over 24h so a slow clock never lets a key expire early
+const DAILY_CHECKIN_POINTS = 150;
+const DAILY_CHECKIN_COOLDOWN_SECONDS = 60 * 60 * 24;
+
+let redis = null;
+function getRedis() {
+  if (!redis) {
+    redis = Redis.fromEnv();
+  }
+  return redis;
+}
+
+const EVM_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+export function isValidAddress(address) {
+  return typeof address === "string" && EVM_ADDRESS_RE.test(address);
+}
+
+function referralKey(address) {
+  return `referral:${address.toLowerCase()}`;
+}
+
+export async function getReferralStats(address) {
+  const client = getRedis();
+  const [record, dailyLockTtl] = await Promise.all([
+    client.hgetall(referralKey(address)),
+    client.ttl(`daily-claim-lock:${address.toLowerCase()}`),
+  ]);
+  return {
+    address: address.toLowerCase(),
+    points: Number(record?.points || 0),
+    referralCount: Number(record?.referralCount || 0),
+    referredBy: record?.referredBy || null,
+    // So the dashboard can show accurate "already claimed today" state
+    // on load, without needing the user to tap Claim first just to
+    // discover it's on cooldown.
+    dailyCooldownSeconds: dailyLockTtl > 0 ? dailyLockTtl : 0,
+  };
+}
+
+/**
+ * Credits the signup bonus to `address` (only ever once, atomically
+ * gated — a repeat call is a real 409, not a silent no-op) and the
+ * referral reward to `referrer`, unless `referrer` has already hit
+ * today's referral cap, in which case the new wallet still gets its
+ * own signup bonus but the referrer's reward is skipped for this one.
+ *
+ * Returns { alreadyClaimed: boolean, referrerCapped: boolean }.
+ */
+export async function claimReferral({ address, referrer }) {
+  const client = getRedis();
+  const key = referralKey(address);
+
+  // Atomic one-time gate: HSETNX only succeeds (returns 1) the very
+  // first time this field is ever set for this address, even under
+  // concurrent duplicate requests — this IS the "never claim twice"
+  // guarantee, not just an application-level check.
+  const firstClaim = await client.hsetnx(key, "claimed", "1");
+  if (!firstClaim) {
+    return { alreadyClaimed: true, referrerCapped: false };
+  }
+
+  await client.hset(key, {
+    referredBy: referrer.toLowerCase(),
+    createdAt: Date.now(),
+  });
+  await client.hincrby(key, "points", REFERRAL_SIGNUP_BONUS);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const dailyKey = `referral-daily:${referrer.toLowerCase()}:${today}`;
+  const dailyCount = await client.incr(dailyKey);
+  if (dailyCount === 1) {
+    await client.expire(dailyKey, DAILY_KEY_TTL_SECONDS);
+  }
+
+  const referrerCapped = dailyCount > MAX_REFERRALS_PER_DAY;
+  if (!referrerCapped) {
+    const referrerKey = referralKey(referrer);
+    await client.hincrby(referrerKey, "points", REFERRAL_REWARD);
+    await client.hincrby(referrerKey, "referralCount", 1);
+  }
+
+  return { alreadyClaimed: false, referrerCapped };
+}
+
+/**
+ * Daily check-in bonus. The anti-farm guarantee is entirely the SET-NX
+ * lock below, not application logic: SET key value NX EX <ttl> is a
+ * single atomic Redis command that only succeeds if the key doesn't
+ * already exist, so two concurrent duplicate requests can't both win
+ * it — one gets the points, the other gets "already claimed", even if
+ * they arrive in the same millisecond. The lock self-expires (no
+ * cleanup job needed), and points are only ever touched via HINCRBY
+ * (additive), never HSET/overwrite — a user's balance can go up from
+ * this, never down, and never gets clobbered.
+ */
+export async function claimDailyPoints(address) {
+  const client = getRedis();
+  const lockKey = `daily-claim-lock:${address.toLowerCase()}`;
+
+  const acquired = await client.set(lockKey, Date.now(), {
+    nx: true,
+    ex: DAILY_CHECKIN_COOLDOWN_SECONDS,
+  });
+  if (!acquired) {
+    const ttl = await client.ttl(lockKey);
+    return { claimed: false, secondsUntilNextClaim: ttl > 0 ? ttl : DAILY_CHECKIN_COOLDOWN_SECONDS };
+  }
+
+  await client.hincrby(referralKey(address), "points", DAILY_CHECKIN_POINTS);
+  return { claimed: true, pointsAwarded: DAILY_CHECKIN_POINTS };
+}
+
+export { REFERRAL_SIGNUP_BONUS, REFERRAL_REWARD, MAX_REFERRALS_PER_DAY, DAILY_CHECKIN_POINTS, DAILY_CHECKIN_COOLDOWN_SECONDS };
