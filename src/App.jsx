@@ -2017,7 +2017,17 @@ export default function MangoBridge() {
   // Read once at mount — a URL typed/opened fresh, not synced live as you
   // navigate elsewhere in the app.
   const [deepLinkTokenAddress] = useState(() => new URLSearchParams(window.location.search).get("token"));
-  const [tab, setTab] = useState(() => (deepLinkTokenAddress ? "launchpad" : "bridge"));
+  // Same idea as the ?token= deep link above, generalized to any bottom-nav
+  // tab: ?tab=wallet on load opens straight to the Wallet tab (e.g. for a
+  // "get the app" link that shouldn't dump someone on the Bridge homepage
+  // first). ?token= still wins when both are present — a shared token page
+  // link is a stronger, more specific intent than a generic tab link.
+  const [tab, setTab] = useState(() => {
+    if (deepLinkTokenAddress) return "launchpad";
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    const validTabs = ["bridge", "launchpad", "wallet", "history", "portfolio"];
+    return validTabs.includes(requestedTab) ? requestedTab : "bridge";
+  });
   // Which network's launchpad is showing — Robinhood Chain (real, working)
   // or Solana (coming soon). Selected via the same shared
   // NetworkSelectorModal the rest of the app already uses, not a second
