@@ -1999,9 +1999,13 @@ export default function MangoBridge() {
   // "get the app" link that shouldn't dump someone on the Bridge homepage
   // first). ?token= still wins when both are present — a shared token page
   // link is a stronger, more specific intent than a generic tab link.
+  // "app" is accepted as a friendlier public-facing alias for "wallet" —
+  // the internal tab id stays "wallet" everywhere else in this file, this
+  // is just what an external link is allowed to spell it as.
   const [tab, setTab] = useState(() => {
     if (deepLinkTokenAddress) return "launchpad";
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (requestedTab === "app") return "wallet";
     const validTabs = ["bridge", "launchpad", "wallet", "history", "portfolio"];
     return validTabs.includes(requestedTab) ? requestedTab : "bridge";
   });
