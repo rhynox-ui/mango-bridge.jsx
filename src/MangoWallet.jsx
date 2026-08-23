@@ -97,6 +97,7 @@ import {
   estimateEvmTokenSendFee, sendEvmToken, estimateSplSendFee, sendSplToken,
 } from "./wallet/sendTransaction.js";
 import { tokensForWalletChain } from "./wallet/walletTokens.js";
+import { MangoLogo } from "./MangoLogo.jsx";
 import { SPL_TOKENS } from "./wallet/walletSplTokens.js";
 import { fetchWalletPrices } from "./wallet/walletPrices.js";
 import {
@@ -2249,7 +2250,7 @@ function InstallExtensionGate({ P }) {
   return (
     <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
       <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
-        <Puzzle size={19} color={LIME_DEEP} />
+        <MangoLogo size={20} color={LIME_DEEP} />
       </div>
       <div>
         <div className="font-display text-[16px] font-semibold mb-1" style={{ color: P.textPrimary }}>Mango Wallet</div>
