@@ -38,7 +38,20 @@ import {
   signSolanaTransaction, signAndSendSolanaTransaction, signSolanaMessage,
 } from "./signing.js";
 import { viemChainForId, DEFAULT_EVM_CHAIN_ID } from "./chains.js";
+import { MAINNET_CHAIN_IDS } from "../../src/chainData.js";
+import { WALLET_ONLY_EVM_CHAINS } from "../../src/wallet/walletChains.js";
+import { addCustomToken } from "../../src/wallet/customTokens.js";
 import { isHex, hexToBytes, hexToString } from "viem";
+
+// Numeric EVM chainId -> this app's own chainKey string (e.g. 8453 ->
+// "base"), built from the same two chain-key registries MangoWalletTab's
+// own Balances panel uses (chainData.js for the Bridge-shared chains,
+// walletChains.js for the wallet-only additions) — so wallet_watchAsset
+// below can file a token under the exact same key the dashboard already
+// reads with allTokensForChain(), not a second, invented mapping.
+const CHAIN_ID_TO_KEY = {};
+for (const [key, id] of Object.entries(MAINNET_CHAIN_IDS)) CHAIN_ID_TO_KEY[id] = key;
+for (const [key, chain] of Object.entries(WALLET_ONLY_EVM_CHAINS)) CHAIN_ID_TO_KEY[chain.id] = key;
 
 const root = document.getElementById("root");
 
@@ -337,6 +350,77 @@ async function renderApproval(requestId, request, account) {
       const existing = (connectedSites ?? {})[origin]?.evm ?? { address: account.evm.address };
       resolveRequest(requestId, { result: null, connection: { ...existing, chainId: chainIdHex } });
     };
+  } else if (chain === "evm" && method === "wallet_addEthereumChain") {
+    // EIP-3085. This wallet already carries a real, verified chain
+    // definition (id, native currency, a trustworthy default RPC) for
+    // every chain viem/chains knows — hundreds of them — via the same
+    // viemChainForId() lookup wallet_switchEthereumChain already uses.
+    // So "add" a chain we already recognize by just switching to it,
+    // the same way MetaMask treats addEthereumChain for an already-known
+    // chain. Deliberately does NOT fall back to the dApp's own supplied
+    // rpcUrls/chainName for a chain we don't recognize — trusting an
+    // arbitrary RPC endpoint a website hands us is a real phishing/
+    // tracking vector, not just an edge case, so an unknown chain is a
+    // clean rejection instead of a guess.
+    const chainIdHex = params?.[0]?.chainId ?? null;
+    const chainId = chainIdHex != null ? parseInt(chainIdHex, 16) : null;
+    const knownChain = chainId != null ? viemChainForId(chainId) : null;
+    title = "Add network";
+    if (!knownChain) {
+      body = h("p", {}, `wants to add a network Mango Wallet doesn't have verified chain data for. Not adding it — only chains with a real, trusted default RPC can be added.`);
+      // Not code 4902 — that specifically means "call wallet_addEthereumChain
+      // instead," which would be nonsensical to send back FROM
+      // addEthereumChain itself (a well-behaved dApp could loop). -32602
+      // ("Invalid params") accurately reflects that we're rejecting the
+      // chain data itself as unverified, not asking for a different call.
+      onApprove = () => resolveRequest(requestId, { error: { message: "Unrecognized chain — Mango Wallet only adds chains it has verified data for.", code: -32602 } });
+    } else {
+      body = h("p", {}, `wants to add and switch to ${knownChain.name}.`);
+      onApprove = async () => {
+        const { connectedSites } = await chrome.storage.local.get("connectedSites");
+        const existing = (connectedSites ?? {})[origin]?.evm ?? { address: account.evm.address };
+        resolveRequest(requestId, { result: null, connection: { ...existing, chainId: chainIdHex } });
+      };
+    }
+  } else if (chain === "evm" && method === "wallet_watchAsset") {
+    // EIP-747 — "Add token to wallet," the button most dApps show right
+    // after a swap. Files the token under this SAME wallet's own
+    // customTokens.js store the Balances panel's "Add token" flow already
+    // uses, so it shows up in the real dashboard immediately, not a
+    // separate, disconnected list.
+    const opts = params?.options ?? params?.[0]?.options ?? {};
+    const tokenAddress = opts.address;
+    const symbol = opts.symbol ?? "TOKEN";
+    const decimals = typeof opts.decimals === "number" ? opts.decimals : 18;
+    title = "Add token";
+    body = h("div", {},
+      h("p", {}, `wants to add ${symbol} to your wallet.`),
+      h("div", { class: "row" }, h("span", { class: "muted" }, "Contract"), h("span", { class: "mono" }, truncate(tokenAddress ?? ""))),
+    );
+    onApprove = async () => {
+      try {
+        const { connectedSites } = await chrome.storage.local.get("connectedSites");
+        const chainIdHex = (connectedSites ?? {})[origin]?.evm?.chainId ?? `0x${DEFAULT_EVM_CHAIN_ID.toString(16)}`;
+        const chainKey = CHAIN_ID_TO_KEY[parseInt(chainIdHex, 16)];
+        if (!chainKey) throw new Error("Mango Wallet doesn't yet show balances for this network.");
+        if (!tokenAddress) throw new Error("No token address given.");
+        addCustomToken(chainKey, { symbol, decimals, address: tokenAddress });
+        resolveRequest(requestId, { result: true });
+      } catch (err) {
+        resolveRequest(requestId, { error: { message: err.message } });
+      }
+    };
+  } else if (chain === "evm" && method === "wallet_requestPermissions") {
+    // EIP-2255. This wallet has exactly one real permission to grant
+    // (eth_accounts) — functionally the same thing eth_requestAccounts
+    // already asks for, so this reuses that same Connect approval rather
+    // than a second, parallel connect flow.
+    title = "Connect";
+    body = h("p", {}, `wants permission to see your Mango Wallet address.`);
+    onApprove = () => resolveRequest(requestId, {
+      result: [{ parentCapability: "eth_accounts", invoker: origin, caveats: [{ type: "restrictReturnedAccounts", value: [account.evm.address] }], date: Date.now() }],
+      connection: { address: account.evm.address, chainId: `0x${DEFAULT_EVM_CHAIN_ID.toString(16)}` },
+    });
   } else if (chain === "evm" && method === "personal_sign") {
     title = "Sign message";
     body = h("div", {}, h("p", {}, "Message:"), h("div", { class: "panel mono", style: "word-break:break-word;" }, decodePersonalSignMessage(params[0])));

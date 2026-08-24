@@ -65,8 +65,20 @@ const EVENT_TYPE = "MANGO_WALLET_EVENT";
 const POPUP_READY_TYPE = "MANGO_WALLET_POPUP_READY";
 const RESOLVE_TYPE = "MANGO_WALLET_RESOLVE";
 
-const NO_APPROVAL_NEEDED = new Set(["eth_chainId", "eth_accounts", "eth_getAccounts"]);
-const APPROVAL_METHODS_EVM = new Set(["eth_requestAccounts", "eth_sendTransaction", "personal_sign", "eth_signTypedData_v4", "wallet_switchEthereumChain"]);
+const NO_APPROVAL_NEEDED = new Set(["eth_chainId", "eth_accounts", "eth_getAccounts", "wallet_getPermissions"]);
+const APPROVAL_METHODS_EVM = new Set([
+  "eth_requestAccounts", "eth_sendTransaction", "personal_sign", "eth_signTypedData_v4", "wallet_switchEthereumChain",
+  // wallet_addEthereumChain and wallet_watchAsset previously fell through
+  // to the generic "Method not supported" (-32601) rejection below — a
+  // clean, spec-correct error, but real missing functionality: plenty of
+  // real dApps call addEthereumChain directly (not just as a fallback
+  // after a failed switch) when onboarding to a specific network, and
+  // watchAsset is the standard "Add token to wallet" button after a swap.
+  // wallet_requestPermissions piggybacks on the same approval popup as
+  // eth_requestAccounts (see popup.js) since this wallet only ever has
+  // the one real permission (eth_accounts) to grant.
+  "wallet_addEthereumChain", "wallet_watchAsset", "wallet_requestPermissions",
+]);
 const APPROVAL_METHODS_SOLANA = new Set(["connect", "signTransaction", "signAllTransactions", "signAndSendTransaction", "signMessage"]);
 
 // In-memory only — see the module doc's "known limitation" above for why
@@ -133,7 +145,34 @@ async function handleRequest(message, sendResponse) {
     const sites = await getConnectedSites();
     const connection = sites[origin]?.evm;
     if (method === "eth_chainId") { sendResponse({ result: connection?.chainId ?? "0x1" }); return; }
+    if (method === "wallet_getPermissions") {
+      // EIP-2255. This wallet only ever has one real permission to report
+      // (eth_accounts) — no separate permission system exists beyond
+      // "connected or not," so this is a real, accurate answer, not a
+      // stub: an empty array when there's genuinely nothing granted yet,
+      // a single eth_accounts capability when there is.
+      sendResponse({
+        result: connection
+          ? [{ parentCapability: "eth_accounts", invoker: origin, caveats: [{ type: "restrictReturnedAccounts", value: [connection.address] }], date: Date.now() }]
+          : [],
+      });
+      return;
+    }
     sendResponse({ result: connection ? [connection.address] : [] });
+    return;
+  }
+
+  // "disconnect" doesn't need a popup — a site can't force the user to
+  // keep it connected, so this always succeeds immediately. This has to
+  // be checked BEFORE the needsApproval gate below: "disconnect" was
+  // never actually in APPROVAL_METHODS_SOLANA, so that gate rejected
+  // every real disconnect call with "Method not supported" and this
+  // block never ran — window.solana.disconnect() has been silently
+  // broken for every dApp that calls it (e.g. any wallet-adapter
+  // "Disconnect" button) until this fix.
+  if (chain === "solana" && method === "disconnect") {
+    await clearConnectedSite(origin, "solana");
+    sendResponse({ result: null });
     return;
   }
 
@@ -143,14 +182,6 @@ async function handleRequest(message, sendResponse) {
 
   if (!needsApproval) {
     sendResponse({ error: { message: `Method not supported: ${method}`, code: -32601 } });
-    return;
-  }
-
-  // "disconnect" doesn't need a popup — a site can't force the user to
-  // keep it connected, so this always succeeds immediately.
-  if (method === "disconnect") {
-    await clearConnectedSite(origin, "solana");
-    sendResponse({ result: null });
     return;
   }
 
@@ -166,7 +197,21 @@ async function handleResolve(message) {
 
   if (connection) {
     await setConnectedSite(entry.origin, entry.chain, connection);
-    await broadcastEvent(entry.origin, entry.chain, entry.chain === "evm" ? "accountsChanged" : "connect", entry.chain === "evm" ? [connection.address] : connection.address);
+    // Real bug fixed here: this used to always broadcast "accountsChanged"
+    // for any EVM connection update, including a chain switch — where
+    // the account hasn't changed at all, only the chain has. EIP-1193
+    // has a separate event for exactly that (chainChanged, whose payload
+    // is the bare chainId string, not an array), and dApps that key
+    // chain-dependent state off that specific event never saw it fire
+    // from this wallet, only ever seeing accountsChanged with the same
+    // address it already had.
+    if (entry.chain === "solana") {
+      await broadcastEvent(entry.origin, "solana", "connect", connection.address);
+    } else if (entry.method === "wallet_switchEthereumChain" || entry.method === "wallet_addEthereumChain") {
+      await broadcastEvent(entry.origin, "evm", "chainChanged", connection.chainId);
+    } else {
+      await broadcastEvent(entry.origin, "evm", "accountsChanged", [connection.address]);
+    }
   }
 
   entry.sendResponse(error ? { error } : { result });

@@ -87,7 +87,13 @@
       if (method === "eth_requestAccounts" || method === "eth_accounts") {
         this.selectedAddress = result?.[0] ?? null;
       }
-      if (method === "wallet_switchEthereumChain" && params?.[0]?.chainId) {
+      // wallet_addEthereumChain behaves exactly like a switch once the
+      // approval succeeds for a chain Mango already recognizes (see
+      // popup.js's own wallet_addEthereumChain handler) — this property
+      // needs to track that the same way, or a dApp reading
+      // provider.chainId directly right after resolution (rather than
+      // waiting for the chainChanged event) would see the OLD chain.
+      if ((method === "wallet_switchEthereumChain" || method === "wallet_addEthereumChain") && params?.[0]?.chainId) {
         this.chainId = params[0].chainId;
       }
       return result;
