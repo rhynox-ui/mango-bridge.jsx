@@ -29,7 +29,6 @@
 
 import React, { useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { Sun, Moon } from "lucide-react";
 import { MangoWalletTab } from "../../src/MangoWallet.jsx";
 import { PALETTE } from "../../src/theme.js";
 import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic } from "../../src/wallet/keys.js";
@@ -66,10 +65,10 @@ function saveTheme(theme) {
   }
 }
 
-// Wraps MangoWalletTab with the toggle the site's own top nav has (see
-// App.jsx's Sun/Moon button) — MangoWalletTab itself renders no page
-// chrome of its own (that lives in App.jsx on the site), so the popup
-// needs a small one here instead.
+// Owns the theme preference and hands it down into MangoWalletTab, which
+// now surfaces its own Light/Dark control inside its Settings screen
+// (matching mango-mobile's own Settings > Appearance section) — no
+// separate toggle button needed here anymore.
 function ExtensionApp() {
   const [theme, setTheme] = useState(loadTheme);
   const P = PALETTE[theme];
@@ -86,29 +85,7 @@ function ExtensionApp() {
     saveTheme(next);
   }
 
-  return React.createElement(
-    "div",
-    null,
-    React.createElement(
-      "div",
-      { style: { display: "flex", justifyContent: "flex-end", marginBottom: "10px" } },
-      React.createElement(
-        "button",
-        {
-          onClick: toggleTheme,
-          "aria-label": "Toggle light/dark theme",
-          style: {
-            width: "30px", height: "30px", borderRadius: "999px", border: "none", cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", background: P.pillBg,
-          },
-        },
-        theme === "light"
-          ? React.createElement(Moon, { size: 13, color: P.textSecondary })
-          : React.createElement(Sun, { size: 13, color: P.textSecondary })
-      )
-    ),
-    React.createElement(MangoWalletTab, { P })
-  );
+  return React.createElement(MangoWalletTab, { P, theme, onToggleTheme: toggleTheme });
 }
 
 function renderFullWalletApp() {

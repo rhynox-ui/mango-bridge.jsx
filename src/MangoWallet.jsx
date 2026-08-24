@@ -80,7 +80,7 @@ import {
   NetworkCelo, NetworkFantom, NetworkMoonbeam, NetworkCronos, NetworkMetisAndromeda, NetworkMode,
   NetworkZora, NetworkMantaPacific, NetworkTaiko, NetworkPolygonZkevm, NetworkFraxtal,
 } from "@web3icons/react";
-import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle, QrCode, X as XIcon } from "lucide-react";
+import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle, QrCode, X as XIcon, Sun, Moon, Settings as SettingsIcon } from "lucide-react";
 import { isAddress, parseUnits } from "viem";
 import { PublicKey } from "@solana/web3.js";
 import jsQR from "jsqr";
@@ -980,6 +980,88 @@ function ResetWalletModal({ onClose, onConfirmReset, P }) {
   );
 }
 
+// Re-encrypts every wallet's mnemonic AND every imported key's private
+// key under a new password — one password unlocks the whole vault (see
+// handleAddWallet's own comment on that), so changing it has to touch
+// every encrypted blob in one pass, not just the active account's. The
+// current password is verified against the first wallet's mnemonic
+// before anything is decrypted — same "prove you already know it" check
+// handleAddWallet/handleImportPrivateKey already use elsewhere.
+function ChangePasswordModal({ onClose, P }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function handleChange() {
+    setError("");
+    if (newPassword.length < 8) { setError("New password must be at least 8 characters."); return; }
+    if (newPassword !== confirmPassword) { setError("New passwords don't match."); return; }
+    setBusy(true);
+    try {
+      const vault = loadVault();
+      await decryptSecret(vault.wallets[0].mnemonicRecord, currentPassword); // throws on a wrong current password
+      const nextWallets = await Promise.all(
+        vault.wallets.map(async (w) => {
+          const mnemonic = await decryptSecret(w.mnemonicRecord, currentPassword);
+          return { ...w, mnemonicRecord: await encryptSecret(mnemonic, newPassword) };
+        })
+      );
+      const nextImportedKeys = await Promise.all(
+        (vault.importedKeys ?? []).map(async (entry) => {
+          const privateKey = await decryptSecret(entry.record, currentPassword);
+          return { ...entry, record: await encryptSecret(privateKey, newPassword) };
+        })
+      );
+      saveVault({ wallets: nextWallets, importedKeys: nextImportedKeys });
+      setDone(true);
+    } catch {
+      setError("Incorrect current password.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (done) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+        <div className="w-full max-w-sm rounded-2xl p-5 flex flex-col items-center text-center gap-2" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+          <Check size={22} color={LIME_DEEP} />
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Password changed</span>
+          <div className="w-full mt-2"><PrimaryButton onClick={onClose} P={P}>Done</PrimaryButton></div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Change password</span>
+          <button onClick={onClose} style={{ color: P.textMuted }}>✕</button>
+        </div>
+        <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>
+          Re-encrypts every wallet and imported key stored here under a new password. Your recovery phrases and private keys never change.
+        </div>
+        <div className="flex flex-col gap-2">
+          <PasswordField value={currentPassword} onChange={setCurrentPassword} placeholder="Current password" P={P} autoFocus />
+          <PasswordField value={newPassword} onChange={setNewPassword} placeholder="New password" P={P} />
+          <PasswordField value={confirmPassword} onChange={setConfirmPassword} placeholder="Confirm new password" P={P} />
+        </div>
+        {error && <div className="text-[11.5px] mt-2" style={{ color: "#D92D20" }}>{error}</div>}
+        <div className="mt-3">
+          <PrimaryButton onClick={handleChange} disabled={busy || !currentPassword || !newPassword || !confirmPassword} P={P}>
+            {busy ? "Changing…" : "Change password"}
+          </PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // "Add custom token" — OKX's own paste-a-contract-address flow. EVM
 // tokens verify themselves on-chain (symbol()/decimals() are a real part
 // of the ERC-20 standard); an SPL mint only has decimals on-chain, so the
@@ -1789,13 +1871,96 @@ function AssetDetailScreen({ session, chainKey, assetSymbol, onBack, onSendAsset
   );
 }
 
-function WalletDashboard({
-  session, wallets, importedKeys, activeKey, onSwitchAccount, onAddAccount, onAddWalletNew, onAddWalletImport,
-  onImportKey, onRenameAccount, onRenameWallet, onLock, onReset, onSend, onOpenAsset, P,
-}) {
+// Reached via the "Settings" link in the dashboard's top row (see
+// WalletDashboard below) — same idea as mango-mobile's own SettingsScreen:
+// Security (recovery phrase/export key/change password/lock/remove
+// wallet), Appearance (light/dark), About. theme/onToggleTheme are only
+// passed when this is genuinely running in the extension popup (see
+// MangoWalletTab's own comment) — the Appearance section simply doesn't
+// render without them, rather than guessing a value.
+function SettingsScreen({ session, activeKey, onBack, onLock, onReset, theme, onToggleTheme, P }) {
   const [showReveal, setShowReveal] = useState(false);
   const [showRevealKey, setShowRevealKey] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [showReset, setShowReset] = useState(false);
+  const isImportedAccount = activeKey.type === "imported";
+  // chrome.runtime.getManifest() only resolves inside a real extension
+  // context — exactly where this screen is reached from in practice (see
+  // this function's own header comment), but guarded anyway since
+  // MangoWalletTab technically stays a shared component.
+  const version = typeof chrome !== "undefined" && chrome.runtime?.getManifest ? chrome.runtime.getManifest().version : null;
+
+  const sectionLabelStyle = { color: P.textMuted };
+
+  return (
+    <ScreenShell title="Settings" onBack={onBack} P={P}>
+      <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={sectionLabelStyle}>Security</div>
+      <div className="rounded-2xl p-1 overflow-hidden mb-5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        {!isImportedAccount && (
+          <button onClick={() => setShowReveal(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
+            <Eye size={15} color={P.textMuted} /> Reveal recovery phrase
+          </button>
+        )}
+        <button onClick={() => setShowRevealKey(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
+          <Eye size={15} color={P.textMuted} /> Export private key
+        </button>
+        {!isImportedAccount && (
+          <button onClick={() => setShowChangePassword(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
+            <Lock size={15} color={P.textMuted} /> Change password
+          </button>
+        )}
+        <button onClick={onLock} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
+          <Lock size={15} color={P.textMuted} /> Lock wallet
+        </button>
+        <button onClick={() => setShowReset(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: "#D92D20" }}>
+          <Trash2 size={15} color="#D92D20" /> Remove wallet from this browser
+        </button>
+      </div>
+
+      {onToggleTheme && (
+        <>
+          <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={sectionLabelStyle}>Appearance</div>
+          <div className="rounded-2xl p-1.5 flex gap-1.5 mb-5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+            <button
+              onClick={() => theme !== "light" && onToggleTheme()}
+              className="flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-xl"
+              style={{ background: theme === "light" ? P.ctaBg : "transparent" }}
+            >
+              <Sun size={16} color={theme === "light" ? P.ctaText : P.textMuted} />
+              <span className="text-[12px] font-medium" style={{ color: theme === "light" ? P.ctaText : P.textMuted }}>Light</span>
+            </button>
+            <button
+              onClick={() => theme !== "dark" && onToggleTheme()}
+              className="flex-1 flex flex-col items-center gap-1.5 py-2.5 rounded-xl"
+              style={{ background: theme === "dark" ? P.ctaBg : "transparent" }}
+            >
+              <Moon size={16} color={theme === "dark" ? P.ctaText : P.textMuted} />
+              <span className="text-[12px] font-medium" style={{ color: theme === "dark" ? P.ctaText : P.textMuted }}>Dark</span>
+            </button>
+          </div>
+        </>
+      )}
+
+      <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={sectionLabelStyle}>About</div>
+      <div className="rounded-2xl px-3.5 py-3 flex items-center justify-between" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Mango Wallet</span>
+        {version && <span className="text-[12px] font-mono" style={{ color: P.textMuted }}>v{version}</span>}
+      </div>
+
+      {showReveal && <RevealPhraseModal walletId={activeKey.walletId} onClose={() => setShowReveal(false)} P={P} />}
+      {showRevealKey && <RevealPrivateKeyModal session={session} activeKey={activeKey} onClose={() => setShowRevealKey(false)} P={P} />}
+      {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} P={P} />}
+      {showReset && (
+        <ResetWalletModal onClose={() => setShowReset(false)} onConfirmReset={() => { clearVault(); onReset(); }} P={P} />
+      )}
+    </ScreenShell>
+  );
+}
+
+function WalletDashboard({
+  session, wallets, importedKeys, activeKey, onSwitchAccount, onAddAccount, onAddWalletNew, onAddWalletImport,
+  onImportKey, onRenameAccount, onRenameWallet, onLock, onOpenSettings, onSend, onOpenAsset, P,
+}) {
   const [addAccountFor, setAddAccountFor] = useState(null); // walletId | null
   const [showImportKey, setShowImportKey] = useState(false);
   const [showExtension, setShowExtension] = useState(false);
@@ -1803,8 +1968,6 @@ function WalletDashboard({
   const [refreshKey, setRefreshKey] = useState(0);
   const [justCopied, setJustCopied] = useState(false);
   const extensionInstalled = useExtensionInstalled();
-
-  const isImportedAccount = activeKey.type === "imported";
 
   function handleReceive() {
     navigator.clipboard.writeText(session.evm ? session.evm.address : session.solana.address);
@@ -1824,9 +1987,14 @@ function WalletDashboard({
             onRenameAccount={onRenameAccount} onRenameWallet={onRenameWallet}
             P={P}
           />
-          <button onClick={onLock} className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: P.textMuted }}>
-            <Lock size={11} /> Lock
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={onOpenSettings} className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: P.textMuted }}>
+              <SettingsIcon size={11} /> Settings
+            </button>
+            <button onClick={onLock} className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: P.textMuted }}>
+              <Lock size={11} /> Lock
+            </button>
+          </div>
         </div>
         <div className="flex items-center justify-around">
           <QuickAction icon={SendIcon} label="Send" onClick={onSend} P={P} />
@@ -1880,35 +2048,15 @@ function WalletDashboard({
         </div>
       </div>
 
-      <div className="rounded-2xl p-1 overflow-hidden" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-        {!isImportedAccount && (
-          <button onClick={() => setShowReveal(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
-            <Eye size={15} color={P.textMuted} /> Reveal recovery phrase
-          </button>
-        )}
-        <button onClick={() => setShowRevealKey(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
-          <Eye size={15} color={P.textMuted} /> Export private key
-        </button>
-        {!extensionInstalled && (
+      {!extensionInstalled && (
+        <div className="rounded-2xl p-1 overflow-hidden" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           <button onClick={() => setShowExtension(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
             <Puzzle size={15} color={P.textMuted} /> Get the browser extension
           </button>
-        )}
-        <button onClick={() => setShowReset(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: "#D92D20" }}>
-          <Trash2 size={15} color="#D92D20" /> Remove wallet from this browser
-        </button>
-      </div>
-
-      {showReveal && <RevealPhraseModal walletId={activeKey.walletId} onClose={() => setShowReveal(false)} P={P} />}
-      {showRevealKey && <RevealPrivateKeyModal session={session} activeKey={activeKey} onClose={() => setShowRevealKey(false)} P={P} />}
-      {showExtension && <ExtensionModal onClose={() => setShowExtension(false)} P={P} />}
-      {showReset && (
-        <ResetWalletModal
-          onClose={() => setShowReset(false)}
-          onConfirmReset={() => { clearVault(); onReset(); }}
-          P={P}
-        />
+        </div>
       )}
+
+      {showExtension && <ExtensionModal onClose={() => setShowExtension(false)} P={P} />}
       {addAccountFor && (
         <AddAccountModal onClose={() => setAddAccountFor(null)} onAdd={(password) => onAddAccount(addAccountFor, password)} P={P} />
       )}
@@ -1928,7 +2076,7 @@ function genId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function MangoWalletInner({ P }) {
+function MangoWalletInner({ P, theme, onToggleTheme }) {
   const [screen, setScreen] = useState(() => (loadVault() ? "locked" : "welcome"));
   const [pendingMnemonic, setPendingMnemonic] = useState(null); // in-memory only, during onboarding
   const [pendingImportPhrase, setPendingImportPhrase] = useState(null);
@@ -2155,6 +2303,20 @@ function MangoWalletInner({ P }) {
   if (screen === "locked") {
     return <LockedScreen onUnlock={handleUnlock} P={P} />;
   }
+  if (screen === "settings") {
+    return (
+      <SettingsScreen
+        session={session}
+        activeKey={activeKey}
+        onBack={() => setScreen("dashboard")}
+        onLock={handleLock}
+        onReset={handleReset}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+        P={P}
+      />
+    );
+  }
   if (screen === "asset-detail") {
     return (
       <AssetDetailScreen
@@ -2238,7 +2400,7 @@ function MangoWalletInner({ P }) {
       onRenameAccount={handleRenameAccount}
       onRenameWallet={handleRenameWallet}
       onLock={handleLock}
-      onReset={handleReset}
+      onOpenSettings={() => setScreen("settings")}
       onSend={() => { setAssetDetailTarget(null); setScreen("send"); }}
       onOpenAsset={(chainKey, assetSymbol) => { setAssetDetailTarget({ chainKey, assetSymbol }); setScreen("asset-detail"); }}
       P={P}
@@ -2351,12 +2513,17 @@ function SiteWalletGate({ P }) {
   return extensionInstalled ? <OpenExtensionPrompt P={P} /> : <InstallExtensionGate P={P} />;
 }
 
-export function MangoWalletTab({ P }) {
+// theme/onToggleTheme are optional — only the extension popup (see
+// popup.js's ExtensionApp) actually owns a theme preference to thread
+// through, for the Settings screen's Appearance section. The site never
+// reaches MangoWalletInner (isExtensionPage() is only ever true on the
+// extension's own pages), so it never needs to pass these.
+export function MangoWalletTab({ P, theme, onToggleTheme }) {
   if (!WALLET_LIVE && !hasPreviewOverride()) {
     return <WalletComingSoon P={P} />;
   }
   if (isExtensionPage()) {
-    return <MangoWalletInner P={P} />;
+    return <MangoWalletInner P={P} theme={theme} onToggleTheme={onToggleTheme} />;
   }
   return <SiteWalletGate P={P} />;
 }
