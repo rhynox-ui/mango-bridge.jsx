@@ -220,21 +220,6 @@ function WalletChainBadge({ id, size = 18 }) {
 // Small shared building blocks
 // ---------------------------------------------------------------------------
 
-function CopyableAddress({ address, P, size = 12.5 }) {
-  const [copied, setCopied] = useState(false);
-  function handleCopy() {
-    navigator.clipboard.writeText(address);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-  return (
-    <button onClick={handleCopy} className="inline-flex items-center gap-1.5 font-mono" style={{ fontSize: size, color: P.textSecondary }}>
-      <span>{address.slice(0, 6)}…{address.slice(-4)}</span>
-      {copied ? <Check size={12} color={LIME_DEEP} /> : <Copy size={12} />}
-    </button>
-  );
-}
-
 // Every attribute here exists for one reason: browser/password-manager
 // extensions (LastPass, 1Password, Bitwarden, Dashlane, browser-native
 // autofill) actively scan password-type inputs and offer to capture and
@@ -329,7 +314,7 @@ function UsdSubtext({ balance, price, P }) {
   return <div className="text-[10.5px] text-right" style={{ color: P.textMuted }}>${fmt(balance * price, 2)}</div>;
 }
 
-function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh }) {
+function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh, onOpen }) {
   // Uses walletRpc.js's own independent viem client — deliberately not
   // wagmi's shared useBalance/config, which the Bridge tab's connected-wallet
   // flows use. See walletRpc.js for why: keeps this tab's 13-chain balance
@@ -348,7 +333,11 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh }) {
   }, [chainKey, evmAddress, forceFresh]);
   const price = useUsdPrice(NATIVE_SYMBOL_BY_CHAIN[chainKey]);
   return (
-    <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: isFirst ? "none" : `1px solid ${P.divider}` }}>
+    <button
+      onClick={onOpen}
+      className="w-full flex items-center justify-between px-4 py-3 text-left"
+      style={{ borderTop: isFirst ? "none" : `1px solid ${P.divider}` }}
+    >
       <div className="flex items-center gap-2.5">
         <WalletChainBadge id={chainKey} size={24} />
         <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{CHAIN_LABEL[chainKey]}</span>
@@ -360,11 +349,11 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh }) {
         </div>
         <UsdSubtext balance={balance} price={price} P={P} />
       </div>
-    </div>
+    </button>
   );
 }
 
-function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove }) {
+function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove, onOpen }) {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -377,13 +366,13 @@ function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove 
   }, [chainKey, token.address, token.decimals, evmAddress, forceFresh]);
   const price = useUsdPrice(token.symbol);
   return (
-    <div className="flex items-center justify-between px-4 py-2 pl-11" style={{ borderTop: `1px solid ${P.divider}` }}>
+    <button onClick={onOpen} className="w-full flex items-center justify-between px-4 py-2 pl-11 text-left" style={{ borderTop: `1px solid ${P.divider}` }}>
       <span className="flex items-center gap-1.5 text-[11.5px]" style={{ color: P.textMuted }}>
         {token.symbol}
         {onRemove && (
-          <button onClick={onRemove} style={{ color: P.textMuted }} title="Remove custom token">
+          <span onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ color: P.textMuted }} title="Remove custom token">
             <Trash2 size={11} />
-          </button>
+          </span>
         )}
       </span>
       <div>
@@ -392,11 +381,11 @@ function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove 
         </div>
         <UsdSubtext balance={balance} price={price} P={P} />
       </div>
-    </div>
+    </button>
   );
 }
 
-function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove }) {
+function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove, onOpen }) {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -409,13 +398,13 @@ function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove }) {
   }, [token.mint, token.decimals, solanaAddress, forceFresh]);
   const price = useUsdPrice(token.symbol);
   return (
-    <div className="flex items-center justify-between px-4 py-2 pl-11" style={{ borderTop: `1px solid ${P.divider}` }}>
+    <button onClick={onOpen} className="w-full flex items-center justify-between px-4 py-2 pl-11 text-left" style={{ borderTop: `1px solid ${P.divider}` }}>
       <span className="flex items-center gap-1.5 text-[11.5px]" style={{ color: P.textMuted }}>
         {token.symbol}
         {onRemove && (
-          <button onClick={onRemove} style={{ color: P.textMuted }} title="Remove custom token">
+          <span onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ color: P.textMuted }} title="Remove custom token">
             <Trash2 size={11} />
-          </button>
+          </span>
         )}
       </span>
       <div>
@@ -424,11 +413,11 @@ function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove }) {
         </div>
         <UsdSubtext balance={balance} price={price} P={P} />
       </div>
-    </div>
+    </button>
   );
 }
 
-function SolanaBalanceRow({ solanaAddress, P, forceFresh }) {
+function SolanaBalanceRow({ solanaAddress, P, forceFresh, onOpen }) {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -441,7 +430,7 @@ function SolanaBalanceRow({ solanaAddress, P, forceFresh }) {
   }, [solanaAddress, forceFresh]);
   const price = useUsdPrice("SOL");
   return (
-    <div className="flex items-center justify-between px-4 py-3" style={{ borderTop: `1px solid ${P.divider}` }}>
+    <button onClick={onOpen} className="w-full flex items-center justify-between px-4 py-3 text-left" style={{ borderTop: `1px solid ${P.divider}` }}>
       <div className="flex items-center gap-2.5">
         <ChainBadge id="solana" size={24} />
         <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Solana</span>
@@ -453,7 +442,7 @@ function SolanaBalanceRow({ solanaAddress, P, forceFresh }) {
         </div>
         <UsdSubtext balance={balance} price={price} P={P} />
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -1360,12 +1349,19 @@ function QrScanModal({ onDetected, onClose, P }) {
   );
 }
 
-function SendScreen({ session, onBack, P }) {
+function SendScreen({ session, onBack, P, initialChainKey, initialAssetSymbol }) {
   // An imported single-chain account only offers that one chain — an HD
   // account (both evm + solana) offers everything, same as before.
   const availableChains = getWalletChainOrder().filter((key) => (key === "solana" ? !!session.solana : !!session.evm));
-  const [chainKey, setChainKey] = useState(availableChains[0]);
-  const [assetSymbol, setAssetSymbol] = useState("native");
+  // A tap-in from a specific asset's detail screen (AssetDetailScreen)
+  // preloads that exact chain/asset instead of always defaulting to the
+  // first chain — the user already told us which asset they meant by
+  // tapping it, so don't make them re-pick it here. Still just the
+  // starting point: the pickers below stay fully interactive either way.
+  const [chainKey, setChainKey] = useState(
+    initialChainKey && availableChains.includes(initialChainKey) ? initialChainKey : availableChains[0]
+  );
+  const [assetSymbol, setAssetSymbol] = useState(initialAssetSymbol || "native");
   const [toAddress, setToAddress] = useState("");
   const [amount, setAmount] = useState("");
   const [phase, setPhase] = useState("form"); // form | confirm | sending | done | error
@@ -1740,9 +1736,62 @@ function AddAccountModal({ onClose, onAdd, P }) {
   );
 }
 
+// Tapping any Balances row opens this instead of the old always-visible
+// "EVM (all chains)" / "Solana" address card — an address only matters in
+// the context of one specific asset (which chain it's actually on), so
+// it lives here now, next to that exact asset's own Send/Receive, the
+// same pattern OKX Wallet uses. The two addresses on an HD account are
+// otherwise identical everywhere (session.evm.address is the same value
+// regardless of which EVM chain is showing), so nothing here is a new
+// lookup — just where it's shown.
+function AssetDetailScreen({ session, chainKey, assetSymbol, onBack, onSendAsset, P }) {
+  const isSolana = chainKey === "solana";
+  const address = isSolana ? session.solana?.address : session.evm?.address;
+  const selectedToken = assetSymbol !== "native" ? allTokensForChain(chainKey).find((t) => t.symbol === assetSymbol) : null;
+  const assetLabel = selectedToken ? selectedToken.symbol : NATIVE_SYMBOL_BY_CHAIN[chainKey];
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <ScreenShell title={assetLabel} onBack={onBack} P={P}>
+      <div className="flex flex-col items-center text-center gap-2 py-3 mb-4">
+        {isSolana ? <ChainBadge id="solana" size={40} /> : <WalletChainBadge id={chainKey} size={40} />}
+        <div className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>
+          {assetLabel} <span style={{ color: P.textMuted, fontWeight: 400 }}>· {CHAIN_LABEL[chainKey]}</span>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-around mb-5">
+        <QuickAction icon={SendIcon} label="Send" onClick={() => onSendAsset(chainKey, assetSymbol)} P={P} />
+        <QuickAction icon={copied ? Check : Download} label={copied ? "Copied" : "Receive"} onClick={handleCopy} P={P} />
+      </div>
+
+      <div className="text-[11.5px] mb-1.5" style={{ color: P.textMuted }}>
+        Your {isSolana ? "Solana" : CHAIN_LABEL[chainKey]} address
+      </div>
+      <div className="rounded-xl px-3.5 py-3 flex items-center justify-between gap-2" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
+        <span className="text-[12px] font-mono truncate" style={{ color: P.textSecondary }}>{address}</span>
+        <button onClick={handleCopy} className="shrink-0" style={{ color: P.textMuted }}>
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+        </button>
+      </div>
+      {!isSolana && (
+        <div className="text-[11px] mt-2" style={{ color: P.textMuted }}>
+          This address is the same across every EVM chain in this wallet — only the network you're sending on changes.
+        </div>
+      )}
+    </ScreenShell>
+  );
+}
+
 function WalletDashboard({
   session, wallets, importedKeys, activeKey, onSwitchAccount, onAddAccount, onAddWalletNew, onAddWalletImport,
-  onImportKey, onRenameAccount, onRenameWallet, onLock, onReset, onSend, P,
+  onImportKey, onRenameAccount, onRenameWallet, onLock, onReset, onSend, onOpenAsset, P,
 }) {
   const [showReveal, setShowReveal] = useState(false);
   const [showRevealKey, setShowRevealKey] = useState(false);
@@ -1779,24 +1828,10 @@ function WalletDashboard({
             <Lock size={11} /> Lock
           </button>
         </div>
-        <div className="flex items-center justify-around mb-4">
+        <div className="flex items-center justify-around">
           <QuickAction icon={SendIcon} label="Send" onClick={onSend} P={P} />
           <QuickAction icon={justCopied ? Check : Download} label={justCopied ? "Copied" : "Receive"} onClick={handleReceive} P={P} />
           <QuickAction icon={RefreshCw} label="Refresh" onClick={() => setRefreshKey((k) => k + 1)} P={P} />
-        </div>
-        <div className="flex flex-col gap-2">
-          {session.evm && (
-            <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: P.input }}>
-              <span className="text-[11.5px]" style={{ color: P.textMuted }}>EVM (all chains)</span>
-              <CopyableAddress address={session.evm.address} P={P} />
-            </div>
-          )}
-          {session.solana && (
-            <div className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: P.input }}>
-              <span className="text-[11.5px]" style={{ color: P.textMuted }}>Solana</span>
-              <CopyableAddress address={session.solana.address} P={P} />
-            </div>
-          )}
         </div>
       </div>
 
@@ -1820,21 +1855,23 @@ function WalletDashboard({
           {getWalletChainOrder().filter((key) => (key === "solana" ? !!session.solana : !!session.evm)).map((key, i) =>
             key === "solana" ? (
               <React.Fragment key={`${key}-${refreshKey}`}>
-                <SolanaBalanceRow solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} />
+                <SolanaBalanceRow solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} onOpen={() => onOpenAsset("solana", "native")} />
                 {allTokensForChain("solana").map((token) => (
                   <SplTokenBalanceRow
                     key={token.mint} token={token} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0}
                     onRemove={token.isCustom ? () => { removeCustomToken("solana", token.mint); setRefreshKey((k) => k + 1); } : undefined}
+                    onOpen={() => onOpenAsset("solana", token.symbol)}
                   />
                 ))}
               </React.Fragment>
             ) : (
               <React.Fragment key={`${key}-${refreshKey}`}>
-                <EvmBalanceRow chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} />
+                <EvmBalanceRow chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} onOpen={() => onOpenAsset(key, "native")} />
                 {allTokensForChain(key).map((token) => (
                   <TokenBalanceRow
                     key={token.address} chainKey={key} token={token} evmAddress={session.evm.address} P={P} forceFresh={refreshKey > 0}
                     onRemove={token.isCustom ? () => { removeCustomToken(key, token.address); setRefreshKey((k) => k + 1); } : undefined}
+                    onOpen={() => onOpenAsset(key, token.symbol)}
                   />
                 ))}
               </React.Fragment>
@@ -1896,6 +1933,12 @@ function MangoWalletInner({ P }) {
   const [pendingMnemonic, setPendingMnemonic] = useState(null); // in-memory only, during onboarding
   const [pendingImportPhrase, setPendingImportPhrase] = useState(null);
   const [pendingNewWalletMnemonic, setPendingNewWalletMnemonic] = useState(null); // in-memory only, during "add wallet"
+  // Which asset a Balances row was tapped for ({chainKey, assetSymbol}) —
+  // drives AssetDetailScreen. assetDetailTarget also doubles as where a
+  // "send" navigated FROM asset detail should preload its chain/asset
+  // (see the "send" screen case below); the quick-action Send button in
+  // WalletDashboard clears it first so it still opens on the default chain.
+  const [assetDetailTarget, setAssetDetailTarget] = useState(null);
   // Array of { id, label, accounts: [{ evm, solana }], accountLabels }
   // — one entry per independent seed-phrase WALLET (OKX's "Add wallet"),
   // each with its own unlimited HD-derived accounts (OKX's "Add
@@ -2112,8 +2155,28 @@ function MangoWalletInner({ P }) {
   if (screen === "locked") {
     return <LockedScreen onUnlock={handleUnlock} P={P} />;
   }
+  if (screen === "asset-detail") {
+    return (
+      <AssetDetailScreen
+        session={session}
+        chainKey={assetDetailTarget.chainKey}
+        assetSymbol={assetDetailTarget.assetSymbol}
+        onBack={() => setScreen("dashboard")}
+        onSendAsset={() => setScreen("send")}
+        P={P}
+      />
+    );
+  }
   if (screen === "send") {
-    return <SendScreen session={session} onBack={() => setScreen("dashboard")} P={P} />;
+    return (
+      <SendScreen
+        session={session}
+        onBack={() => setScreen(assetDetailTarget ? "asset-detail" : "dashboard")}
+        initialChainKey={assetDetailTarget?.chainKey}
+        initialAssetSymbol={assetDetailTarget?.assetSymbol}
+        P={P}
+      />
+    );
   }
   // "Add wallet" — a whole separate seed phrase, new or imported, distinct
   // from "Add account" (which just derives another account under an
@@ -2176,7 +2239,8 @@ function MangoWalletInner({ P }) {
       onRenameWallet={handleRenameWallet}
       onLock={handleLock}
       onReset={handleReset}
-      onSend={() => setScreen("send")}
+      onSend={() => { setAssetDetailTarget(null); setScreen("send"); }}
+      onOpenAsset={(chainKey, assetSymbol) => { setAssetDetailTarget({ chainKey, assetSymbol }); setScreen("asset-detail"); }}
       P={P}
     />
   );
