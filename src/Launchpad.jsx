@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { isAddress } from "viem";
 import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
 import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2 } from "lucide-react";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
@@ -148,6 +149,10 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
   const [description, setDescription] = useState("");
+  const [xProfile, setXProfile] = useState("");
+  const [telegram, setTelegram] = useState("");
+  const [creatorWallet, setCreatorWallet] = useState("");
+  const [understandsModeration, setUnderstandsModeration] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [uploadedLogoUrl, setUploadedLogoUrl] = useState(null);
@@ -159,25 +164,55 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
   const [launchError, setLaunchError] = useState(null);
   const [launchResult, setLaunchResult] = useState(null);
 
+  const trimmedCreatorWallet = creatorWallet.trim();
+  const creatorWalletInvalid = trimmedCreatorWallet !== "" && !isAddress(trimmedCreatorWallet);
+
   async function handleLaunch() {
     setLaunchError(null);
     setLaunchResult(null);
+
+    if (creatorWalletInvalid) {
+      setLaunchError("Creator wallet isn't a valid address — fix it or leave it blank to use your connected wallet.");
+      return;
+    }
+    if (uploadedLogoUrl && !understandsModeration) {
+      setLaunchError("Check the artwork-moderation box below the image to continue, or remove the image.");
+      return;
+    }
+
     setLaunching(true);
     try {
-      const result = await launchToken({ name, symbol, creator: address, devBuyEth: devBuy });
+      // Creator is the real on-chain address that receives the 70% creator
+      // fee share (see the Factory contract's launch() args) — the
+      // "Creator wallet" field genuinely controls this now, not just the
+      // connected wallet unconditionally.
+      const effectiveCreator = trimmedCreatorWallet || address;
+      const result = await launchToken({ name, symbol, creator: effectiveCreator, devBuyEth: devBuy });
       setLaunchResult(result);
 
       // First-time save, right after launch — no signature needed yet,
-      // since there's no prior owner to protect against. Only runs if the
-      // user actually uploaded an image; a token launched without one
-      // just keeps using the generated avatar, same as always.
-      if (uploadedLogoUrl && result?.tokenAddress) {
+      // since there's no prior owner to protect against. The Factory
+      // contract itself only takes name/symbol/creator, so description
+      // and socials have nowhere on-chain to live — this is the same
+      // off-chain registry the logo already uses, extended to hold them
+      // too, rather than typing them in and having them silently discarded.
+      const trimmedDescription = description.trim();
+      const trimmedXProfile = xProfile.trim();
+      const trimmedTelegram = telegram.trim();
+      if (result?.tokenAddress && (uploadedLogoUrl || trimmedDescription || trimmedXProfile || trimmedTelegram)) {
         try {
-          await saveTokenLogo({ tokenAddress: result.tokenAddress, logoUrl: uploadedLogoUrl, poolId: result.poolId });
+          await saveTokenLogo({
+            tokenAddress: result.tokenAddress,
+            logoUrl: uploadedLogoUrl || undefined,
+            poolId: result.poolId,
+            description: trimmedDescription || undefined,
+            xProfile: trimmedXProfile || undefined,
+            telegram: trimmedTelegram || undefined,
+          });
         } catch {
           // Non-fatal — the launch itself already succeeded. A failed
-          // logo save just means it falls back to the generated avatar,
-          // not a broken launch.
+          // metadata save just means this info doesn't show up later, not
+          // a broken launch.
         }
       }
 
@@ -289,7 +324,7 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
               <div className="mt-1.5 text-[11px]" style={{ color: "#D92D20" }}>Upload failed: {uploadError}</div>
             )}
             <div className="flex items-start gap-2 mt-2 text-[11px]" style={{ color: P.textMuted }}>
-              <input type="checkbox" className="mt-0.5" />
+              <input type="checkbox" checked={understandsModeration} onChange={(e) => setUnderstandsModeration(e.target.checked)} className="mt-0.5" />
               <span>I understand that selected artwork will be moderated and uploaded to public IPFS.</span>
             </div>
           </div>
@@ -297,14 +332,14 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
             <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>X profile</label>
             <div className="flex items-center rounded-lg overflow-hidden" style={fieldStyle}>
               <span className="pl-3 text-[12.5px]" style={{ color: P.textMuted }}>x.com/</span>
-              <input placeholder="yourhandle" className="flex-1 px-1 py-2.5 text-[13px] bg-transparent" style={{ color: P.textPrimary }} />
+              <input value={xProfile} onChange={(e) => setXProfile(e.target.value.replace(/^@/, ""))} placeholder="yourhandle" className="flex-1 px-1 py-2.5 text-[13px] bg-transparent" style={{ color: P.textPrimary }} />
             </div>
           </div>
           <div>
             <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Telegram</label>
             <div className="flex items-center rounded-lg overflow-hidden" style={fieldStyle}>
               <span className="pl-3 text-[12.5px]" style={{ color: P.textMuted }}>t.me/</span>
-              <input placeholder="yourgroup" className="flex-1 px-1 py-2.5 text-[13px] bg-transparent" style={{ color: P.textPrimary }} />
+              <input value={telegram} onChange={(e) => setTelegram(e.target.value)} placeholder="yourgroup" className="flex-1 px-1 py-2.5 text-[13px] bg-transparent" style={{ color: P.textPrimary }} />
             </div>
           </div>
           <div>
@@ -335,7 +370,14 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
             <div>
               <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Creator wallet</label>
               <div className="text-[10.5px] mb-1.5" style={{ color: P.textMuted }}>Receives the 70% creator share of trading fees. Leave blank to use your connected wallet.</div>
-              <input placeholder="0x..." className="w-full px-3 py-2.5 rounded-lg text-[13.5px] font-mono" style={fieldStyle} />
+              <input
+                value={creatorWallet}
+                onChange={(e) => setCreatorWallet(e.target.value)}
+                placeholder="0x..."
+                className="w-full px-3 py-2.5 rounded-lg text-[13.5px] font-mono"
+                style={{ ...fieldStyle, border: `1px solid ${creatorWalletInvalid ? "#D92D20" : P.panelBorder}` }}
+              />
+              {creatorWalletInvalid && <div className="mt-1 text-[11px]" style={{ color: "#D92D20" }}>Not a valid address</div>}
             </div>
           )}
         </div>
@@ -354,9 +396,12 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
         ) : (
           <button
             onClick={handleLaunch}
-            disabled={!name || !symbol || launching}
+            disabled={!name || !symbol || launching || creatorWalletInvalid || (uploadedLogoUrl && !understandsModeration)}
             className="w-full py-3.5 rounded-full font-display font-semibold text-[14.5px]"
-            style={{ background: name && symbol && !launching ? P.ctaBg : P.pillBg, color: name && symbol && !launching ? P.ctaText : P.textMuted, cursor: name && symbol && !launching ? "pointer" : "not-allowed" }}
+            style={(() => {
+              const ready = name && symbol && !launching && !creatorWalletInvalid && !(uploadedLogoUrl && !understandsModeration);
+              return { background: ready ? P.ctaBg : P.pillBg, color: ready ? P.ctaText : P.textMuted, cursor: ready ? "pointer" : "not-allowed" };
+            })()}
           >
             {launching ? "Launching…" : "Launch token"}
           </button>

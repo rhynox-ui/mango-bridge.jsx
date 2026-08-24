@@ -104,11 +104,17 @@ export async function getLogoRegistry() {
 // on-chain registered creator). The signature itself is produced by the
 // calling component via wagmi's useSignMessage hook — kept out of this
 // file since hooks can't be called outside a React component.
-export async function saveTokenLogo({ tokenAddress, logoUrl, poolId, isUpdate, signature, signerAddress }) {
+//
+// description/xProfile/telegram are optional, launch-time-only metadata
+// (see CreateLaunchModal) — the Factory contract itself only takes
+// name/symbol/creator, so this is the same off-chain registry the logo
+// already used, just extended to hold them too instead of discarding
+// whatever a user typed into those fields.
+export async function saveTokenLogo({ tokenAddress, logoUrl, poolId, isUpdate, signature, signerAddress, description, xProfile, telegram }) {
   const res = await fetch("/api/logo-registry", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tokenAddress, logoUrl, poolId, isUpdate, signature, signerAddress }),
+    body: JSON.stringify({ tokenAddress, logoUrl, poolId, isUpdate, signature, signerAddress, description, xProfile, telegram }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

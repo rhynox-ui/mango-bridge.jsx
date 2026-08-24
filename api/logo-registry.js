@@ -1,9 +1,17 @@
 // api/logo-registry.js
 //
 // A single JSON file in Blob storage acts as the whole "database" — an
-// object mapping token addresses to logo URLs. Genuinely small: even
-// thousands of entries stay well under any meaningful storage limit, since
-// this only ever holds text pointers, never the images themselves.
+// object mapping token addresses to their launch-time metadata (logo URL,
+// description, X/Telegram links). Genuinely small: even thousands of
+// entries stay well under any meaningful storage limit, since this only
+// ever holds text, never the images themselves.
+//
+// Each entry's value is an object ({logoUrl, description, xProfile,
+// telegram}), not a bare string — the Factory contract itself only takes
+// name/symbol/creator, so this is the one place description/socials
+// typed into the launch form actually get saved anywhere, instead of
+// being silently discarded. A field omitted from a given request keeps
+// its previously-saved value rather than being wiped.
 //
 // GET  -> returns the full mapping
 // POST -> saves or updates one entry
@@ -14,6 +22,9 @@
 //   - Update (changing an existing entry): REQUIRES a real signature from
 //     the token's actual registered creator, verified against the
 //     Registry contract on-chain — not just trusted from the request.
+//     (The only real update path today, from the token detail page's
+//     "change logo" flow, only ever sends logoUrl — description/socials
+//     currently have no edit-after-launch UI.)
 
 import { put, head } from "@vercel/blob";
 import { createPublicClient, http, verifyMessage } from "viem";
@@ -60,10 +71,13 @@ export default async function handler(request, response) {
   }
 
   if (request.method === "POST") {
-    const { tokenAddress, logoUrl, poolId, isUpdate, signature, signerAddress } = request.body;
+    const { tokenAddress, logoUrl, poolId, isUpdate, signature, signerAddress, description, xProfile, telegram } = request.body;
 
-    if (!tokenAddress || !logoUrl) {
-      return response.status(400).json({ error: "tokenAddress and logoUrl are required" });
+    if (!tokenAddress) {
+      return response.status(400).json({ error: "tokenAddress is required" });
+    }
+    if (!logoUrl && !description && !xProfile && !telegram) {
+      return response.status(400).json({ error: "At least one of logoUrl, description, xProfile, or telegram is required" });
     }
 
     const registry = await readRegistry();
@@ -102,7 +116,18 @@ export default async function handler(request, response) {
       }
     }
 
-    registry[key] = logoUrl;
+    // Older entries (a bare string, before this held anything but a logo
+    // URL) are read as logo-only with everything else blank — not treated
+    // as corrupt. Any field this request didn't send keeps whatever was
+    // already saved, rather than getting wiped to blank.
+    const existingEntry = registry[key];
+    const existingObject = typeof existingEntry === "object" && existingEntry ? existingEntry : { logoUrl: existingEntry || null };
+    registry[key] = {
+      logoUrl: logoUrl ?? existingObject.logoUrl ?? null,
+      description: description ?? existingObject.description ?? "",
+      xProfile: xProfile ?? existingObject.xProfile ?? "",
+      telegram: telegram ?? existingObject.telegram ?? "",
+    };
 
     await put(REGISTRY_BLOB_PATH, JSON.stringify(registry), {
       access: "public",
