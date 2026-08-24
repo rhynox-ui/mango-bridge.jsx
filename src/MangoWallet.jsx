@@ -443,12 +443,14 @@ function SolanaBalanceRow({ solanaAddress, P, forceFresh }) {
 // Onboarding: welcome
 // ---------------------------------------------------------------------------
 
-// Points at extension/README.md's own distribution story: this ships as a
-// real, working "Load unpacked" bundle (public/mango-wallet-extension.zip,
-// built by extension/package.mjs) rather than a Chrome Web Store listing —
-// that store submission is a manual review process this repo can't do on
-// its own. ExtensionModal says exactly that; never claims a one-click
-// install that doesn't exist yet.
+// Now a real Chrome Web Store listing (nphpjgifdodfhachompmknpdjnhomkcc) —
+// links straight there instead of the earlier unpacked-.zip/"Load
+// unpacked" flow this used before the store review finished. One link
+// covers every Chromium-based browser (Chrome, Brave, Edge, Arc all
+// install directly from the Chrome Web Store), so the manual-unzip path
+// is no longer needed here.
+const CHROME_WEB_STORE_URL = "https://chromewebstore.google.com/detail/nphpjgifdodfhachompmknpdjnhomkcc";
+
 function ExtensionModal({ onClose, P }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
@@ -457,23 +459,17 @@ function ExtensionModal({ onClose, P }) {
           <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Mango Wallet extension</span>
           <button onClick={onClose} style={{ color: P.textMuted }}>✕</button>
         </div>
-        <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>
+        <div className="text-[12px] mb-4" style={{ color: P.textMuted }}>
           A browser extension so any dApp — not just Mango — can connect to your Mango Wallet, the same way it would MetaMask or Phantom. It's a separate wallet from this one (a browser extension can't share this site's storage), so you'll create or import a recovery phrase again once it's installed.
         </div>
-        <div className="text-[12px] mb-4" style={{ color: P.textMuted }}>
-          Not yet on the Chrome Web Store — that requires a manual review this early. Until then, install it as an unpacked extension in any Chromium browser (Chrome, Brave, Edge, Arc):
-        </div>
-        <ol className="text-[12px] mb-4 pl-4 flex flex-col gap-1.5" style={{ color: P.textSecondary, listStyle: "decimal" }}>
-          <li>Download and unzip the extension below.</li>
-          <li>Open <span className="font-mono">chrome://extensions</span> and turn on <b>Developer mode</b>.</li>
-          <li>Click <b>Load unpacked</b> and select the unzipped folder.</li>
-        </ol>
         <a
-          href="/mango-wallet-extension.zip" download
+          href={CHROME_WEB_STORE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
           className="w-full py-3 rounded-full font-display font-semibold text-[14px] flex items-center justify-center gap-2"
           style={{ background: P.ctaBg, color: P.ctaText }}
         >
-          <Download size={15} /> Download extension (.zip)
+          Get it from the Chrome Web Store
         </a>
       </div>
     </div>
