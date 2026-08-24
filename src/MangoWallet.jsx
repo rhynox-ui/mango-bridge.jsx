@@ -80,7 +80,7 @@ import {
   NetworkCelo, NetworkFantom, NetworkMoonbeam, NetworkCronos, NetworkMetisAndromeda, NetworkMode,
   NetworkZora, NetworkMantaPacific, NetworkTaiko, NetworkPolygonZkevm, NetworkFraxtal,
 } from "@web3icons/react";
-import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle, QrCode, X as XIcon, Sun, Moon, Settings as SettingsIcon } from "lucide-react";
+import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle, QrCode, X as XIcon, Sun, Moon, Settings as SettingsIcon, FileText, Key as KeyIcon, Clock, Info } from "lucide-react";
 import { isAddress, parseUnits } from "viem";
 import { PublicKey } from "@solana/web3.js";
 import jsQR from "jsqr";
@@ -1878,7 +1878,69 @@ function AssetDetailScreen({ session, chainKey, assetSymbol, onBack, onSendAsset
 // passed when this is genuinely running in the extension popup (see
 // MangoWalletTab's own comment) — the Appearance section simply doesn't
 // render without them, rather than guessing a value.
-function SettingsScreen({ session, activeKey, onBack, onLock, onReset, theme, onToggleTheme, P }) {
+// Auto-lock: a real, working idle-timeout that re-locks the wallet after
+// N minutes of no interaction — genuinely buildable for a browser
+// extension (unlike a phone's AppState-backgrounding signal, which has no
+// direct equivalent for a browser tab/popup) since MangoWalletInner keeps
+// running and can watch for activity the whole time it's mounted. Stored
+// under its own extension-only localStorage key, same pattern as
+// popup.js's theme preference — not part of the encrypted vault, since
+// it's a local UI preference, not wallet data.
+const AUTO_LOCK_STORAGE_KEY = "mango_wallet_autolock_minutes";
+const AUTO_LOCK_OPTIONS = [1, 5, 15, 30, 0]; // 0 means "Never"
+function loadAutoLockMinutes() {
+  try {
+    const raw = window.localStorage.getItem(AUTO_LOCK_STORAGE_KEY);
+    const n = raw == null ? 5 : Number(raw);
+    return AUTO_LOCK_OPTIONS.includes(n) ? n : 5;
+  } catch {
+    return 5;
+  }
+}
+function saveAutoLockMinutes(minutes) {
+  try {
+    window.localStorage.setItem(AUTO_LOCK_STORAGE_KEY, String(minutes));
+  } catch {
+    // storage unavailable — the timeout just won't persist across popup opens, nothing else breaks
+  }
+}
+function formatAutoLockLabel(minutes) {
+  if (minutes === 0) return "Never";
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+
+// One icon-in-a-tinted-circle action, stacked with its label underneath —
+// the real mango-mobile Settings pattern (see UI.md) for its top-row
+// Security actions, ported here using this file's own P tokens rather
+// than mobile's separate RN palette file.
+function SettingsIconAction({ icon: Icon, label, onClick, P }) {
+  return (
+    <button onClick={onClick} className="flex-1 flex flex-col items-center gap-2 py-1">
+      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: P.pillBg ?? P.input }}>
+        <Icon size={17} color={P.textPrimary} />
+      </div>
+      <span className="text-[12px] font-medium text-center" style={{ color: P.textPrimary }}>{label}</span>
+    </button>
+  );
+}
+
+function SettingsRow({ icon: Icon, label, value, onClick, color, P, last }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center justify-between px-3.5 py-3"
+      style={{ color: color ?? P.textPrimary, borderBottom: last ? "none" : `1px solid ${P.divider}` }}
+    >
+      <span className="flex items-center gap-2.5 text-[13px] font-medium">
+        {Icon && <Icon size={15} color={color ?? P.textMuted} />}
+        {label}
+      </span>
+      {value != null && <span className="text-[12.5px]" style={{ color: P.textMuted }}>{value}</span>}
+    </button>
+  );
+}
+
+function SettingsScreen({ session, activeKey, onBack, onLock, onReset, theme, onToggleTheme, autoLockMinutes, onChangeAutoLock, P }) {
   const [showReveal, setShowReveal] = useState(false);
   const [showRevealKey, setShowRevealKey] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -1895,26 +1957,17 @@ function SettingsScreen({ session, activeKey, onBack, onLock, onReset, theme, on
   return (
     <ScreenShell title="Settings" onBack={onBack} P={P}>
       <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={sectionLabelStyle}>Security</div>
-      <div className="rounded-2xl p-1 overflow-hidden mb-5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-        {!isImportedAccount && (
-          <button onClick={() => setShowReveal(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
-            <Eye size={15} color={P.textMuted} /> Reveal recovery phrase
-          </button>
-        )}
-        <button onClick={() => setShowRevealKey(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
-          <Eye size={15} color={P.textMuted} /> Export private key
-        </button>
-        {!isImportedAccount && (
-          <button onClick={() => setShowChangePassword(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
-            <Lock size={15} color={P.textMuted} /> Change password
-          </button>
-        )}
-        <button onClick={onLock} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: P.textPrimary }}>
-          <Lock size={15} color={P.textMuted} /> Lock wallet
-        </button>
-        <button onClick={() => setShowReset(true)} className="w-full flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-[13px] font-medium" style={{ color: "#D92D20" }}>
-          <Trash2 size={15} color="#D92D20" /> Remove wallet from this browser
-        </button>
+      <div className="rounded-2xl overflow-hidden mb-5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-stretch px-2 pt-3 pb-2.5" style={{ borderBottom: `1px solid ${P.divider}` }}>
+          {!isImportedAccount && <SettingsIconAction icon={FileText} label="Recovery phrase" onClick={() => setShowReveal(true)} P={P} />}
+          <SettingsIconAction icon={KeyIcon} label="Export key" onClick={() => setShowRevealKey(true)} P={P} />
+          {!isImportedAccount && <SettingsIconAction icon={Lock} label="Password" onClick={() => setShowChangePassword(true)} P={P} />}
+        </div>
+        <SettingsRow icon={Clock} label="Auto-lock" value={formatAutoLockLabel(autoLockMinutes)} onClick={onChangeAutoLock} P={P} />
+        <SettingsRow label="Lock wallet" onClick={onLock} color={LIME_DEEP} P={P} last />
+      </div>
+      <div className="rounded-2xl overflow-hidden mb-5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <SettingsRow icon={Trash2} label="Remove wallet from this browser" onClick={() => setShowReset(true)} color="#D92D20" P={P} last />
       </div>
 
       {onToggleTheme && (
@@ -1943,7 +1996,12 @@ function SettingsScreen({ session, activeKey, onBack, onLock, onReset, theme, on
 
       <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={sectionLabelStyle}>About</div>
       <div className="rounded-2xl px-3.5 py-3 flex items-center justify-between" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-        <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Mango Wallet</span>
+        <span className="flex items-center gap-2.5">
+          <span className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: P.pillBg ?? P.input }}>
+            <Info size={14} color={P.textMuted} />
+          </span>
+          <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Mango Wallet</span>
+        </span>
         {version && <span className="text-[12px] font-mono" style={{ color: P.textMuted }}>v{version}</span>}
       </div>
 
@@ -2083,6 +2141,7 @@ function genId(prefix) {
 
 function MangoWalletInner({ P, theme, onToggleTheme }) {
   const [screen, setScreen] = useState(() => (loadVault() ? "locked" : "welcome"));
+  const [autoLockMinutes, setAutoLockMinutes] = useState(loadAutoLockMinutes);
   const [pendingMnemonic, setPendingMnemonic] = useState(null); // in-memory only, during onboarding
   const [pendingImportPhrase, setPendingImportPhrase] = useState(null);
   const [pendingNewWalletMnemonic, setPendingNewWalletMnemonic] = useState(null); // in-memory only, during "add wallet"
@@ -2233,6 +2292,42 @@ function MangoWalletInner({ P, theme, onToggleTheme }) {
     setScreen("locked");
   }
 
+  function handleChangeAutoLock() {
+    const currentIndex = AUTO_LOCK_OPTIONS.indexOf(autoLockMinutes);
+    const next = AUTO_LOCK_OPTIONS[(currentIndex + 1) % AUTO_LOCK_OPTIONS.length];
+    setAutoLockMinutes(next);
+    saveAutoLockMinutes(next);
+  }
+
+  // Real idle-timeout auto-lock — gated on whether a key is actually
+  // sitting decrypted in memory (wallets/importedKeys non-empty), not on
+  // which screen is showing. That's the real invariant that matters, and
+  // it stays correct automatically as screens are added/renamed later —
+  // an allowlist of screen name strings here would silently stop
+  // protecting a new screen someone adds in the unlocked flow (e.g. the
+  // add-wallet-* steps, which run with the existing wallet already
+  // decrypted). Deliberately omits handleLock from the dependency array:
+  // it's a plain function declaration recreated every render, and
+  // including it would reset the idle timer on every unrelated re-render
+  // (a balance refresh, a typed character) rather than only on real user
+  // activity.
+  useEffect(() => {
+    if (wallets.length === 0 && importedKeys.length === 0) return; // nothing decrypted in memory to protect
+    if (autoLockMinutes === 0) return; // "Never"
+    let timer = setTimeout(handleLock, autoLockMinutes * 60 * 1000);
+    function resetTimer() {
+      clearTimeout(timer);
+      timer = setTimeout(handleLock, autoLockMinutes * 60 * 1000);
+    }
+    const events = ["mousemove", "keydown", "mousedown", "touchstart", "scroll"];
+    events.forEach((evt) => window.addEventListener(evt, resetTimer));
+    return () => {
+      clearTimeout(timer);
+      events.forEach((evt) => window.removeEventListener(evt, resetTimer));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallets.length, importedKeys.length, autoLockMinutes]);
+
   function handleReset() {
     setWallets([]);
     setImportedKeys([]);
@@ -2318,6 +2413,8 @@ function MangoWalletInner({ P, theme, onToggleTheme }) {
         onReset={handleReset}
         theme={theme}
         onToggleTheme={onToggleTheme}
+        autoLockMinutes={autoLockMinutes}
+        onChangeAutoLock={handleChangeAutoLock}
         P={P}
       />
     );

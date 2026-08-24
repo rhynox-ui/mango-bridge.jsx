@@ -21,11 +21,28 @@
      stays small. -->
 <link rel="stylesheet" href="popup.css" />
 <style>
+  /* Real Mango theme tokens (src/theme.js's PALETTE), duplicated here as
+     CSS custom properties so the plain-DOM "legacy" screens below (never
+     part of the React tree, so they can't just read P from props) can use
+     them too. These :root values are the DARK set, used only as the
+     first-paint default before popup.js's own applyLegacyThemeVars() runs
+     — which it does synchronously, before any legacy screen mounts, using
+     the user's actual saved theme preference (loadTheme()) rather than
+     always dark. Previously these were hardcoded hex literals baked
+     permanently to dark, which meant the approve/connect popup a dApp
+     triggers (e.g. clicking Connect on another site) stayed dark even for
+     someone who picked Light in Settings — a real, visible inconsistency,
+     not just a hardcoded-default nicety. */
+  :root {
+    --mango-bg: #0A0A0B; --mango-panel: #151517; --mango-panelBorder: #232326; --mango-input: #0E0E10;
+    --mango-textPrimary: #F5F5F6; --mango-textSecondary: #9A9AA0; --mango-textMuted: #57575D;
+    --mango-divider: #1D1D20; --mango-ctaBg: #F5F5F6; --mango-ctaText: #0A0A0B;
+  }
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
     margin: 0; width: 400px; min-height: 100vh; overflow-y: auto;
-    background: #0A0A0B; color: #F5F5F6;
+    background: var(--mango-bg); color: var(--mango-textPrimary);
     font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 13px;
   }
@@ -57,16 +74,16 @@
      render path — see popup.js's mount()) keeps this CSS from ever
      touching React-rendered markup again. */
   #root.legacy .display { font-family: "Space Grotesk", "Inter", sans-serif; }
-  #root.legacy h1 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 15px; font-weight: 600; margin: 0 0 4px; }
-  #root.legacy p { color: #9A9AA0; line-height: 1.5; margin: 0 0 12px; }
-  #root.legacy .panel { background: #151517; border: 1px solid #232326; border-radius: 16px; padding: 18px; margin-bottom: 12px; }
+  #root.legacy h1 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 15px; font-weight: 600; margin: 0 0 4px; color: var(--mango-textPrimary); }
+  #root.legacy p { color: var(--mango-textSecondary); line-height: 1.5; margin: 0 0 12px; }
+  #root.legacy .panel { background: var(--mango-panel); border: 1px solid var(--mango-panelBorder); border-radius: 16px; padding: 18px; margin-bottom: 12px; }
   #root.legacy .row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
-  #root.legacy .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #F5F5F6; }
-  #root.legacy .muted { color: #57575D; }
-  #root.legacy .secondary-text { color: #9A9AA0; }
+  #root.legacy .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: var(--mango-textPrimary); }
+  #root.legacy .muted { color: var(--mango-textMuted); }
+  #root.legacy .secondary-text { color: var(--mango-textSecondary); }
   #root.legacy input, #root.legacy textarea {
-    width: 100%; background: #0E0E10; border: 1px solid #232326; border-radius: 12px;
-    color: #F5F5F6; padding: 10px 12px; font-size: 13px; margin-bottom: 8px; font-family: inherit;
+    width: 100%; background: var(--mango-input); border: 1px solid var(--mango-panelBorder); border-radius: 12px;
+    color: var(--mango-textPrimary); padding: 10px 12px; font-size: 13px; margin-bottom: 8px; font-family: inherit;
   }
   #root.legacy textarea { resize: none; font-family: "IBM Plex Mono", ui-monospace, monospace; }
   #root.legacy button {
@@ -75,16 +92,16 @@
     font-size: 14px; cursor: pointer; margin-bottom: 8px;
   }
   #root.legacy .btn-primary { background: #FF9A2E; color: #0A0A0B; }
-  #root.legacy .btn-primary:disabled { background: #1D1D20; color: #57575D; cursor: not-allowed; }
-  #root.legacy .btn-secondary { background: #1F1F22; color: #F5F5F6; }
+  #root.legacy .btn-primary:disabled { background: var(--mango-divider); color: var(--mango-textMuted); cursor: not-allowed; }
+  #root.legacy .btn-secondary { background: var(--mango-panelBorder); color: var(--mango-textPrimary); }
   #root.legacy .btn-danger { background: #D92D20; color: #FFFFFF; }
   #root.legacy .btn-row { display: flex; gap: 8px; }
   #root.legacy .btn-row button { margin-bottom: 0; }
   #root.legacy .error { color: #F97066; font-size: 11.5px; margin: -4px 0 8px; font-family: "Inter", sans-serif; }
   #root.legacy .words-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 12px; }
-  #root.legacy .word { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; background: #0E0E10; border-radius: 8px; padding: 6px 8px; }
-  #root.legacy .word span { color: #57575D; margin-right: 4px; }
-  #root.legacy .origin-badge { font-size: 11px; color: #9A9AA0; word-break: break-all; }
+  #root.legacy .word { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; background: var(--mango-input); border-radius: 8px; padding: 6px 8px; color: var(--mango-textPrimary); }
+  #root.legacy .word span { color: var(--mango-textMuted); margin-right: 4px; }
+  #root.legacy .origin-badge { font-size: 11px; color: var(--mango-textSecondary); word-break: break-all; }
   #root.legacy .link { color: #FF9A2E; text-decoration: none; font-size: 12px; cursor: pointer; }
   #root.legacy a.link { display: block; text-align: center; }
   #root.legacy .icon-circle {

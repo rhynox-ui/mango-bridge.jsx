@@ -65,6 +65,33 @@ function saveTheme(theme) {
   }
 }
 
+// popup.html's plain-DOM "legacy" screens (onboarding reached via a
+// pending dApp request, and the approve/reject request UI itself — see
+// renderApproval below) can't read React props, so they read these CSS
+// custom properties instead. Setting them here, from the SAME PALETTE
+// object the real MangoWalletTab UI uses, keeps both surfaces on one real
+// source of truth instead of a second, hand-duplicated set of hex values
+// baked into the stylesheet. Called synchronously before main() renders
+// anything, using the user's actual saved theme — previously popup.html
+// hardcoded these to the dark palette permanently, so a dApp's Connect
+// popup stayed dark even for someone who'd picked Light in Settings.
+function applyLegacyThemeVars(theme) {
+  const P = PALETTE[theme];
+  const root = document.documentElement.style;
+  root.setProperty("--mango-bg", P.bg);
+  root.setProperty("--mango-panel", P.panel);
+  root.setProperty("--mango-panelBorder", P.panelBorder);
+  root.setProperty("--mango-input", P.input);
+  root.setProperty("--mango-textPrimary", P.textPrimary);
+  root.setProperty("--mango-textSecondary", P.textSecondary);
+  root.setProperty("--mango-textMuted", P.textMuted);
+  root.setProperty("--mango-divider", P.divider);
+  root.setProperty("--mango-ctaBg", P.ctaBg);
+  root.setProperty("--mango-ctaText", P.ctaText);
+  document.documentElement.style.colorScheme = theme; // native input caret/autofill/scrollbar coloring, same as ExtensionApp's own useEffect does for the React path
+}
+applyLegacyThemeVars(loadTheme());
+
 // Owns the theme preference and hands it down into MangoWalletTab, which
 // now surfaces its own Light/Dark control inside its Settings screen
 // (matching mango-mobile's own Settings > Appearance section) — no
