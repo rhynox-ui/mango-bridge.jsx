@@ -36,6 +36,10 @@ export const RPC_FALLBACKS = {
   196: ["https://xlayerrpc.okx.com", "https://rpc.xlayer.tech"],
   4663: ["https://rpc.mainnet.chain.robinhood.com", "https://robinhood-rpc.publicnode.com"],
   988: ["https://rpc.stable.xyz"],
+  // Fantom — see wagmi.js's own copy of this entry for the full reasoning
+  // (Thirdweb-default override, added for walletChains.js's wallet-only
+  // chain list, not live-checked from this sandbox).
+  250: ["https://rpcapi.fantom.network", "https://fantom-rpc.publicnode.com"],
 };
 
 export function transportFor(chainId) {

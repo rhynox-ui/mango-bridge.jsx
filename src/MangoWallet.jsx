@@ -77,6 +77,8 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   NetworkPolygon, NetworkOptimism, NetworkZksync, NetworkLinea, NetworkScroll, NetworkGnosis,
   NetworkMonad, NetworkSonic, NetworkMantle, NetworkBlast, NetworkBerachain, NetworkWorld, NetworkSeiNetwork,
+  NetworkCelo, NetworkFantom, NetworkMoonbeam, NetworkCronos, NetworkMetisAndromeda, NetworkMode,
+  NetworkZora, NetworkMantaPacific, NetworkTaiko, NetworkPolygonZkevm, NetworkFraxtal,
 } from "@web3icons/react";
 import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle, QrCode, X as XIcon } from "lucide-react";
 import { isAddress, parseUnits } from "viem";
@@ -187,8 +189,24 @@ const WALLET_ONLY_ICON = {
   linea: NetworkLinea, scroll: NetworkScroll, gnosis: NetworkGnosis,
   monad: NetworkMonad, sonic: NetworkSonic, mantle: NetworkMantle,
   blast: NetworkBlast, berachain: NetworkBerachain, worldchain: NetworkWorld, sei: NetworkSeiNetwork,
+  celo: NetworkCelo, fantom: NetworkFantom, moonbeam: NetworkMoonbeam, cronos: NetworkCronos,
+  metis: NetworkMetisAndromeda, mode: NetworkMode, zora: NetworkZora, manta: NetworkMantaPacific,
+  taiko: NetworkTaiko, polygonzkevm: NetworkPolygonZkevm, fraxtal: NetworkFraxtal,
 };
+// opBNB has no matching icon anywhere in @web3icons/react (checked the
+// installed package directly, both the branded and mono sets) — same gap
+// mango-mobile's own NetworkIcon.tsx already documents and works around
+// the same way: a plain tinted circle in BNB's real brand yellow, since
+// opBNB is a BNB Chain L2, rather than a generic "?" fallback that implies
+// an unrecognized chain.
 function WalletChainBadge({ id, size = 18 }) {
+  if (id === "opbnb") {
+    return (
+      <span className="flex items-center justify-center rounded-full shrink-0" style={{ width: size, height: size, background: "#F0B90B22", border: "1px solid #F0B90B55" }}>
+        <span style={{ fontSize: size * 0.42, fontWeight: 700, color: "#F0B90B" }}>BNB</span>
+      </span>
+    );
+  }
   const Icon = WALLET_ONLY_ICON[id];
   if (!Icon) return <ChainBadge id={id} size={size} />;
   return (

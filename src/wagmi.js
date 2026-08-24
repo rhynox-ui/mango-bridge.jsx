@@ -56,6 +56,18 @@ export const RPC_FALLBACKS = {
   196: ["https://xlayerrpc.okx.com", "https://rpc.xlayer.tech"], // X Layer — both OKX-operated (no independent 3rd-party endpoint is documented), but genuinely two separate documented URLs
   4663: ["https://rpc.mainnet.chain.robinhood.com", "https://robinhood-rpc.publicnode.com"], // Robinhood Chain — official + PublicNode (third-party; Robinhood's own docs only list the one URL)
   988: ["https://rpc.stable.xyz", alchemyUrl("stable-mainnet")], // Stable — official (the only one Stable's own docs list) + Alchemy (verified real endpoint)
+  // Fantom — not a Bridge chain, but wagmi/chains' own default RPC for it
+  // IS Thirdweb-operated (250.rpc.thirdweb.com), same violation this list
+  // already fixed for BNB Chain above. Overridden here with Fantom's own
+  // long-standing official public RPC + PublicNode, same pattern as every
+  // other entry — added for Mango Wallet's wallet-only chain list (see
+  // walletChains.js), which looks up RPC_FALLBACKS by chain id regardless
+  // of Bridge support. Unlike the rest of this list, this pair was NOT
+  // live-checked from a network call (this sandbox's outbound network is
+  // allowlisted and blocks arbitrary RPC hosts) — both are well-known,
+  // long-documented public endpoints, but worth a real spot-check before
+  // depending on them for anything high-value.
+  250: ["https://rpcapi.fantom.network", "https://fantom-rpc.publicnode.com"],
 };
 
 function transportFor(chainId) {

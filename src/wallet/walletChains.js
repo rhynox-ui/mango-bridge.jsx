@@ -20,35 +20,57 @@
 // (live mainnet since Nov 2025, EVM-compatible, real CCTP bridge).
 //
 // Every default RPC below was independently checked against this
-// project's existing "no Thirdweb defaults" policy (see wagmi.js) —
-// wagmi/chains' default for Fantom is Thirdweb-operated, which is why
-// Fantom isn't in this list (Sonic, its de facto successor, is).
+// project's existing "no Thirdweb defaults" policy (see wagmi.js).
+// Fantom's wagmi/chains default IS Thirdweb-operated — rather than
+// exclude it again now that mango-mobile's own chain list treats Fantom
+// and Sonic as two genuinely separate chains (not an either/or), its
+// Thirdweb default is overridden via wagmi.js/chainRegistry.js's own
+// RPC_FALLBACKS map (keyed by chain id 250), the same mechanism already
+// used to replace BNB Chain's Thirdweb default elsewhere in this project.
+//
+// Batch 2 (celo through fraxtal below): ported from mango-mobile's own
+// already-shipped chain list (docs/CHAINS.md) — ids and native-currency
+// symbols cross-checked directly against this repo's own installed
+// wagmi/chains package, not copied blind. Their default RPCs are each
+// chain's own official/foundation endpoint (confirmed non-Thirdweb via
+// the same installed-package check), so — like Monad and Sei above —
+// none has a WALLET_ONLY_RPC_FALLBACK entry: a real, verified single
+// endpoint rather than a guessed second one.
 
 import {
   polygon, optimism, zksync, linea, scroll, gnosis,
   monad, sonic, mantle, blast, berachain, worldchain, sei,
+  celo, fantom, moonbeam, cronos, metis, mode, zora, manta, opBNB, taiko, polygonZkEvm, fraxtal,
 } from "wagmi/chains";
 
 export const WALLET_ONLY_EVM_CHAINS = {
   polygon, optimism, zksync, linea, scroll, gnosis,
   monad, sonic, mantle, blast, berachain, worldchain, sei,
+  celo, fantom, moonbeam, cronos, metis, mode, zora, manta, opbnb: opBNB, taiko, polygonzkevm: polygonZkEvm, fraxtal,
 };
 
 export const WALLET_ONLY_CHAIN_ORDER = [
   "polygon", "optimism", "zksync", "linea", "scroll", "gnosis",
   "monad", "sonic", "mantle", "blast", "berachain", "worldchain", "sei",
+  "celo", "fantom", "moonbeam", "cronos", "metis", "mode", "zora", "manta", "opbnb", "taiko", "polygonzkevm", "fraxtal",
 ];
 
 export const WALLET_ONLY_CHAIN_LABEL = {
   polygon: "Polygon", optimism: "OP Mainnet", zksync: "ZKsync Era", linea: "Linea",
   scroll: "Scroll", gnosis: "Gnosis", monad: "Monad", sonic: "Sonic",
   mantle: "Mantle", blast: "Blast", berachain: "Berachain", worldchain: "World Chain", sei: "Sei",
+  celo: "Celo", fantom: "Fantom", moonbeam: "Moonbeam", cronos: "Cronos", metis: "Metis",
+  mode: "Mode", zora: "Zora", manta: "Manta Pacific", opbnb: "opBNB", taiko: "Taiko",
+  polygonzkevm: "Polygon zkEVM", fraxtal: "Fraxtal",
 };
 
 export const WALLET_ONLY_NATIVE_SYMBOL = {
   polygon: "POL", optimism: "ETH", zksync: "ETH", linea: "ETH",
   scroll: "ETH", gnosis: "XDAI", monad: "MON", sonic: "S",
   mantle: "MNT", blast: "ETH", berachain: "BERA", worldchain: "ETH", sei: "SEI",
+  celo: "CELO", fantom: "FTM", moonbeam: "GLMR", cronos: "CRO", metis: "METIS",
+  mode: "ETH", zora: "ETH", manta: "ETH", opbnb: "BNB", taiko: "ETH",
+  polygonzkevm: "ETH", fraxtal: "FRAX",
 };
 
 // A second, real RPC endpoint per chain, keyed by chain id (matching
