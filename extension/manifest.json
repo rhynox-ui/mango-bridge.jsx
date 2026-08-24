@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Mango Wallet",
   "short_name": "Mango Wallet",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Self-custodial EVM + Solana wallet for Mango Protocol. Your keys never leave this device.",
   "icons": {
     "16": "icons/icon16.png",
@@ -31,12 +31,7 @@
       "all_frames": true
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": ["src/inpage.js"],
-      "matches": ["<all_urls>"]
-    }
-  ],
-  "permissions": ["storage", "windows"],
+  "minimum_chrome_version": "111",
+  "permissions": ["storage", "windows", "scripting"],
   "host_permissions": ["<all_urls>"]
 }

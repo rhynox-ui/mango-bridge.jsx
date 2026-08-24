@@ -26,6 +26,40 @@
 // simplest implementations), not something this file silently papers
 // over.
 
+// Registers inpage.js as a "world": "MAIN" content script, run
+// programmatically via chrome.scripting rather than as a static entry in
+// manifest.json's content_scripts array. Both forms exist in Chrome, but
+// the static-manifest form of a MAIN-world content script has a known,
+// documented reliability bug on some Chrome versions; registering it here
+// instead — once, at service-worker startup — is the form real wallet
+// extensions rely on for this. Chrome persists a registerContentScripts
+// registration across browser restarts by itself, so this only needs to
+// actually add it once; "already registered" on every later worker wake
+// (MV3 workers restart often) is the expected, harmless steady state.
+async function registerInpageScript() {
+  try {
+    await chrome.scripting.registerContentScripts([
+      {
+        id: "mango-inpage",
+        matches: ["<all_urls>"],
+        js: ["src/inpage.js"],
+        world: "MAIN",
+        runAt: "document_start",
+        allFrames: true,
+        persistAcrossSessions: true,
+      },
+    ]);
+  } catch (err) {
+    // Chrome throws if "mango-inpage" is already registered from a prior
+    // worker wake — that's success, not a failure, so only a genuinely
+    // different error is worth surfacing.
+    if (!String(err?.message).includes("Duplicate script ID")) {
+      console.error("Mango Wallet: failed to register inpage script", err);
+    }
+  }
+}
+registerInpageScript();
+
 const REQUEST_TYPE = "MANGO_WALLET_REQUEST";
 const EVENT_TYPE = "MANGO_WALLET_EVENT";
 const POPUP_READY_TYPE = "MANGO_WALLET_POPUP_READY";

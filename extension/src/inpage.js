@@ -1,14 +1,26 @@
 // extension/src/inpage.js
 //
-// Injected into the PAGE's own JS context (the "main world") by
-// content.js — this is the only file in the extension a dApp's own code
-// ever talks to directly. It defines window.ethereum (EIP-1193, the same
-// interface MetaMask/Coinbase Wallet expose) and window.mangoSolana +
+// Injected directly into the PAGE's own JS context (the "main world") by
+// background.js, via chrome.scripting.registerContentScripts({ world:
+// "MAIN", ... }) — this is the only file in the extension a dApp's own
+// code ever talks to directly. It defines window.ethereum (EIP-1193, the
+// same interface MetaMask/Coinbase Wallet expose) and window.mangoSolana +
 // a Wallet Standard-ish window.solana surface (the interface Phantom/
 // Solflare expose) — never touches key material itself. Every request is
 // forwarded, via window.postMessage, to content.js (isolated world) →
 // background.js (service worker), which is the only place a password
 // prompt / signature ever actually happens (in the extension's popup).
+//
+// Registered programmatically (see background.js's own comment on this)
+// rather than injected via a DOM-created <script src> tag, specifically
+// so this keeps working on dApps with a strict page CSP — a script tag
+// inserted into the page is subject to that page's script-src directive
+// and gets silently blocked on any site that sets one, while a
+// browser-injected "world": "MAIN" content script is not. Because
+// there's no actual <script> element in the page's DOM for this,
+// document.currentScript is unavailable here — see MANGO_ICON_SVG below
+// for why the EIP-6963 icon is a literal embedded value instead of
+// something handed over from content.js.
 //
 // Also announces itself via EIP-6963 (the modern multi-wallet discovery
 // standard most current dApp libraries — wagmi, RainbowKit — use instead
@@ -106,13 +118,21 @@
 
   // EIP-6963: announce on load and on every future request from a dApp
   // library that just started listening (the standard's own handshake).
-  // This script runs in the page's own "main world", which has no
-  // chrome.* API access at all — the icon URL has to be handed over by
-  // content.js (which does have chrome.runtime) via a data attribute on
-  // the <script> tag that injected this file; see content.js's own
-  // comment on why that's the one channel available for that handoff.
+  // The spec REQUIRES icon to be a data URI (RFC-2397), not a regular
+  // URL — a chrome-extension://... URL (what this used to send, handed
+  // over from content.js) is actually spec-non-compliant, separately
+  // from the CSP injection issue above. Embedding the real brand mark's
+  // own SVG paths (src/MangoLogo.jsx) as a self-contained base64 data URI
+  // fixes both problems at once: no cross-world handoff needed at all,
+  // and a correctly-formatted icon per spec.
   const MANGO_UUID = "b6c0a6c4-9a4e-4b3d-8c0a-6f3a1c2d4e5f"; // fixed, arbitrary — stays stable across versions so a dApp doesn't see "two different wallets" on reload
-  const iconUrl = document.currentScript?.dataset.iconUrl ?? "";
+  const MANGO_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 70 60">' +
+    '<path d="M27 4c1.5-2 4-3.5 6-3.5-.3 3-2.3 5.8-5.3 7-1-1-1.2-2.3-0.7-3.5Z" fill="#FF9A2E"/>' +
+    '<path d="M29 6c6-2 13 0.5 16 6.5-5.5 3-13 1.5-16.5-3-0.4-1.3-0.2-2.5 0.5-3.5Z" fill="#FF9A2E"/>' +
+    '<path d="M35 12c11 0 20 10.5 20 24s-10 24-20 24-20-10.5-20-24 9-24 20-24Z" fill="#FF9A2E"/>' +
+    '<path d="M35 12c2.5 0 4.8 0.4 6.9 1.2-7.7 2.6-13.4 11.6-13.4 22.3s5.7 19.7 13.4 22.3c-2.1 0.8-4.4 1.2-6.9 1.2-11 0-20-10.5-20-24s9-24 20-24Z" fill="#FFFFFF" opacity="0.16"/>' +
+    '</svg>';
+  const iconUrl = "data:image/svg+xml;base64," + btoa(MANGO_ICON_SVG);
   function announceEip6963() {
     window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
       detail: Object.freeze({

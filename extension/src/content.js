@@ -3,35 +3,22 @@
 // Isolated-world content script — the only piece of this extension that
 // can see both the page (via window.postMessage) and the extension's own
 // privileged APIs (via chrome.runtime). It has no access to key material
-// and makes no decisions: it just relays. Two jobs:
-//   1. Inject inpage.js into the page's own JS context as early as
-//      possible (document_start), so window.ethereum/window.solana exist
-//      before a dApp's bundle runs its own "is a wallet installed?" check.
-//   2. Forward every MANGO_WALLET_REQUEST from the page to background.js,
-//      and every response/event from background.js back to the page —
-//      tagging each with this frame's real origin, which the page's own
-//      inpage.js could otherwise lie about.
-
-(function injectInpageScript() {
-  const script = document.createElement("script");
-  script.src = chrome.runtime.getURL("src/inpage.js");
-  // A script element created via createElement defaults to async=true —
-  // fine for an ordinary page script, but this one specifically needs to
-  // run in document order, before any of the page's own inline/external
-  // scripts get a chance to check "is a wallet installed?" and decide
-  // there isn't one.
-  script.async = false;
-  // inpage.js runs in the page's own "main world" JS context, which has
-  // no access to chrome.* APIs at all (that isolation is the whole point
-  // of content scripts running in a separate "isolated world") — so it
-  // can't call chrome.runtime.getURL itself for the EIP-6963 icon. This
-  // dataset attribute is the one channel available to hand it over: both
-  // worlds share the same DOM, and document.currentScript works in
-  // either world since it's plain DOM access, not an extension API.
-  script.dataset.iconUrl = chrome.runtime.getURL("icons/icon128.png");
-  script.onload = function () { this.remove(); }; // no need to keep the <script> tag around once it's run
-  (document.head || document.documentElement).prepend(script);
-})();
+// and makes no decisions: it just relays.
+//
+// inpage.js used to be injected from here via a DOM-created <script src>
+// tag. That approach is subject to the PAGE's own Content-Security-Policy
+// script-src directive — any dApp with a strict CSP (increasingly common
+// on serious DeFi front-ends) silently blocked that tag from loading at
+// all, meaning window.ethereum/EIP-6963 never showed up there and Mango
+// looked "not installed" even though it was. inpage.js is now instead
+// declared directly in manifest.json as a second content_scripts entry
+// with "world": "MAIN" — Chrome injects it itself, the same way it
+// injects this file, which is NOT subject to the page's CSP (this is the
+// documented, CSP-proof MV3 pattern other wallet extensions use). This
+// file's only remaining job is forwarding every MANGO_WALLET_REQUEST from
+// the page to background.js, and every response/event from background.js
+// back to the page — tagging each with this frame's real origin, which
+// the page's own inpage.js could otherwise lie about.
 
 const REQUEST_TYPE = "MANGO_WALLET_REQUEST";
 const RESPONSE_TYPE = "MANGO_WALLET_RESPONSE";
