@@ -24,7 +24,7 @@
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
-    margin: 0; width: 400px; max-height: 600px; overflow-y: auto;
+    margin: 0; width: 400px; min-height: 100vh; overflow-y: auto;
     background: #0A0A0B; color: #F5F5F6;
     font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 13px;
@@ -32,8 +32,16 @@
   /* The full wallet app (MangoWalletTab, rendered when there's no pending
      dApp request) needs room to breathe; the compact approval/onboarding
      screens (rendered via the plain h() helper below) look fine with the
-     same padding. */
-  #root { padding: 16px; }
+     same padding.
+     min-height:100vh + a flex column lets WalletDashboard's own flex-1
+     Balances panel actually stretch down to fill real leftover space —
+     on a real desktop popup 100vh is just the small popup's own real
+     viewport (a few hundred px), but on Chromium-for-Android (Kiwi,
+     etc.), which renders this as a full page tab rather than a small
+     popup, this is the difference between the wallet's dark background
+     ending a third of the way down a tall phone screen (the browser's
+     own blank canvas showing through below it) and actually filling it. */
+  #root { padding: 16px; min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; }
 
   /* Everything below is scoped to #root.legacy — the plain h()-helper
      screens (approval/reject, and onboarding reached via a pending dApp

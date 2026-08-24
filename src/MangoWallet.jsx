@@ -1976,7 +1976,7 @@ function WalletDashboard({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 flex-1 min-h-0">
       <div className="rounded-2xl p-4" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
         <div className="flex items-center justify-between mb-4">
           <AccountSwitcher
@@ -2003,8 +2003,8 @@ function WalletDashboard({
         </div>
       </div>
 
-      <div className="rounded-2xl overflow-hidden" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-        <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${P.divider}` }}>
+      <div className="rounded-2xl overflow-hidden flex flex-col flex-1 min-h-0" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${P.divider}` }}>
           <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>Balances</span>
           <div className="flex items-center gap-3">
             <button onClick={() => setShowManage(true)} style={{ color: P.textMuted }} title="Add token or network">
@@ -2015,11 +2015,16 @@ function WalletDashboard({
             </button>
           </div>
         </div>
-        {/* Capped height + scroll — once custom tokens/networks are added
-            the list can run well past a single screen; the rest of the
-            dashboard (actions, reveal/export, lock) should never get
-            pushed out of reach by a long token list. */}
-        <div style={{ maxHeight: "340px", overflowY: "auto" }}>
+        {/* Grows to fill whatever real space is available (see popup.html's
+            #root flex column) instead of a fixed pixel cap — a short list
+            no longer leaves a dead gap below the panel, and a long one
+            still scrolls internally. This panel's own outer wrapper above
+            carries min-h-0 — without it, a flex child's intrinsic content
+            size wins over flex:1 and overflow:auto never actually
+            engages. The 200px floor here is just a UX safeguard against
+            collapsing to near-nothing if this ever renders somewhere
+            very short. */}
+        <div style={{ flex: 1, minHeight: "200px", overflowY: "auto" }}>
           {getWalletChainOrder().filter((key) => (key === "solana" ? !!session.solana : !!session.evm)).map((key, i) =>
             key === "solana" ? (
               <React.Fragment key={`${key}-${refreshKey}`}>
