@@ -2250,7 +2250,7 @@ function InstallExtensionGate({ P }) {
   return (
     <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
       <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
-        <MangoLogo size={20} color={LIME_DEEP} />
+        <MangoLogo size={20} color={P.textPrimary} />
       </div>
       <div>
         <div className="font-display text-[16px] font-semibold mb-1" style={{ color: P.textPrimary }}>Mango Wallet</div>
