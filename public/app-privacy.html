@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mango — Android App Privacy Policy</title>
+<meta name="description" content="Privacy policy for the Mango Protocol Android app: what data it collects, what stays on your device, and why." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0A0A0B; color: #F5F5F6;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 56px 24px 96px; }
+  h1 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 28px; font-weight: 700; margin: 0 0 6px; }
+  .updated { color: #57575D; font-size: 13px; margin-bottom: 40px; }
+  h2 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 17px; font-weight: 600; margin: 36px 0 10px; }
+  p { color: #C9C9CC; font-size: 14.5px; margin: 0 0 14px; }
+  ul { color: #C9C9CC; font-size: 14.5px; padding-left: 20px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+  code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; background: #151517; border: 1px solid #232326; border-radius: 4px; padding: 1px 5px; }
+  .callout { background: #151517; border: 1px solid #232326; border-radius: 12px; padding: 16px 18px; margin: 20px 0; }
+  a { color: #FF9A2E; }
+  .back { display: inline-block; margin-top: 40px; font-size: 13px; color: #9A9AA0; text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Mango — Android App Privacy Policy</h1>
+  <div class="updated">Last updated: August 24, 2026</div>
+
+  <div class="callout">
+    <p style="margin:0">Short version: the Mango app does not collect, transmit, or have access to your recovery phrase, private keys, password, or biometric data. Everything sensitive is generated and stored entirely on your device. The one thing the app does send to Mango's own servers is described plainly below: your public wallet address and a signed claim, only if you use the Referral feature.</p>
+  </div>
+
+  <h2>What Mango is</h2>
+  <p>Mango is a self-custodial mobile wallet for EVM-compatible chains and Solana, with built-in Bridge, Launchpad, and Browser features. "Self-custodial" means your recovery phrase and private keys are generated on your device, encrypted on your device, and never sent to Mango's servers or anyone else's — not in plain form, not encrypted, not in any form.</p>
+
+  <h2>What's stored, and where</h2>
+  <p>Your recovery phrase and private keys are encrypted with a password you choose and kept in secure, app-private storage on your device. If you turn on biometric unlock, that authentication happens through your device's own operating system (fingerprint or face recognition) — Mango never receives, sees, or stores your biometric data; the app only receives a yes/no result from the OS.</p>
+
+  <h2>What we collect</h2>
+  <p>By default, nothing. The app has no analytics SDK and no tracking. The one exception is the optional Referral feature: if you claim a referral or enter someone's referral code, the app sends your public wallet address, the referral code, and a message you sign with your wallet (proving you control that address) to Mango's own backend, solely to credit referral points. This never includes your private key, recovery phrase, or password, and using the wallet, Bridge, Launchpad, or Browser features without touching Referral sends nothing to Mango at all.</p>
+
+  <h2>Network requests this app makes</h2>
+  <ul>
+    <li><strong>Blockchain RPC endpoints</strong> — to show balances and send transactions, the app talks directly from your device to public blockchain RPC endpoints (the same kind of public infrastructure MetaMask, Phantom, and every other wallet use), never through a Mango-operated server for this.</li>
+    <li><strong>Relay Protocol's public API</strong> — the Bridge feature requests quotes and checks transfer status from Relay's own API when you bridge assets between chains.</li>
+    <li><strong>Mango's own backend</strong> — used only for the Referral feature described above, and to serve the in-app Browser's default pages.</li>
+  </ul>
+
+  <h2>In-app Browser</h2>
+  <p>Mango includes a built-in browser so you can connect your wallet to other apps and websites (dApps), the same way MetaMask's or Phantom's in-app browsers work. Any site you choose to visit there is a third party, not operated by Mango — what that site does with information you give it is covered by that site's own privacy policy, not this one. Mango only injects a wallet connection interface into the page; it does not read or collect your general browsing activity.</p>
+
+  <h2>Notifications</h2>
+  <p>The app can show you notifications on your device — for example, when a transaction confirms or as a reminder for a daily referral claim. These are generated and shown locally by the app on your own device and are not used to track you.</p>
+
+  <h2>Third parties</h2>
+  <p>Mango does not use any third-party analytics, advertising, or tracking SDKs. The only outside parties the app talks to are the public blockchain RPC endpoints and Relay Protocol's API described above, chosen for being real, independently verifiable public infrastructure — plus whatever dApp you choose to visit in the in-app Browser.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If this policy changes, the "Last updated" date above will change with it. Material changes will be reflected here before they take effect.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy or the app can be sent to <a href="mailto:mango@mangoprotocol.site">mango@mangoprotocol.site</a>, or through Mango's usual channels at <a href="https://mangoprotocol.site">mangoprotocol.site</a>.</p>
+
+  <a class="back" href="https://mangoprotocol.site">← Back to Mango</a>
+</main>
+</body>
+</html>
