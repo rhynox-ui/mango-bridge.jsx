@@ -183,7 +183,18 @@ function iconCircle(svgMarkup) {
   return wrap;
 }
 const WALLET_ICON_SVG = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#E8801A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>';
-const LOCK_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9A9AA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+// Real brand mark — same path data as src/MangoLogo.jsx — in place of a
+// generic padlock on the returning-user Unlock screen (see renderUnlock
+// below). currentColor + a wrapping `color:` style is the SVG equivalent
+// of MangoLogo's own `color` prop, so this follows the saved theme
+// (var(--mango-textPrimary)) the same way MangoLogo's uses of P.textPrimary
+// do everywhere else in this project, rather than a fixed light/dark hex.
+const MANGO_LOGO_ICON_SVG = '<svg width="20" height="17" viewBox="0 0 70 60" style="display:block;color:var(--mango-textPrimary);">' +
+  '<path d="M27 4c1.5-2 4-3.5 6-3.5-.3 3-2.3 5.8-5.3 7-1-1-1.2-2.3-0.7-3.5Z" fill="currentColor"/>' +
+  '<path d="M29 6c6-2 13 0.5 16 6.5-5.5 3-13 1.5-16.5-3-0.4-1.3-0.2-2.5 0.5-3.5Z" fill="currentColor"/>' +
+  '<path d="M35 12c11 0 20 10.5 20 24s-10 24-20 24-20-10.5-20-24 9-24 20-24Z" fill="currentColor"/>' +
+  '<path d="M35 12c2.5 0 4.8 0.4 6.9 1.2-7.7 2.6-13.4 11.6-13.4 22.3s5.7 19.7 13.4 22.3c-2.1 0.8-4.4 1.2-6.9 1.2-11 0-20-10.5-20-24s9-24 20-24Z" fill="#FFFFFF" opacity="0.16"/>' +
+  '</svg>';
 
 // ---------------------------------------------------------------------
 // Onboarding + unlock
@@ -303,7 +314,7 @@ function renderUnlock(onDone) {
     });
     mount(
       h("div", { class: "panel", style: "display:flex;flex-direction:column;align-items:center;text-align:center;" },
-        iconCircle(LOCK_ICON_SVG),
+        iconCircle(MANGO_LOGO_ICON_SVG),
         h("h1", {}, "Unlock Mango Wallet"),
         h("div", { style: "width:100%;margin-top:4px;" },
           pw,

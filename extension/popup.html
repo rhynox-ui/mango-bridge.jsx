@@ -91,7 +91,13 @@
     font-family: "Space Grotesk", "Inter", sans-serif; font-weight: 600;
     font-size: 14px; cursor: pointer; margin-bottom: 8px;
   }
-  #root.legacy .btn-primary { background: #FF9A2E; color: #0A0A0B; }
+  /* Dark/white, matching PrimaryButton's own P.ctaBg/P.ctaText in the
+     real React dashboard (src/MangoWallet.jsx) — this used to be a
+     hardcoded orange literal, inconsistent with every primary CTA
+     button elsewhere in the wallet, which have always been dark/white,
+     not the accent color. Orange stays reserved for smaller accents
+     (icon circles, links) — see this file's own --mango-* var comment. */
+  #root.legacy .btn-primary { background: var(--mango-ctaBg); color: var(--mango-ctaText); }
   #root.legacy .btn-primary:disabled { background: var(--mango-divider); color: var(--mango-textMuted); cursor: not-allowed; }
   #root.legacy .btn-secondary { background: var(--mango-panelBorder); color: var(--mango-textPrimary); }
   #root.legacy .btn-danger { background: #D92D20; color: #FFFFFF; }
