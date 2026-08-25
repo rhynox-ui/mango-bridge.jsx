@@ -1374,7 +1374,12 @@ function QrScanModal({ onDetected, onClose, P }) {
   useEffect(() => {
     let cancelled = false;
     const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
+    // willReadFrequently: true — this scan loop calls getImageData on
+    // every animation frame while the camera is open, exactly the
+    // repeated-readback pattern that flag exists for; without it Chrome
+    // logs a performance warning and keeps the canvas on the slower,
+    // GPU-backed default path.
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
     function scanLoop() {
       const video = videoRef.current;
