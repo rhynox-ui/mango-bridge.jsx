@@ -69,7 +69,7 @@
 // - Not yet built: an aggregate portfolio USD total (needs balance state
 //   lifted out of each independent row).
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 // Static, named imports only — same convention App.jsx's AssetIcon/ChainIcon
 // already established for this package. A namespace import with dynamic
 // property access (Web3Icons[name]) defeats tree-shaking and can pull the
@@ -314,7 +314,7 @@ function UsdSubtext({ balance, price, P }) {
   return <div className="text-[10.5px] text-right" style={{ color: P.textMuted }}>${fmt(balance * price, 2)}</div>;
 }
 
-function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh, onOpen }) {
+function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh, onOpen, onValue }) {
   // Uses walletRpc.js's own independent viem client — deliberately not
   // wagmi's shared useBalance/config, which the Bridge tab's connected-wallet
   // flows use. See walletRpc.js for why: keeps this tab's 13-chain balance
@@ -332,6 +332,16 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh, onOpen })
     return () => { cancelled = true; };
   }, [chainKey, evmAddress, forceFresh]);
   const price = useUsdPrice(NATIVE_SYMBOL_BY_CHAIN[chainKey]);
+  // Reports this row's own USD value up to WalletDashboard so it can sort
+  // chains you actually hold something on above ones you don't — see that
+  // component's own comment on why. Deliberately omits onValue from the
+  // dependency array: it's a fresh closure every parent render, and this
+  // should only refire when the actual balance/price change, not on every
+  // unrelated re-render.
+  useEffect(() => {
+    onValue?.(balance != null ? balance * (price ?? 0) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [balance, price]);
   return (
     <button
       onClick={onOpen}
@@ -353,7 +363,7 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh, onOpen })
   );
 }
 
-function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove, onOpen }) {
+function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove, onOpen, onValue }) {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -365,6 +375,10 @@ function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove,
     return () => { cancelled = true; };
   }, [chainKey, token.address, token.decimals, evmAddress, forceFresh]);
   const price = useUsdPrice(token.symbol);
+  useEffect(() => {
+    onValue?.(balance != null ? balance * (price ?? 0) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [balance, price]);
   return (
     <button onClick={onOpen} className="w-full flex items-center justify-between px-4 py-2 pl-11 text-left" style={{ borderTop: `1px solid ${P.divider}` }}>
       <span className="flex items-center gap-1.5 text-[11.5px]" style={{ color: P.textMuted }}>
@@ -385,7 +399,7 @@ function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove,
   );
 }
 
-function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove, onOpen }) {
+function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove, onOpen, onValue }) {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -397,6 +411,10 @@ function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove, onO
     return () => { cancelled = true; };
   }, [token.mint, token.decimals, solanaAddress, forceFresh]);
   const price = useUsdPrice(token.symbol);
+  useEffect(() => {
+    onValue?.(balance != null ? balance * (price ?? 0) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [balance, price]);
   return (
     <button onClick={onOpen} className="w-full flex items-center justify-between px-4 py-2 pl-11 text-left" style={{ borderTop: `1px solid ${P.divider}` }}>
       <span className="flex items-center gap-1.5 text-[11.5px]" style={{ color: P.textMuted }}>
@@ -417,7 +435,7 @@ function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove, onO
   );
 }
 
-function SolanaBalanceRow({ solanaAddress, P, forceFresh, onOpen }) {
+function SolanaBalanceRow({ solanaAddress, P, forceFresh, onOpen, onValue }) {
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -429,6 +447,10 @@ function SolanaBalanceRow({ solanaAddress, P, forceFresh, onOpen }) {
     return () => { cancelled = true; };
   }, [solanaAddress, forceFresh]);
   const price = useUsdPrice("SOL");
+  useEffect(() => {
+    onValue?.(balance != null ? balance * (price ?? 0) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [balance, price]);
   return (
     <button onClick={onOpen} className="w-full flex items-center justify-between px-4 py-3 text-left" style={{ borderTop: `1px solid ${P.divider}` }}>
       <div className="flex items-center gap-2.5">
@@ -1891,12 +1913,17 @@ function AssetDetailScreen({ session, chainKey, assetSymbol, onBack, onSendAsset
 // initialSession/onSessionChange props below) is still fresh enough to
 // skip asking for the password again.
 const AUTO_LOCK_STORAGE_KEY = "mango_wallet_autolock_minutes";
-export const AUTO_LOCK_OPTIONS = [1, 5, 15, 20, 30, 0]; // 0 means "Never"
+// Just the quick-pick chips AutoLockModal offers — the actual stored value
+// isn't restricted to this list. A custom typed value (see AutoLockModal)
+// is a real, independent number, not one of these presets in disguise.
+export const AUTO_LOCK_PRESETS = [1, 5, 15, 20, 30, 60];
+const AUTO_LOCK_MAX_MINUTES = 999; // a sanity ceiling, not a meaningful security boundary — just guards against a fat-fingered typo like "9999999"
 export function loadAutoLockMinutes() {
   try {
     const raw = window.localStorage.getItem(AUTO_LOCK_STORAGE_KEY);
-    const n = raw == null ? 20 : Number(raw);
-    return AUTO_LOCK_OPTIONS.includes(n) ? n : 20;
+    if (raw == null) return 20;
+    const n = Math.floor(Number(raw));
+    return Number.isFinite(n) && n >= 0 && n <= AUTO_LOCK_MAX_MINUTES ? n : 20;
   } catch {
     return 20;
   }
@@ -1944,11 +1971,84 @@ function SettingsRow({ icon: Icon, label, value, onClick, color, P, last }) {
   );
 }
 
+/** A genuinely custom auto-lock timeout — any whole number of minutes the user actually types, not just a fixed cycle of presets. The preset chips are a convenience shortcut into the same input, not a separate mechanism. */
+function AutoLockModal({ currentMinutes, onSave, onClose, P }) {
+  const [never, setNever] = useState(currentMinutes === 0);
+  const [value, setValue] = useState(currentMinutes === 0 ? "" : String(currentMinutes));
+  const parsed = Math.floor(Number(value));
+  const isValid = never || (value !== "" && Number.isFinite(parsed) && parsed >= 1 && parsed <= AUTO_LOCK_MAX_MINUTES);
+
+  function handleSave() {
+    if (!isValid) return;
+    onSave(never ? 0 : parsed);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center justify-between mb-3">
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Auto-lock</span>
+          <button onClick={onClose} style={{ color: P.textMuted }}>✕</button>
+        </div>
+        <div className="text-[12px] mb-3" style={{ color: P.textMuted }}>
+          Lock the wallet automatically after this many minutes of inactivity.
+        </div>
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {AUTO_LOCK_PRESETS.map((p) => (
+            <button
+              key={p}
+              onClick={() => { setNever(false); setValue(String(p)); }}
+              className="px-3 py-1.5 rounded-full text-[12px] font-medium"
+              style={{
+                background: !never && parsed === p ? P.ctaBg : (P.pillBg ?? P.input),
+                color: !never && parsed === p ? P.ctaText : P.textSecondary,
+              }}
+            >
+              {p}m
+            </button>
+          ))}
+          <button
+            onClick={() => setNever(true)}
+            className="px-3 py-1.5 rounded-full text-[12px] font-medium"
+            style={{ background: never ? P.ctaBg : (P.pillBg ?? P.input), color: never ? P.ctaText : P.textSecondary }}
+          >
+            Never
+          </button>
+        </div>
+        {!never && (
+          <div className="flex items-center gap-2 mb-1">
+            <input
+              type="number"
+              min="1"
+              max={AUTO_LOCK_MAX_MINUTES}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder="Minutes"
+              autoFocus
+              className="flex-1 px-3 py-2.5 rounded-xl text-[13px]"
+              style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+            />
+            <span className="text-[12px] shrink-0" style={{ color: P.textMuted }}>minutes</span>
+          </div>
+        )}
+        {!never && value !== "" && !isValid && (
+          <div className="text-[11.5px] mb-1" style={{ color: "#D92D20" }}>Enter a whole number from 1 to {AUTO_LOCK_MAX_MINUTES}.</div>
+        )}
+        <div className="mt-3">
+          <PrimaryButton onClick={handleSave} disabled={!isValid} P={P}>Save</PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsScreen({ session, activeKey, onBack, onLock, onReset, theme, onToggleTheme, autoLockMinutes, onChangeAutoLock, P }) {
   const [showReveal, setShowReveal] = useState(false);
   const [showRevealKey, setShowRevealKey] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showReset, setShowReset] = useState(false);
+  const [showAutoLock, setShowAutoLock] = useState(false);
   const isImportedAccount = activeKey.type === "imported";
   // chrome.runtime.getManifest() only resolves inside a real extension
   // context — exactly where this screen is reached from in practice (see
@@ -1967,7 +2067,7 @@ function SettingsScreen({ session, activeKey, onBack, onLock, onReset, theme, on
           <SettingsIconAction icon={KeyIcon} label="Export key" onClick={() => setShowRevealKey(true)} P={P} />
           {!isImportedAccount && <SettingsIconAction icon={Lock} label="Password" onClick={() => setShowChangePassword(true)} P={P} />}
         </div>
-        <SettingsRow icon={Clock} label="Auto-lock" value={formatAutoLockLabel(autoLockMinutes)} onClick={onChangeAutoLock} P={P} />
+        <SettingsRow icon={Clock} label="Auto-lock" value={formatAutoLockLabel(autoLockMinutes)} onClick={() => setShowAutoLock(true)} P={P} />
         <SettingsRow label="Lock wallet" onClick={onLock} color={LIME_DEEP} P={P} last />
       </div>
       <div className="rounded-2xl overflow-hidden mb-5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
@@ -2015,6 +2115,9 @@ function SettingsScreen({ session, activeKey, onBack, onLock, onReset, theme, on
       {showReset && (
         <ResetWalletModal onClose={() => setShowReset(false)} onConfirmReset={() => { clearVault(); onReset(); }} P={P} />
       )}
+      {showAutoLock && (
+        <AutoLockModal currentMinutes={autoLockMinutes} onSave={onChangeAutoLock} onClose={() => setShowAutoLock(false)} P={P} />
+      )}
     </ScreenShell>
   );
 }
@@ -2030,6 +2133,38 @@ function WalletDashboard({
   const [refreshKey, setRefreshKey] = useState(0);
   const [justCopied, setJustCopied] = useState(false);
   const extensionInstalled = useExtensionInstalled();
+
+  // Surfaces chains you actually hold funds on above ones you don't,
+  // instead of a fixed list you have to scroll through to find where your
+  // money actually is. `${chainKey}::${assetKey}` -> USD value (null while
+  // that one row's balance/price hasn't resolved yet). Chain totals sum
+  // every asset reported under that chain (native + tokens); a chain with
+  // no entries yet at all keeps its default position (see the -1 fallback
+  // below) rather than jumping around before real data arrives.
+  const [assetUsdValues, setAssetUsdValues] = useState({});
+  const handleAssetValue = useCallback((chainKey, assetKey, value) => {
+    setAssetUsdValues((prev) => {
+      const mapKey = `${chainKey}::${assetKey}`;
+      if (prev[mapKey] === value) return prev; // avoid a re-render when nothing actually changed
+      return { ...prev, [mapKey]: value };
+    });
+  }, []);
+  const chainUsdTotals = useMemo(() => {
+    const totals = {};
+    for (const [mapKey, value] of Object.entries(assetUsdValues)) {
+      if (value == null) continue;
+      const chainKey = mapKey.slice(0, mapKey.indexOf("::"));
+      totals[chainKey] = (totals[chainKey] ?? 0) + value;
+    }
+    return totals;
+  }, [assetUsdValues]);
+  const sortedChainOrder = useMemo(() => {
+    const order = getWalletChainOrder().filter((key) => (key === "solana" ? !!session.solana : !!session.evm));
+    // A stable sort: chains tied at the "-1, nothing reported yet" fallback
+    // keep their original relative order, so the list only actually moves
+    // once real balances come in, not before.
+    return [...order].sort((a, b) => (chainUsdTotals[b] ?? -1) - (chainUsdTotals[a] ?? -1));
+  }, [session.evm, session.solana, chainUsdTotals]);
 
   function handleReceive() {
     navigator.clipboard.writeText(session.evm ? session.evm.address : session.solana.address);
@@ -2087,26 +2222,34 @@ function WalletDashboard({
             collapsing to near-nothing if this ever renders somewhere
             very short. */}
         <div style={{ flex: 1, minHeight: "200px", overflowY: "auto" }}>
-          {getWalletChainOrder().filter((key) => (key === "solana" ? !!session.solana : !!session.evm)).map((key, i) =>
+          {sortedChainOrder.map((key, i) =>
             key === "solana" ? (
               <React.Fragment key={`${key}-${refreshKey}`}>
-                <SolanaBalanceRow solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} onOpen={() => onOpenAsset("solana", "native")} />
+                <SolanaBalanceRow
+                  solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} onOpen={() => onOpenAsset("solana", "native")}
+                  onValue={(v) => handleAssetValue("solana", "native", v)}
+                />
                 {allTokensForChain("solana").map((token) => (
                   <SplTokenBalanceRow
                     key={token.mint} token={token} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0}
                     onRemove={token.isCustom ? () => { removeCustomToken("solana", token.mint); setRefreshKey((k) => k + 1); } : undefined}
                     onOpen={() => onOpenAsset("solana", token.symbol)}
+                    onValue={(v) => handleAssetValue("solana", token.mint, v)}
                   />
                 ))}
               </React.Fragment>
             ) : (
               <React.Fragment key={`${key}-${refreshKey}`}>
-                <EvmBalanceRow chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} onOpen={() => onOpenAsset(key, "native")} />
+                <EvmBalanceRow
+                  chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} onOpen={() => onOpenAsset(key, "native")}
+                  onValue={(v) => handleAssetValue(key, "native", v)}
+                />
                 {allTokensForChain(key).map((token) => (
                   <TokenBalanceRow
                     key={token.address} chainKey={key} token={token} evmAddress={session.evm.address} P={P} forceFresh={refreshKey > 0}
                     onRemove={token.isCustom ? () => { removeCustomToken(key, token.address); setRefreshKey((k) => k + 1); } : undefined}
                     onOpen={() => onOpenAsset(key, token.symbol)}
+                    onValue={(v) => handleAssetValue(key, token.address, v)}
                   />
                 ))}
               </React.Fragment>
@@ -2303,11 +2446,9 @@ function MangoWalletInner({ P, theme, onToggleTheme, initialSession, onSessionCh
     onSessionCleared?.();
   }
 
-  function handleChangeAutoLock() {
-    const currentIndex = AUTO_LOCK_OPTIONS.indexOf(autoLockMinutes);
-    const next = AUTO_LOCK_OPTIONS[(currentIndex + 1) % AUTO_LOCK_OPTIONS.length];
-    setAutoLockMinutes(next);
-    saveAutoLockMinutes(next);
+  function handleChangeAutoLock(minutes) {
+    setAutoLockMinutes(minutes);
+    saveAutoLockMinutes(minutes);
   }
 
   // Real idle-timeout auto-lock — gated on whether a key is actually
