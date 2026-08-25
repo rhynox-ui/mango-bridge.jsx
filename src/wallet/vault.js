@@ -113,6 +113,38 @@ export function hasVault() {
   return loadVault() !== null;
 }
 
+/**
+ * Decrypts the ENTIRE vault into the same { wallets, importedKeys,
+ * activeKey } shape MangoWalletInner keeps in memory once unlocked —
+ * every wallet's every HD account, and every imported key's private key.
+ * Exported specifically so popup.js's separate dApp-approval unlock flow
+ * (a plain-DOM screen, not the React MangoWalletTab component) can derive
+ * the exact same full session MangoWalletInner's own handleUnlock does,
+ * rather than a second, drifted copy of this same decryption loop. Throws
+ * on a wrong password (via decryptSecret's GCM auth tag), same as
+ * decryptSecret itself.
+ */
+export async function deriveFullVaultSession(vault, password, deriveAccountAtIndex) {
+  const decryptedWallets = [];
+  for (const w of vault.wallets) {
+    const mnemonic = await decryptSecret(w.mnemonicRecord, password);
+    const accounts = [];
+    for (let i = 0; i < w.accountCount; i++) accounts.push(deriveAccountAtIndex(mnemonic, i));
+    decryptedWallets.push({ id: w.id, label: w.label, accounts, accountLabels: w.accountLabels ?? {} });
+  }
+  const decryptedImports = await Promise.all(
+    (vault.importedKeys ?? []).map(async (entry) => ({
+      id: entry.id, chain: entry.chain, address: entry.address, label: entry.label,
+      privateKey: await decryptSecret(entry.record, password),
+    }))
+  );
+  return {
+    wallets: decryptedWallets,
+    importedKeys: decryptedImports,
+    activeKey: { type: "hd", walletId: decryptedWallets[0].id, index: 0 },
+  };
+}
+
 /** Permanently deletes the local encrypted vault. Callers MUST have already made the user confirm they've backed up their recovery phrase — this cannot be undone. */
 export function clearVault() {
   window.localStorage.removeItem(STORAGE_KEY);

@@ -212,4 +212,178 @@
   } else {
     try { Object.defineProperty(window, "mangoSolana", { value: solanaProvider, writable: false, configurable: true }); } catch { /* ignore */ }
   }
+
+  // ---------------------------------------------------------------------
+  // Solana Wallet Standard — the modern discovery mechanism most current
+  // Solana dApp libraries (@solana/wallet-adapter's Standard Wallet
+  // Adapter, used by Jupiter, Raydium, and others) rely on instead of
+  // checking window.solana directly. A dApp built with wallets={[]}
+  // (Wallet-Standard-only discovery, the pattern the ecosystem has been
+  // moving toward specifically to drop the legacy adapter bundle) never
+  // sees a wallet that only does the legacy window.solana injection above
+  // — this was a real, likely cause of "Solana connect doesn't work" on
+  // such dApps, the direct Solana-side analog of the EIP-6963 gap already
+  // fixed for EVM. Implements the exact real contract from the installed
+  // @wallet-standard/base, @wallet-standard/wallet, @wallet-standard/
+  // features, and @solana/wallet-standard-features packages (read
+  // directly from node_modules, not guessed) — registerWallet()'s own
+  // event-handshake code, the Wallet/WalletAccount interfaces, and each
+  // feature's real input/output shapes.
+  const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  // Verified against the real `bs58` package (already a project
+  // dependency) across 7 addresses, including the all-zero-byte System
+  // Program edge case (which a naive port of this algorithm gets wrong by
+  // one byte) — this file can't `import bs58` itself, since it ships as
+  // plain, dependency-free JS straight from src/ (see build.mjs's own
+  // comment on why).
+  function base58Decode(str) {
+    const bytes = [0];
+    for (let i = 0; i < str.length; i++) {
+      const value = BASE58_ALPHABET.indexOf(str[i]);
+      if (value === -1) throw new Error("Invalid base58 character: " + str[i]);
+      let carry = value;
+      for (let j = 0; j < bytes.length; j++) {
+        carry += bytes[j] * 58;
+        bytes[j] = carry & 0xff;
+        carry >>= 8;
+      }
+      while (carry > 0) {
+        bytes.push(carry & 0xff);
+        carry >>= 8;
+      }
+    }
+    for (let k = 0; str[k] === "1" && k < str.length - 1; k++) bytes.push(0); // off-by-one here silently corrupts the all-zero-byte address — see comment above
+    return new Uint8Array(bytes.reverse());
+  }
+  function bytesToBase64(bytes) {
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+  function base64ToBytes(b64) {
+    const binary = atob(b64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+  }
+
+  const SOLANA_MAINNET_CHAIN = "solana:mainnet";
+  const SUPPORTED_SOLANA_FEATURES = ["solana:signTransaction", "solana:signMessage", "solana:signAndSendTransaction"];
+
+  function buildWalletAccount(address) {
+    return {
+      address,
+      publicKey: base58Decode(address),
+      chains: [SOLANA_MAINNET_CHAIN],
+      features: SUPPORTED_SOLANA_FEATURES,
+    };
+  }
+
+  const standardEventListeners = { change: [] };
+  function emitStandardChange(properties) {
+    for (const fn of standardEventListeners.change) {
+      try { fn(properties); } catch { /* a dApp's own listener throwing shouldn't break the wallet */ }
+    }
+  }
+
+  const mangoStandardWallet = {
+    version: "1.0.0",
+    name: "Mango Wallet",
+    icon: iconUrl, // same base64 PNG data URI as the EIP-6963 announcement above — one real source, not a second icon
+    get chains() { return [SOLANA_MAINNET_CHAIN]; },
+    get accounts() {
+      return solanaProvider._connected && solanaProvider.publicKey
+        ? [buildWalletAccount(solanaProvider.publicKey.toBase58())]
+        : [];
+    },
+    features: {
+      "standard:connect": {
+        version: "1.0.0",
+        connect: async (input) => {
+          if (input?.silent) {
+            // Per spec: must not prompt, only return already-authorized
+            // accounts. This provider has no separate "authorized but not
+            // currently connected" persistence beyond the live page's own
+            // state, so silent mode's honest answer is whatever's already
+            // connected THIS page load, nothing invented beyond that.
+            return { accounts: mangoStandardWallet.accounts };
+          }
+          const { publicKey } = await solanaProvider.connect(); // real approval popup — same path window.solana.connect() uses
+          const account = buildWalletAccount(publicKey.toBase58());
+          emitStandardChange({ accounts: [account] });
+          return { accounts: [account] };
+        },
+      },
+      "standard:disconnect": {
+        version: "1.0.0",
+        disconnect: async () => {
+          await solanaProvider.disconnect();
+          emitStandardChange({ accounts: [] });
+        },
+      },
+      "standard:events": {
+        version: "1.0.0",
+        on: (event, listener) => {
+          if (event !== "change") return () => {}; // "change" is the only event type the spec defines
+          standardEventListeners.change.push(listener);
+          return () => {
+            standardEventListeners.change = standardEventListeners.change.filter((fn) => fn !== listener);
+          };
+        },
+      },
+      "solana:signTransaction": {
+        version: "1.0.0",
+        supportedTransactionVersions: ["legacy", 0],
+        signTransaction: async (...inputs) => {
+          const outputs = [];
+          for (const input of inputs) {
+            const base64Tx = bytesToBase64(input.transaction);
+            const signedBase64 = await solanaProvider.signTransaction(base64Tx);
+            outputs.push({ signedTransaction: base64ToBytes(signedBase64) });
+          }
+          return outputs;
+        },
+      },
+      "solana:signMessage": {
+        version: "1.1.0",
+        signMessage: async (...inputs) => {
+          const outputs = [];
+          for (const input of inputs) {
+            const { signature } = await solanaProvider.signMessage(input.message);
+            outputs.push({ signedMessage: input.message, signature, signatureType: "ed25519" });
+          }
+          return outputs;
+        },
+      },
+      "solana:signAndSendTransaction": {
+        version: "1.0.0",
+        supportedTransactionVersions: ["legacy", 0],
+        signAndSendTransaction: async (...inputs) => {
+          const outputs = [];
+          for (const input of inputs) {
+            const base64Tx = bytesToBase64(input.transaction);
+            const { signature: base58Signature } = await solanaProvider.signAndSendTransaction(base64Tx);
+            outputs.push({ signature: base58Decode(base58Signature) });
+          }
+          return outputs;
+        },
+      },
+    },
+  };
+
+  // The exact registerWallet() handshake from @wallet-standard/wallet's
+  // own source: dispatch wallet-standard:register-wallet so an
+  // already-loaded app can register immediately, AND listen for
+  // wallet-standard:app-ready so an app that loads AFTER this script
+  // still discovers it — order-independent either way.
+  function registerStandardWallet(wallet) {
+    const callback = ({ register }) => register(wallet);
+    try {
+      window.dispatchEvent(new CustomEvent("wallet-standard:register-wallet", { detail: callback }));
+    } catch { /* ignore — a dApp that hasn't loaded this event system yet just won't see it this way */ }
+    try {
+      window.addEventListener("wallet-standard:app-ready", (event) => callback(event.detail));
+    } catch { /* ignore */ }
+  }
+  registerStandardWallet(mangoStandardWallet);
 })();

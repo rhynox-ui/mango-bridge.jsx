@@ -29,10 +29,10 @@
 
 import React, { useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { MangoWalletTab } from "../../src/MangoWallet.jsx";
+import { MangoWalletTab, loadAutoLockMinutes } from "../../src/MangoWallet.jsx";
 import { PALETTE } from "../../src/theme.js";
 import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic } from "../../src/wallet/keys.js";
-import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault } from "../../src/wallet/vault.js";
+import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault, deriveFullVaultSession } from "../../src/wallet/vault.js";
 import {
   signAndSendEvmTx, signEvmPersonalMessage, signEvmTypedData,
   signSolanaTransaction, signAndSendSolanaTransaction, signSolanaMessage,
@@ -42,6 +42,80 @@ import { MAINNET_CHAIN_IDS } from "../../src/chainData.js";
 import { WALLET_ONLY_EVM_CHAINS } from "../../src/wallet/walletChains.js";
 import { addCustomToken } from "../../src/wallet/customTokens.js";
 import { isHex, hexToBytes, hexToString } from "viem";
+
+// ---------------------------------------------------------------------
+// Shared unlocked-session cache — chrome.storage.session (in-memory only,
+// per-browser-session: cleared on browser close or the extension being
+// disabled, NEVER written to disk). This is what lets "stop asking for
+// the password constantly" and "auto-lock after real inactivity" both be
+// true at once: without it, MangoWalletInner's own React state (this
+// popup's normal source of truth once unlocked) is destroyed the instant
+// the popup closes, and the separate dApp-approval popup below has never
+// shared any state with it at all — meaning literally every popup open
+// AND every dApp connect/sign request asked for the password again,
+// regardless of how recently the wallet was actually used. Shared by both
+// renderFullWalletApp() (the real dashboard) and the approval flow in
+// main() below, so unlocking in either place benefits the other.
+const SESSION_STORAGE_KEY = "mango_wallet_session";
+const ACTIVITY_TOUCH_MIN_INTERVAL_MS = 30_000; // throttles onActivity's writes — see MangoWalletInner's own comment on why it fires on every idle-timer reset
+
+function hasSessionStorage() {
+  return typeof chrome !== "undefined" && chrome.storage && chrome.storage.session;
+}
+
+/** Returns the cached session if one exists AND is still within the current auto-lock window — null otherwise (including "none cached" and "expired"). Never throws. */
+async function loadSessionCache() {
+  if (!hasSessionStorage()) return null;
+  try {
+    const stored = await chrome.storage.session.get(SESSION_STORAGE_KEY);
+    const cached = stored[SESSION_STORAGE_KEY];
+    if (!cached) return null;
+    const autoLockMinutes = loadAutoLockMinutes();
+    if (autoLockMinutes !== 0 && Date.now() - cached.lastActivityAt > autoLockMinutes * 60 * 1000) return null; // expired
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+function saveSessionCache(session) {
+  if (!hasSessionStorage()) return;
+  chrome.storage.session.set({ [SESSION_STORAGE_KEY]: { ...session, lastActivityAt: Date.now() } }).catch(() => {});
+}
+
+let lastActivityTouchAt = 0;
+/** Refreshes just the cached session's activity timestamp, throttled — called on every idle-timer reset while the dashboard is open, so it can't be a per-mousemove storage write. */
+function touchSessionActivity() {
+  if (!hasSessionStorage()) return;
+  const now = Date.now();
+  if (now - lastActivityTouchAt < ACTIVITY_TOUCH_MIN_INTERVAL_MS) return;
+  lastActivityTouchAt = now;
+  chrome.storage.session.get(SESSION_STORAGE_KEY).then((stored) => {
+    const cached = stored[SESSION_STORAGE_KEY];
+    if (!cached) return;
+    return chrome.storage.session.set({ [SESSION_STORAGE_KEY]: { ...cached, lastActivityAt: now } });
+  }).catch(() => {});
+}
+
+function clearSessionCache() {
+  if (!hasSessionStorage()) return;
+  chrome.storage.session.remove(SESSION_STORAGE_KEY).catch(() => {});
+}
+
+/** Extracts the {evm, solana} shape the approval flow needs for the currently-active key out of a cached session — mirrors MangoWalletInner's own identical computation (src/MangoWallet.jsx's `session` value) so both stay consistent. */
+function resolveActiveAccountFromSession(cached) {
+  const { wallets, importedKeys, activeKey } = cached;
+  if (activeKey.type === "hd") {
+    const wallet = wallets.find((w) => w.id === activeKey.walletId);
+    return wallet?.accounts?.[activeKey.index] ?? null;
+  }
+  const imported = importedKeys.find((k) => k.id === activeKey.id);
+  if (!imported) return null;
+  return {
+    evm: imported.chain === "evm" ? { address: imported.address, privateKey: imported.privateKey } : null,
+    solana: imported.chain === "solana" ? { address: imported.address, privateKey: imported.privateKey } : null,
+  };
+}
 
 // Numeric EVM chainId -> this app's own chainKey string (e.g. 8453 ->
 // "base"), built from the same two chain-key registries MangoWalletTab's
@@ -109,7 +183,7 @@ applyLegacyThemeVars(loadTheme());
 // now surfaces its own Light/Dark control inside its Settings screen
 // (matching mango-mobile's own Settings > Appearance section) — no
 // separate toggle button needed here anymore.
-function ExtensionApp() {
+function ExtensionApp({ initialSession }) {
   const [theme, setTheme] = useState(loadTheme);
   const P = PALETTE[theme];
 
@@ -125,10 +199,13 @@ function ExtensionApp() {
     saveTheme(next);
   }
 
-  return React.createElement(MangoWalletTab, { P, theme, onToggleTheme: toggleTheme });
+  return React.createElement(MangoWalletTab, {
+    P, theme, onToggleTheme: toggleTheme,
+    initialSession, onSessionChange: saveSessionCache, onSessionCleared: clearSessionCache, onActivity: touchSessionActivity,
+  });
 }
 
-function renderFullWalletApp() {
+async function renderFullWalletApp() {
   // MangoWallet.jsx's WelcomeScreen/WalletDashboard check
   // window.ethereum?.isMangoWallet to show "browser extension detected"
   // instead of re-promoting an install. That check only ever sees a real
@@ -138,7 +215,8 @@ function renderFullWalletApp() {
   // installed, so this is accurate, not a workaround.
   if (typeof window.ethereum === "undefined") window.ethereum = { isMangoWallet: true };
   root.classList.remove("legacy"); // in case a previous render() in this same page left it set
-  createRoot(root).render(React.createElement(ExtensionApp));
+  const initialSession = await loadSessionCache();
+  createRoot(root).render(React.createElement(ExtensionApp, { initialSession }));
 }
 
 function h(tag, attrs = {}, ...children) {
@@ -282,7 +360,16 @@ function renderCreatePassword(mnemonic, onDone) {
       const mnemonicRecord = await encryptSecret(mnemonic, pw.value);
       const id = `wallet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       saveVault({ wallets: [{ id, label: "Extension Wallet", mnemonicRecord, accountCount: 1, accountLabels: {} }], importedKeys: [] });
-      onDone(account0);
+      // onDone now receives the full session shape (matching
+      // MangoWalletInner's own in-memory state), not just one account —
+      // see main()'s afterUnlock, which caches this so the wallet stays
+      // unlocked for future popup opens and dApp requests instead of
+      // asking for the password again immediately.
+      onDone({
+        wallets: [{ id, label: "Extension Wallet", accounts: [account0], accountLabels: {} }],
+        importedKeys: [],
+        activeKey: { type: "hd", walletId: id, index: 0 },
+      });
     });
     mount(
       h("div", { class: "panel" },
@@ -305,8 +392,12 @@ function renderUnlock(onDone) {
     unlockBtn.addEventListener("click", async () => {
       const vault = loadVault();
       try {
-        const mnemonic = await decryptSecret(vault.wallets[0].mnemonicRecord, pw.value);
-        onDone(deriveAccountAtIndex(mnemonic, 0));
+        // Full vault, not just index 0 of wallet 0 — someone who's added
+        // extra wallets/accounts via the real dashboard would otherwise
+        // silently lose access to them in whatever session gets cached
+        // from THIS unlock (see main()'s afterUnlock).
+        const session = await deriveFullVaultSession(vault, pw.value, deriveAccountAtIndex);
+        onDone(session);
       } catch {
         error = "Incorrect password.";
         paint();
@@ -518,7 +609,7 @@ async function main() {
   const requestId = params.get("requestId") ? Number(params.get("requestId")) : null;
 
   if (requestId == null) {
-    renderFullWalletApp();
+    await renderFullWalletApp();
     return;
   }
 
@@ -528,8 +619,24 @@ async function main() {
     return;
   }
 
+  // The whole point of the shared session cache: a dApp asking to
+  // connect/sign shouldn't need the password again just because this is
+  // a separate popup window from the main dashboard — if the wallet was
+  // genuinely unlocked recently (anywhere), go straight to the approve/
+  // reject screen instead of re-prompting.
+  const cached = await loadSessionCache();
+  const cachedAccount = cached ? resolveActiveAccountFromSession(cached) : null;
+  if (cachedAccount) {
+    touchSessionActivity();
+    renderApproval(requestId, request, cachedAccount);
+    return;
+  }
+
   const vault = loadVault();
-  const afterUnlock = (account) => renderApproval(requestId, request, account);
+  const afterUnlock = (session) => {
+    saveSessionCache(session);
+    renderApproval(requestId, request, resolveActiveAccountFromSession(session));
+  };
   if (!vault) renderWelcome(afterUnlock);
   else renderUnlock(afterUnlock);
 }

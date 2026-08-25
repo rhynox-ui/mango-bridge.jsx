@@ -88,7 +88,7 @@ import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
 import { ChainBadge } from "./chainBadges.jsx";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
 import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic, suggestBip39Words } from "./wallet/keys.js";
-import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault } from "./wallet/vault.js";
+import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault, deriveFullVaultSession } from "./wallet/vault.js";
 import { parseImportedPrivateKey, KeyImportError } from "./wallet/walletKeyImport.js";
 import {
   fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, fetchWalletSplTokenBalance,
@@ -1886,18 +1886,22 @@ function AssetDetailScreen({ session, chainKey, assetSymbol, onBack, onSendAsset
 // under its own extension-only localStorage key, same pattern as
 // popup.js's theme preference — not part of the encrypted vault, since
 // it's a local UI preference, not wallet data.
+// Exported so popup.js can read the same setting when deciding whether a
+// cached, previously-unlocked session (see MangoWalletInner's
+// initialSession/onSessionChange props below) is still fresh enough to
+// skip asking for the password again.
 const AUTO_LOCK_STORAGE_KEY = "mango_wallet_autolock_minutes";
-const AUTO_LOCK_OPTIONS = [1, 5, 15, 30, 0]; // 0 means "Never"
-function loadAutoLockMinutes() {
+export const AUTO_LOCK_OPTIONS = [1, 5, 15, 20, 30, 0]; // 0 means "Never"
+export function loadAutoLockMinutes() {
   try {
     const raw = window.localStorage.getItem(AUTO_LOCK_STORAGE_KEY);
-    const n = raw == null ? 5 : Number(raw);
-    return AUTO_LOCK_OPTIONS.includes(n) ? n : 5;
+    const n = raw == null ? 20 : Number(raw);
+    return AUTO_LOCK_OPTIONS.includes(n) ? n : 20;
   } catch {
-    return 5;
+    return 20;
   }
 }
-function saveAutoLockMinutes(minutes) {
+export function saveAutoLockMinutes(minutes) {
   try {
     window.localStorage.setItem(AUTO_LOCK_STORAGE_KEY, String(minutes));
   } catch {
@@ -2139,8 +2143,25 @@ function genId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function MangoWalletInner({ P, theme, onToggleTheme }) {
-  const [screen, setScreen] = useState(() => (loadVault() ? "locked" : "welcome"));
+// initialSession/onSessionChange/onSessionCleared/onActivity together
+// implement real session persistence across popup close/reopen AND across
+// a separate dApp-approval popup window (see popup.js's own
+// loadSessionCache/saveSessionCache/touchSessionActivity/clearSessionCache) —
+// without this, MangoWalletInner's wallets/importedKeys state (this
+// component's only source of truth for decrypted keys) starts empty on
+// EVERY fresh mount, meaning literally every popup open, and every single
+// dApp connect/sign request, asked for the password again. That's not a
+// deliberate security posture — the vault's own PBKDF2/AES-GCM password
+// gate plus this file's idle-timeout auto-lock (below) already provide
+// the real protection; re-deriving keys from scratch on every mount added
+// friction without adding safety. initialSession seeds wallets/
+// importedKeys/activeKey directly from a still-fresh cached session (chrome.
+// storage.session — cleared on browser close/extension disable, never
+// written to disk) so a merely-reopened popup or a second dApp request
+// doesn't re-prompt; onSessionChange/onSessionCleared/onActivity keep
+// that cache in sync with this component's own state and idle-timer.
+function MangoWalletInner({ P, theme, onToggleTheme, initialSession, onSessionChange, onSessionCleared, onActivity }) {
+  const [screen, setScreen] = useState(() => (initialSession ? "dashboard" : loadVault() ? "locked" : "welcome"));
   const [autoLockMinutes, setAutoLockMinutes] = useState(loadAutoLockMinutes);
   const [pendingMnemonic, setPendingMnemonic] = useState(null); // in-memory only, during onboarding
   const [pendingImportPhrase, setPendingImportPhrase] = useState(null);
@@ -2159,16 +2180,16 @@ function MangoWalletInner({ P, theme, onToggleTheme }) {
   // needed transiently, to derive an account — at unlock, or when adding
   // a new account/wallet — rather than kept sitting in long-lived React
   // state (inspectable via React DevTools) for the entire session.
-  const [wallets, setWallets] = useState([]);
+  const [wallets, setWallets] = useState(() => initialSession?.wallets ?? []);
   // Standalone imported keys — NOT derived from any mnemonic, each tied
   // to exactly one chain (see walletKeyImport.js's module doc for why),
   // and — matching OKX's own flat treatment — not nested under any
   // wallet. { id, chain, address, label, privateKey } — privateKey
   // in-memory only while unlocked, same as every other private key here.
-  const [importedKeys, setImportedKeys] = useState([]);
+  const [importedKeys, setImportedKeys] = useState(() => initialSession?.importedKeys ?? []);
   // Which account is active — an HD {walletId, index} pair, or a
   // specific imported key's id.
-  const [activeKey, setActiveKey] = useState({ type: "hd", walletId: null, index: 0 });
+  const [activeKey, setActiveKey] = useState(() => initialSession?.activeKey ?? { type: "hd", walletId: null, index: 0 });
 
   async function finalizeWallet(mnemonic, password) {
     const account0 = deriveAccountAtIndex(mnemonic, 0);
@@ -2189,22 +2210,11 @@ function MangoWalletInner({ P, theme, onToggleTheme }) {
   async function handleUnlock(password) {
     const vault = loadVault();
     try {
-      const decryptedWallets = [];
-      for (const w of vault.wallets) {
-        const mnemonic = await decryptSecret(w.mnemonicRecord, password);
-        const accounts = [];
-        for (let i = 0; i < w.accountCount; i++) accounts.push(deriveAccountAtIndex(mnemonic, i));
-        decryptedWallets.push({ id: w.id, label: w.label, accounts, accountLabels: w.accountLabels ?? {} });
-      }
-      const decryptedImports = await Promise.all(
-        (vault.importedKeys ?? []).map(async (entry) => ({
-          id: entry.id, chain: entry.chain, address: entry.address, label: entry.label,
-          privateKey: await decryptSecret(entry.record, password),
-        }))
-      );
+      const { wallets: decryptedWallets, importedKeys: decryptedImports, activeKey: firstActiveKey } =
+        await deriveFullVaultSession(vault, password, deriveAccountAtIndex);
       setWallets(decryptedWallets);
       setImportedKeys(decryptedImports);
-      setActiveKey({ type: "hd", walletId: decryptedWallets[0].id, index: 0 });
+      setActiveKey(firstActiveKey);
       setScreen("dashboard");
       return true;
     } catch {
@@ -2290,6 +2300,7 @@ function MangoWalletInner({ P, theme, onToggleTheme }) {
     setImportedKeys([]);
     setActiveKey({ type: "hd", walletId: null, index: 0 });
     setScreen("locked");
+    onSessionCleared?.();
   }
 
   function handleChangeAutoLock() {
@@ -2318,6 +2329,15 @@ function MangoWalletInner({ P, theme, onToggleTheme }) {
     function resetTimer() {
       clearTimeout(timer);
       timer = setTimeout(handleLock, autoLockMinutes * 60 * 1000);
+      // Keeps the SHARED session cache's own activity timestamp fresh
+      // too — without this, someone actively using the dashboard for
+      // longer than autoLockMinutes (never idle, so this local timer
+      // never fires) would still get logged out if they closed the
+      // popup and reopened it, because the cache's last-known activity
+      // time would be stale from whenever the session was first cached.
+      // popup.js throttles the actual chrome.storage.session write
+      // internally, so this is safe to call on every reset.
+      onActivity?.();
     }
     const events = ["mousemove", "keydown", "mousedown", "touchstart", "scroll"];
     events.forEach((evt) => window.addEventListener(evt, resetTimer));
@@ -2328,6 +2348,16 @@ function MangoWalletInner({ P, theme, onToggleTheme }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallets.length, importedKeys.length, autoLockMinutes]);
 
+  // Keeps popup.js's shared session cache in sync with every real change
+  // to the decrypted session (unlock, add account, add wallet, import
+  // key, rename, ...) without needing to sprinkle a save call into each
+  // of those handlers individually.
+  useEffect(() => {
+    if (wallets.length === 0 && importedKeys.length === 0) return;
+    onSessionChange?.({ wallets, importedKeys, activeKey });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallets, importedKeys, activeKey]);
+
   function handleReset() {
     setWallets([]);
     setImportedKeys([]);
@@ -2336,6 +2366,7 @@ function MangoWalletInner({ P, theme, onToggleTheme }) {
     setPendingImportPhrase(null);
     setPendingNewWalletMnemonic(null);
     setScreen("welcome");
+    onSessionCleared?.();
   }
 
   // The active account's { evm, solana } — an HD account always has both;
@@ -2615,17 +2646,24 @@ function SiteWalletGate({ P }) {
   return extensionInstalled ? <OpenExtensionPrompt P={P} /> : <InstallExtensionGate P={P} />;
 }
 
-// theme/onToggleTheme are optional — only the extension popup (see
-// popup.js's ExtensionApp) actually owns a theme preference to thread
-// through, for the Settings screen's Appearance section. The site never
+// theme/onToggleTheme/initialSession/onSessionChange/onSessionCleared/
+// onActivity are all optional and extension-only — only popup.js's
+// ExtensionApp actually owns a theme preference and a chrome.storage.
+// session-backed unlocked-session cache to thread through (see
+// MangoWalletInner's own comment on why this exists). The site never
 // reaches MangoWalletInner (isExtensionPage() is only ever true on the
-// extension's own pages), so it never needs to pass these.
-export function MangoWalletTab({ P, theme, onToggleTheme }) {
+// extension's own pages), so it never needs to pass any of these.
+export function MangoWalletTab({ P, theme, onToggleTheme, initialSession, onSessionChange, onSessionCleared, onActivity }) {
   if (!WALLET_LIVE && !hasPreviewOverride()) {
     return <WalletComingSoon P={P} />;
   }
   if (isExtensionPage()) {
-    return <MangoWalletInner P={P} theme={theme} onToggleTheme={onToggleTheme} />;
+    return (
+      <MangoWalletInner
+        P={P} theme={theme} onToggleTheme={onToggleTheme}
+        initialSession={initialSession} onSessionChange={onSessionChange} onSessionCleared={onSessionCleared} onActivity={onActivity}
+      />
+    );
   }
   return <SiteWalletGate P={P} />;
 }
