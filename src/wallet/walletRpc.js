@@ -67,6 +67,19 @@ function setCached(key, data) {
   balanceCache.set(key, { data, fetchedAt: Date.now() });
 }
 
+// Permanent, in-memory cache for on-chain token metadata (symbol/
+// decimals) — genuinely different from the balance cache above: a
+// balance changes constantly and a 15s-stale value is a real risk, but
+// a token's symbol/decimals are fixed the moment its contract/mint is
+// created and can never change afterward, so there's no TTL to expire
+// this — a cache-forever Map, not a short-lived one. EVM keys are
+// lowercased (case-insensitive addresses, same convention this file's
+// balance keys already use); Solana keys are NOT — a mint's base58
+// address is case-sensitive, and lowercasing it would silently look up
+// a different, wrong address (the exact bug AssetDropdown's own
+// customTokenLogoUrl had before this session's fix).
+const tokenMetadataCache = new Map();
+
 export function getWalletChain(chainKey) {
   const chain = ALL_WALLET_CHAINS[chainKey];
   if (chain) return chain;
@@ -240,12 +253,16 @@ export async function fetchWalletSplTokenBalance(mintAddress, decimals, ownerAdd
  * this token," never a fabricated symbol.
  */
 export async function fetchErc20TokenMetadata(chainKey, tokenAddress) {
+  const key = `evm:${chainKey}:${tokenAddress.toLowerCase()}`;
+  if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
   const client = getWalletPublicClient(chainKey);
   const [symbol, decimals] = await Promise.all([
     client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
     client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "decimals" }),
   ]);
-  return { symbol, decimals: Number(decimals) };
+  const result = { symbol, decimals: Number(decimals) };
+  tokenMetadataCache.set(key, result);
+  return result;
 }
 
 /**
@@ -266,6 +283,10 @@ export async function fetchErc20TokenMetadata(chainKey, tokenAddress) {
  * limited endpoint could reject a genuinely real mint.
  */
 export async function fetchSplMintDecimals(mintAddress) {
+  // Not lowercased — see tokenMetadataCache's own comment on why a
+  // Solana mint's case has to stay exactly as given.
+  const key = `solana:${mintAddress}`;
+  if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
   const [{ getMint }, { Connection, PublicKey }] = await Promise.all([import("@solana/spl-token"), import("@solana/web3.js")]);
   const mintPubkey = new PublicKey(mintAddress);
   const urls = [...solanaRpcUrls()].reverse();
@@ -274,6 +295,7 @@ export async function fetchSplMintDecimals(mintAddress) {
     try {
       const connection = new Connection(url, "confirmed");
       const mint = await getMint(connection, mintPubkey);
+      tokenMetadataCache.set(key, mint.decimals);
       return mint.decimals;
     } catch (err) {
       lastError = err;
