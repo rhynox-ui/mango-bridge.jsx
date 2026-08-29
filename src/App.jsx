@@ -774,9 +774,67 @@ function SolanaLogoIcon({ size, fallback }) {
 // USDT0 glyph in HandDrawnAssetGlyph below — always renders, no external
 // dependency to go stale or get blocked again.
 
-function AssetIcon({ symbol, size = 18 }) {
+// DexScreener's own token-image CDN, keyed by chain slug + checksummed
+// contract address — no API key, works for any token DexScreener has
+// ever indexed a pair for, which in practice covers the vast majority
+// of real tokens (including small/meme ones), unlike a curated icon
+// package that could only ever ship well-known symbols. Chain slugs
+// below are DexScreener's own naming for the chains this app's custom-
+// token search actually supports (AssetDropdown's supportsCustomTokens
+// is EVM-only, and only for chains isAddress()/fetchErc20TokenMetadata
+// can resolve) — the well-established ones (base/ethereum/bnb/
+// arbitrum/optimism/avalanche/polygon and the rest of chainData.js's
+// original hand-verified set) are confirmed against DexScreener's own
+// site; the newer/less common chains added later (walletChains.js's
+// broader wallet-only set) are a best-effort guess at their slug, not
+// independently confirmed the way every other icon in this file is —
+// this sandbox has no network access to verify them. Either way a
+// wrong or unlisted slug just 404s the image, which CustomTokenIcon
+// below already falls back from safely — never a broken/blank icon.
+const CUSTOM_TOKEN_CHAIN_SLUG = {
+  ethereum: "ethereum", base: "base", bnb: "bsc", arbitrum: "arbitrum",
+  avalanche: "avalanche", abstract: "abstract", ink: "ink", unichain: "unichain",
+  polygon: "polygon", optimism: "optimism", zksync: "zksync", linea: "linea",
+  scroll: "scroll", gnosis: "gnosischain", blast: "blast", mantle: "mantle",
+  celo: "celo", fantom: "fantom", moonbeam: "moonbeam", cronos: "cronos",
+  mode: "mode", zora: "zora", opbnb: "opbnb", polygonzkevm: "polygonzkevm", fraxtal: "fraxtal",
+};
+function customTokenLogoUrl(chainId, address) {
+  const slug = CUSTOM_TOKEN_CHAIN_SLUG[chainId];
+  if (!slug || !address) return null;
+  return `https://dd.dexscreener.com/ds-data/tokens/${slug}/${address.toLowerCase()}.png`;
+}
+function CustomTokenIcon({ size, chainId, address, fallback }) {
+  const [failed, setFailed] = useState(false);
+  const url = customTokenLogoUrl(chainId, address);
+  if (!url || failed) return fallback;
+  return (
+    <img
+      src={url}
+      alt=""
+      width={size}
+      height={size}
+      style={{ width: size, height: size, objectFit: "contain", borderRadius: "9999px" }}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function AssetIcon({ symbol, size = 18, chainId, address }) {
   const asset = ASSETS.find((a) => a.symbol === symbol);
   const color = asset?.color || "#8C9BAE";
+
+  // A custom/pasted token (address only ever set by AssetDropdown's own
+  // custom-token call sites — a built-in ASSETS entry never has one) —
+  // try its real logo before falling through to the generic glyph every
+  // unrecognized symbol used to get stuck with.
+  if (address) {
+    return (
+      <span className="flex items-center justify-center rounded-full shrink-0 overflow-hidden" style={{ width: size, height: size }}>
+        <CustomTokenIcon size={size} chainId={chainId} address={address} fallback={<HandDrawnAssetGlyph symbol={symbol} size={size} color={color} />} />
+      </span>
+    );
+  }
 
   // Global Dollar Network's own brand page (globaldollar.com/brand)
   // explicitly hosts this exact PNG "for block explorers" — this is the
@@ -971,7 +1029,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   return (
     <div className="relative shrink-0" ref={ref}>
       <button onClick={handleToggle} className="flex items-center gap-1.5 pl-2 pr-2.5 py-1.5 rounded-full" style={{ background: P.pillBg }}>
-        <AssetIcon symbol={asset.symbol} size={18} />
+        <AssetIcon symbol={asset.symbol} size={18} chainId={chainId} address={asset.address} />
         <span className="text-[14px] font-semibold" style={{ color: P.textPrimary }}>{asset.symbol}</span>
         <ChevronDown size={14} color={P.textMuted} />
       </button>
@@ -1020,7 +1078,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
               if (upperQuery && !t.symbol.toUpperCase().includes(upperQuery)) return null;
               return (
                 <button key={t.address} onClick={() => { onCustomTokenSelect(t); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left">
-                  <AssetIcon symbol={t.symbol} size={22} />
+                  <AssetIcon symbol={t.symbol} size={22} chainId={chainId} address={t.address} />
                   <div className="flex flex-col">
                     <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{t.symbol}</span>
                     <span className="text-[11px] font-mono" style={{ color: P.textMuted }}>{t.address.slice(0, 6)}…{t.address.slice(-4)}</span>
@@ -1038,7 +1096,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                 ) : fetchedToken ? (
                   <button onClick={handleAddFetchedToken} className="w-full flex items-center justify-between gap-2.5">
                     <div className="flex items-center gap-2.5">
-                      <AssetIcon symbol={fetchedToken.symbol} size={22} />
+                      <AssetIcon symbol={fetchedToken.symbol} size={22} chainId={chainId} address={fetchedToken.address} />
                       <div className="flex flex-col text-left">
                         <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Add {fetchedToken.symbol}</span>
                         <span className="text-[11px] font-mono" style={{ color: P.textMuted }}>{trimmedQuery.slice(0, 6)}…{trimmedQuery.slice(-4)}</span>
