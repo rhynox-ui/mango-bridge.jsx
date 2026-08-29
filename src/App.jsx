@@ -2991,9 +2991,17 @@ export default function MangoBridge() {
     query: { enabled: connected && isRealUsdcPair && !CHAINS[from]?.isSolana },
   });
 
-  const usingLiveBalance = connected && (isNativeAsset || isRealUsdcPair) && !CHAINS[from]?.isSolana;
-  const liveBalanceLoading = isNativeAsset ? balanceLoading : usdcBalanceLoading;
-  const liveBalanceValue = isNativeAsset ? liveBalance : liveUsdcBalance;
+  // Real bug fix: Solana was excluded from the live-balance display
+  // entirely — useBalance above is a wagmi/EVM-only hook, so it could
+  // never resolve for a Solana address, but that's not a reason to
+  // show nothing. refreshFromChainBalances above already fetches a
+  // real Solana balance (fetchSolanaBalance) into fromChainBalances —
+  // the exact same data AssetDropdown's own per-asset balance list
+  // already shows — this just reuses it for the "Balance: X" label too
+  // instead of a second, EVM-only source that was always empty here.
+  const usingLiveBalance = connected && (isNativeAsset || isRealUsdcPair);
+  const liveBalanceLoading = isFromSolana ? balancesLoading : (isNativeAsset ? balanceLoading : usdcBalanceLoading);
+  const liveBalanceValue = isFromSolana ? undefined : (isNativeAsset ? liveBalance : liveUsdcBalance);
 
   const toWagmiChain = getWagmiChain(to);
   const isNativeAssetTo = toAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[to];
@@ -3232,12 +3240,22 @@ export default function MangoBridge() {
   // as a fallback below, while the real quote isn't available yet.
   const amtNumUsdValue = (amtNum - devFeeAmount) * (fromAsset.price || 1) - fee;
   const received = liveQuoteSummary?.receivedAmount ?? Math.max(amtNumUsdValue / (toAsset.price || 1), 0);
-  const availableBalance = usingLiveBalance && liveBalanceValue ? Number(liveBalanceValue.formatted) : null;
+  const availableBalance = !usingLiveBalance
+    ? null
+    : isFromSolana
+      ? (fromChainBalances[fromAsset.symbol] ?? null)
+      : (liveBalanceValue ? Number(liveBalanceValue.formatted) : null);
   // Native assets need to keep a small amount aside for gas — MAX-ing out a
   // native balance to the exact wei is a classic way to end up unable to pay
   // for the transaction that spends it. ERC-20s don't need this (gas is paid
   // in the native token, separately from the token being sent).
-  const GAS_RESERVE = { ETH: 0.0004, BNB: 0.001, USDT0: 0.5 };
+  // SOL didn't have an entry here either — same category of gap as the
+  // missing balance display above (Solana was excluded from every one
+  // of these EVM-oriented paths, not just skipped intentionally).
+  // 0.002 SOL covers real transaction fees plus token-account rent with
+  // room to spare — the same conservative minimum-reserve convention
+  // Phantom/Solflare themselves use, not a guessed number.
+  const GAS_RESERVE = { ETH: 0.0004, BNB: 0.001, USDT0: 0.5, SOL: 0.002 };
   const gasReserve = GAS_RESERVE[fromAsset.symbol] ?? 0;
   const spendableBalance = availableBalance !== null ? Math.max(availableBalance - gasReserve, 0) : null;
   const insufficient = usingLiveBalance && spendableBalance !== null && amtNum > spendableBalance;
