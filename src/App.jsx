@@ -51,8 +51,8 @@ import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
-import { getRelayQuote, executeRelayQuote, canRelayHandle, sendRelayProtocolFee, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
-import { executeSolanaSourcedTransfer, sendSolanaProtocolFee } from "./relaySdkSolanaExecution.js";
+import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
+import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
 import { LaunchpadTab } from "./Launchpad.jsx";
 import { MangoWalletTab } from "./MangoWallet.jsx";
@@ -885,23 +885,22 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         // EVM path below (wagmi has no concept of Solana chains at all).
         const decimals = ASSET_ONCHAIN_DECIMALS[asset];
         const totalBaseUnits = parseUnits(amount, decimals);
-        const feeBaseUnits = totalBaseUnits / 100n; // 1%, same rate as the EVM-sourced path below
-        const transferBaseUnits = totalBaseUnits - feeBaseUnits;
 
+        // Real fix for a real bug: the fee used to be sent as a standalone
+        // pre-transfer (collected even if the real transfer then failed)
+        // and the requested amount was shrunk 1% up front (breaking a
+        // MAX-balance transfer). executeSolanaSourcedTransfer now attaches
+        // the fee to the quote itself via Relay's own appFees mechanism —
+        // see relaySdkSolanaExecution.js's own header for the full
+        // explanation — so the full amount goes in and the fee is only
+        // ever deducted atomically as part of a successful settlement.
         setStepIndex(0);
-        if (feeBaseUnits > 0n) {
-          await sendSolanaProtocolFee({
-            solanaAddress: account,
-            solanaProvider: solanaWallet.solanaProvider.current,
-            feeBaseUnits,
-          });
-        }
         const result = await executeSolanaSourcedTransfer({
           solanaAddress: account,
           solanaProvider: solanaWallet.solanaProvider.current,
           toChainId: MAINNET_CHAIN_IDS[to],
           toCurrency: currencyAddress(to, toAsset),
-          amountBaseUnits: transferBaseUnits.toString(),
+          amountBaseUnits: totalBaseUnits.toString(),
           // Real bug fix: previously defaulted to `account`, which for a
           // Solana-sourced transfer IS the Solana address — invalid as a
           // recipient on any EVM destination chain. Relay's own docs are
@@ -920,18 +919,13 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
       } else if (kind === "relay") {
         const decimals = ASSET_ONCHAIN_DECIMALS[asset];
         const totalBaseUnits = parseUnits(amount, decimals);
-        const feeBaseUnits = totalBaseUnits / 100n; // 1%
-        const transferBaseUnits = totalBaseUnits - feeBaseUnits;
 
+        // Real fix, same as the Solana-sourced path above: getRelayQuote
+        // now attaches the fee via Relay's own appFees mechanism (see
+        // relaybridge.js's own header), deducted atomically only if the
+        // transfer succeeds, so the full requested amount goes into the
+        // quote with nothing carved out up front.
         setStepIndex(0);
-        if (feeBaseUnits > 0n) {
-          await sendRelayProtocolFee({
-            chainKey: from,
-            chainId: MAINNET_CHAIN_IDS[from],
-            assetSymbol: asset,
-            feeBaseUnits,
-          });
-        }
 
         // Real fix, symmetric with the Solana-sourced path above: when
         // the DESTINATION is Solana (e.g. Base -> Solana), the default
@@ -943,7 +937,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         const quote = await getRelayQuote({
           fromChainKey: from, toChainKey: to,
           fromAsset: asset, toAsset: toAsset,
-          amountBaseUnits: transferBaseUnits.toString(), userAddress: account,
+          amountBaseUnits: totalBaseUnits.toString(), userAddress: account,
           recipientAddress: destination || defaultRecipient,
         });
         const result = await executeRelayQuote({
