@@ -76,7 +76,16 @@ export const RPC_FALLBACKS = {
   // place each of these URLs is defined; a chain with no second
   // documented endpoint there (Monad, Sei) just runs on its wagmi/chains
   // default only, same as any chain not in this list at all.
-  ...WALLET_ONLY_RPC_FALLBACK,
+  //
+  // Real bug fix: WALLET_ONLY_RPC_FALLBACK stores ONE url per chain id as
+  // a bare string (its own single-fallback-endpoint shape), while every
+  // entry above is an array transportFor() below calls .filter() on —
+  // spreading it in directly crashed the whole app on load
+  // ("(RPC_FALLBACKS[chainId] || []).filter is not a function") the
+  // moment a wallet-only chain's transport was built, caught by an actual
+  // browser smoke test. Wrapping each value in a one-element array
+  // matches every other entry's real shape.
+  ...Object.fromEntries(Object.entries(WALLET_ONLY_RPC_FALLBACK).map(([chainId, url]) => [chainId, [url]])),
 };
 
 function transportFor(chainId) {
