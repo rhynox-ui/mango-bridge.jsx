@@ -27,7 +27,7 @@ import {
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ChainBadge } from "./chainBadges.jsx";
 import { MangoLogo } from "./MangoLogo.jsx";
-import { parseUnits, isAddress } from "viem";
+import { parseUnits, formatUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
 import { fetchErc20TokenMetadata } from "./wallet/walletRpc.js";
 import { loadCustomTokens, addCustomToken } from "./wallet/customTokens.js";
@@ -254,6 +254,59 @@ function resolveCurrencyForAsset(chainKey, assetObj) {
 // contract (fetchErc20TokenMetadata) when it was added, not guessed.
 function onchainDecimalsForAsset(assetObj) {
   return assetObj?.custom ? assetObj.onchainDecimals : ASSET_ONCHAIN_DECIMALS[assetObj.symbol];
+}
+
+// Real bug fix: the "You receive"/"Fee"/"ETA" preview below was ALWAYS
+// a static formula built from ASSETS[].price and CHAINS[].baseFee/
+// baseSeconds — cosmetic, rough constants documented elsewhere in this
+// file as "never used to compute an actual transfer amount" — even
+// though a real getRelayQuote() call was already being made a few
+// lines below (routeCheck) to validate the route. That call's result
+// was awaited and then thrown away; only whether it threw fed back
+// into the UI (routeUnavailable/routeChecking), never the actual quote
+// numbers. So the prominent amount/fee/ETA shown never reflected Relay
+// at all, regardless of whether Relay was reachable — a live, working
+// quote and a completely broken one rendered identically. This mirrors
+// mango-mobile's own BridgeScreen.tsx summarizeQuote exactly — field
+// names (fees.gas/relayerGas/relayer/relayerService/app,
+// details.currencyOut, details.timeEstimate) confirmed against
+// @relayprotocol/relay-sdk's own installed api.d.ts, same as that
+// file's own comment states. Every field access stays optional-chained
+// with a numeric fallback — a renamed/missing field on Relay's end
+// should quietly omit that piece of the display, never crash or show
+// NaN/garbage.
+function numOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+function summarizeQuote(quote, fallbackDecimals) {
+  const fees = quote?.fees ?? {};
+  const details = quote?.details ?? {};
+
+  const sourceGasUsd = numOrNull(fees?.gas?.amountUsd);
+  const destGasUsd = numOrNull(fees?.relayerGas?.amountUsd);
+  const relayerUsd = numOrNull(fees?.relayer?.amountUsd);
+  const relayerServiceUsd = numOrNull(fees?.relayerService?.amountUsd);
+  const relayerTotalUsd = relayerUsd ?? (destGasUsd != null || relayerServiceUsd != null ? (destGasUsd ?? 0) + (relayerServiceUsd ?? 0) : null);
+  const appUsd = numOrNull(fees?.app?.amountUsd);
+  const feeParts = [sourceGasUsd, relayerTotalUsd, appUsd].filter((v) => v !== null);
+  const totalFeeUsd = feeParts.length > 0 ? feeParts.reduce((a, b) => a + b, 0) : null;
+
+  const etaSeconds = numOrNull(details?.timeEstimate);
+
+  const currencyOut = details?.currencyOut;
+  let receivedAmount = null;
+  if (currencyOut?.amountFormatted) {
+    receivedAmount = Number(currencyOut.amountFormatted);
+  } else if (currencyOut?.amount) {
+    try {
+      receivedAmount = Number(formatUnits(BigInt(currencyOut.amount), currencyOut?.currency?.decimals ?? fallbackDecimals));
+    } catch {
+      receivedAmount = null;
+    }
+  }
+
+  return { totalFeeUsd, etaSeconds, receivedAmount };
 }
 
 const ASSETS = [
@@ -2987,7 +3040,7 @@ export default function MangoBridge() {
         const decimals = onchainDecimalsForAsset(fromAsset);
         if (!decimals) throw new Error(`No decimals known for ${fromAsset.symbol} — can't safely build an amount.`);
         const amountBaseUnits = parseUnits(amount, decimals).toString();
-        await getRelayQuote({
+        const quote = await getRelayQuote({
           fromChainKey: from, toChainKey: to,
           fromAsset: fromAsset.symbol, toAsset: toAsset.symbol,
           // Same override reasoning as the execution path in BridgeModal
@@ -3009,7 +3062,11 @@ export default function MangoBridge() {
           // be the "account" for the source side.
           recipientAddress: sendToOther ? destAddress : (CHAINS[to]?.isSolana ? activeSolanaAddress : (isFromSolana ? address : activeAccount)),
         });
-        if (!cancelled) setRouteCheck({ status: "ok" });
+        // Real fix: this used to be a bare await with the response
+        // discarded — see summarizeQuote's own comment. The quote
+        // itself is kept here so the fee/ETA/received preview below
+        // can show Relay's real numbers instead of a static estimate.
+        if (!cancelled) setRouteCheck({ status: "ok", quote });
       } catch (err) {
         if (!cancelled) setRouteCheck({ status: "unavailable", message: err?.message || String(err) });
       }
@@ -3018,20 +3075,30 @@ export default function MangoBridge() {
   }, [kind, amtNum, connected, address, from, to, fromAsset.symbol, toAsset.symbol, amount]);
   const routeUnavailable = kind === "relay" && routeCheck.status === "unavailable";
   const routeChecking = kind === "relay" && routeCheck.status === "checking";
+  // The real quote routeCheck above just fetched — see summarizeQuote's
+  // own comment on why this matters: without it, fee/etaLabel/received
+  // below are a static per-chain/per-asset estimate that never reflects
+  // Relay at all, live route or not.
+  const liveQuoteSummary = routeCheck.status === "ok" && routeCheck.quote ? summarizeQuote(routeCheck.quote, onchainDecimalsForAsset(toAsset)) : null;
   // A same-chain swap is one transaction, not two — charging both
   // "source gas" and "destination gas" for the same chain would double
-  // count it. Bridge (from !== to) keeps paying for both legs.
-  const fee = isSwapTab ? CHAINS[from].baseFee : CHAINS[from].baseFee + CHAINS[to].baseFee;
+  // count it. Bridge (from !== to) keeps paying for both legs. Falls
+  // back to this static per-chain estimate only while a live quote
+  // isn't available yet (still checking, no route, or a non-Relay kind
+  // like a CCTP/op-withdraw/arb-withdraw special case, which never has
+  // one).
+  const fee = liveQuoteSummary?.totalFeeUsd ?? (isSwapTab ? CHAINS[from].baseFee : CHAINS[from].baseFee + CHAINS[to].baseFee);
   const devFeeAmount = amtNum * DEV_FEE_PCT;
-  const seconds = Math.max(CHAINS[from].baseSeconds, CHAINS[to].baseSeconds);
-  const etaLabel = seconds < 60 ? `~${seconds}s` : `~${Math.round(seconds / 60)} min`;
+  const seconds = liveQuoteSummary?.etaSeconds ?? Math.max(CHAINS[from].baseSeconds, CHAINS[to].baseSeconds);
+  const etaLabel = seconds < 60 ? `~${Math.max(1, Math.round(seconds))}s` : `~${Math.round(seconds / 60)} min`;
   // For same-asset transfers this is a direct estimate. For cross-asset swaps
   // this converts through each asset's rough USD price as a ROUGH estimate
   // only — the real exchange rate comes from Relay's live quote at execution
   // time and can differ meaningfully from this number, especially for
-  // volatile assets. Never treat this as authoritative for a swap.
+  // volatile assets. Never treat this as authoritative for a swap. Used only
+  // as a fallback below, while the real quote isn't available yet.
   const amtNumUsdValue = (amtNum - devFeeAmount) * (fromAsset.price || 1) - fee;
-  const received = Math.max(amtNumUsdValue / (toAsset.price || 1), 0);
+  const received = liveQuoteSummary?.receivedAmount ?? Math.max(amtNumUsdValue / (toAsset.price || 1), 0);
   const availableBalance = usingLiveBalance && liveBalanceValue ? Number(liveBalanceValue.formatted) : null;
   // Native assets need to keep a small amount aside for gas — MAX-ing out a
   // native balance to the exact wei is a classic way to end up unable to pay
