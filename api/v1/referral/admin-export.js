@@ -58,7 +58,21 @@ export default async function handler(request, response) {
   const secret = process.env.ADMIN_API_SECRET;
   const provided = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!secret || !provided || !safeEqual(provided, secret)) {
-    return response.status(401).json({ error: "Unauthorized." });
+    // TEMPORARY debug fields — never the actual values, only length and
+    // a 2-char prefix of each side, just enough to spot a mismatch
+    // (trailing whitespace, wrong env var, stale deployment) without
+    // exposing the real secret. Remove once the live mismatch this is
+    // diagnosing is resolved.
+    return response.status(401).json({
+      error: "Unauthorized.",
+      debug: {
+        secretConfigured: !!secret,
+        secretLength: secret ? secret.length : 0,
+        secretPrefix: secret ? secret.slice(0, 2) : null,
+        providedLength: provided.length,
+        providedPrefix: provided.slice(0, 2) || null,
+      },
+    });
   }
 
   try {
