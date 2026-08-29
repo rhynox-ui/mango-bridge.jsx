@@ -86,7 +86,18 @@ const NATIVE_PLACEHOLDER_BY_CHAIN = {
   base: NATIVE_TOKEN_ADDRESS,
   bnb: NATIVE_TOKEN_ADDRESS,
   robinhood: NATIVE_TOKEN_ADDRESS,
-  solana: "11111111111111111111111111111111",
+  // Real bug fix: this was the System Program's own address
+  // (11111111111111111111111111111111), which represents "no program/
+  // no token" on Solana, not "native SOL" — using it as a currency
+  // identifier in a cross-chain quote request is exactly the kind of
+  // mistake that produces a confusing rejection instead of a working
+  // quote. The actual, universal convention for representing native
+  // SOL in DeFi routing is the Wrapped SOL mint — confirmed two ways:
+  // Solana's own official token-list repo (solana-labs/token-list,
+  // fetched live) labels this exact address "SOL"/"Wrapped SOL", and
+  // it's @solana/spl-token's own NATIVE_MINT constant (already
+  // installed locally — fully offline confirmation).
+  solana: "So11111111111111111111111111111111111111112",
   arbitrum: NATIVE_TOKEN_ADDRESS,
   avalanche: NATIVE_TOKEN_ADDRESS,
   abstract: NATIVE_TOKEN_ADDRESS,
