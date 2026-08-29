@@ -2882,6 +2882,17 @@ export default function MangoBridge() {
   // resetting the asset pair the same way handleSwapChainChange itself
   // does, rather than leaving a stale asset selection from whichever
   // chain "to" used to point at.
+  //
+  // The reverse bug, same root cause: from/to are shared state across
+  // both tabs, so leaving Swap with from === to (Swap's own normal
+  // state) and landing back on Bridge showed "Base" in both pickers at
+  // once — a real bridge only ever moves between two different chains
+  // (Stargate/across.to/deBridge/LI.FI all hard-prevent this; it's what
+  // Swap is for). ChainDropdown's own `exclude` prop already stops a
+  // user from picking the same chain on both sides BY HAND, but can't
+  // catch a collision that arrives from tab-switching instead. Bumps
+  // "to" to a different chain the same way handleToChange already does
+  // whenever this happens, the moment the tab becomes Bridge.
   useEffect(() => {
     if (isSwapTab && to !== from) {
       setTo(from);
@@ -2890,6 +2901,11 @@ export default function MangoBridge() {
       const otherIdx = ASSETS.findIndex((a, i) => i !== nativeIdx);
       setToAssetIdxRaw(otherIdx >= 0 ? otherIdx : nativeIdx);
       setFromCustomTokenRaw(null);
+      setToCustomTokenRaw(null);
+    } else if (!isSwapTab && from === to) {
+      const nextTo = CHAIN_ORDER.find((c) => c !== from);
+      setTo(nextTo);
+      setToAssetIdxRaw(defaultAssetIdxFor(nextTo));
       setToCustomTokenRaw(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
