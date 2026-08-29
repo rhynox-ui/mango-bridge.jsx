@@ -1,0 +1,328 @@
+---
+// src/pages/admin.astro
+//
+// Login-gated post composer. Not linked from the header/footer nav —
+// reachable only by going straight to /admin, same posture as the main
+// app's own admin-referrals dashboard (App.jsx's ?admin-referrals=1).
+// The secret is only ever kept in sessionStorage (cleared when the tab
+// closes) and sent as a Bearer header to blog/api/create-post.js, which
+// checks it against BLOG_ADMIN_SECRET with a timing-safe comparison
+// before committing a new markdown file to GitHub. All the actual logic
+// lives in the inline <script> below since this page has no server-side
+// state of its own — Astro pages are static, so the login/compose flow
+// has to run client-side.
+import MangoLogo from "../components/MangoLogo.astro";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin — Mango Protocol Blog</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --panel: #f6f6f7;
+        --panel-border: #e6e6e8;
+        --input: #fbfbfb;
+        --text-primary: #0a0a0b;
+        --text-secondary: #6b6b70;
+        --text-muted: #a6a6ac;
+        --lime: #ff9a2e;
+        --lime-deep: #e8801a;
+        --danger: #d94848;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text-primary);
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--panel-border);
+        padding: 18px 24px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: var(--text-primary);
+        text-decoration: none;
+      }
+      .brand-name {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 15px;
+        letter-spacing: -0.01em;
+      }
+      .brand-badge {
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--lime-deep);
+        background: rgba(255, 154, 46, 0.12);
+        border-radius: 999px;
+        padding: 3px 9px;
+        letter-spacing: 0.02em;
+      }
+      main {
+        max-width: 560px;
+        margin: 0 auto;
+        padding: 56px 24px 88px;
+      }
+      h1 {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 0 0 6px;
+      }
+      .subtitle {
+        color: var(--text-secondary);
+        font-size: 14px;
+        margin: 0 0 32px;
+      }
+      label {
+        display: block;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin: 0 0 6px;
+      }
+      .field {
+        margin-bottom: 18px;
+      }
+      input,
+      textarea {
+        width: 100%;
+        background: var(--input);
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 14.5px;
+        font-family: inherit;
+        color: var(--text-primary);
+      }
+      input:focus,
+      textarea:focus {
+        outline: none;
+        border-color: var(--lime);
+      }
+      textarea {
+        resize: vertical;
+        min-height: 220px;
+        line-height: 1.6;
+      }
+      .hint {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 5px;
+      }
+      button {
+        width: 100%;
+        background: var(--text-primary);
+        color: #ffffff;
+        border: none;
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 14.5px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button:not(:disabled):hover {
+        background: #232326;
+      }
+      .banner {
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 13px;
+        margin-bottom: 18px;
+        display: none;
+      }
+      .banner.error {
+        background: rgba(217, 72, 72, 0.1);
+        color: var(--danger);
+      }
+      .banner.success {
+        background: rgba(255, 154, 46, 0.12);
+        color: var(--lime-deep);
+      }
+      .banner.visible {
+        display: block;
+      }
+      .banner a {
+        color: inherit;
+        font-weight: 600;
+      }
+      #logout {
+        background: none;
+        border: 1px solid var(--panel-border);
+        color: var(--text-secondary);
+        width: auto;
+        padding: 6px 12px;
+        font-size: 12.5px;
+        font-weight: 500;
+        margin-bottom: 24px;
+      }
+      #logout:hover {
+        background: var(--panel);
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">
+        <MangoLogo size={22} color="#0A0A0B" />
+        <span class="brand-name">Mango Protocol</span>
+      </a>
+      <span class="brand-badge">Blog</span>
+    </header>
+    <main>
+      <section id="login-view">
+        <h1>Admin login</h1>
+        <p class="subtitle">Enter the blog admin secret to publish a post.</p>
+        <div id="login-error" class="banner error"></div>
+        <form id="login-form">
+          <div class="field">
+            <label for="secret">Admin secret</label>
+            <input id="secret" type="password" autocomplete="current-password" required />
+          </div>
+          <button type="submit">Log in</button>
+        </form>
+      </section>
+
+      <section id="compose-view" hidden>
+        <button id="logout" type="button">Log out</button>
+        <h1>New post</h1>
+        <p class="subtitle">Publishes immediately by committing to the blog.</p>
+        <div id="compose-banner" class="banner"></div>
+        <form id="compose-form">
+          <div class="field">
+            <label for="title">Title</label>
+            <input id="title" type="text" required />
+          </div>
+          <div class="field">
+            <label for="description">Description</label>
+            <input id="description" type="text" required />
+            <p class="hint">One sentence — shows on the homepage list.</p>
+          </div>
+          <div class="field">
+            <label for="date">Date</label>
+            <input id="date" type="date" required />
+          </div>
+          <div class="field">
+            <label for="content">Content</label>
+            <textarea id="content" required placeholder="Write in Markdown..."></textarea>
+          </div>
+          <button id="submit-btn" type="submit">Publish post</button>
+        </form>
+      </section>
+    </main>
+    <script>
+      const STORAGE_KEY = "mango_blog_admin_secret";
+      const loginView = document.getElementById("login-view");
+      const composeView = document.getElementById("compose-view");
+      const loginForm = document.getElementById("login-form");
+      const loginError = document.getElementById("login-error");
+      const composeForm = document.getElementById("compose-form");
+      const composeBanner = document.getElementById("compose-banner");
+      const submitBtn = document.getElementById("submit-btn");
+      const logoutBtn = document.getElementById("logout");
+      const dateInput = document.getElementById("date");
+
+      function showBanner(el, message, kind) {
+        el.textContent = message;
+        el.className = `banner ${kind} visible`;
+      }
+      function hideBanner(el) {
+        el.className = "banner";
+      }
+      function showView(loggedIn) {
+        loginView.hidden = loggedIn;
+        composeView.hidden = !loggedIn;
+      }
+
+      const stored = sessionStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        showView(true);
+        dateInput.value = new Date().toISOString().slice(0, 10);
+      }
+
+      loginForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        hideBanner(loginError);
+        const secret = document.getElementById("secret").value;
+        sessionStorage.setItem(STORAGE_KEY, secret);
+        showView(true);
+        dateInput.value = new Date().toISOString().slice(0, 10);
+      });
+
+      logoutBtn.addEventListener("click", () => {
+        sessionStorage.removeItem(STORAGE_KEY);
+        showView(false);
+      });
+
+      composeForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        hideBanner(composeBanner);
+        const secret = sessionStorage.getItem(STORAGE_KEY);
+        const title = document.getElementById("title").value;
+        const description = document.getElementById("description").value;
+        const date = dateInput.value;
+        const content = document.getElementById("content").value;
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Publishing...";
+        try {
+          const res = await fetch("/api/create-post", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ title, description, date, content }),
+          });
+          const body = await res.json();
+          if (res.status === 401) {
+            sessionStorage.removeItem(STORAGE_KEY);
+            showView(false);
+            showBanner(loginError, "That secret was rejected. Log in again.", "error");
+            return;
+          }
+          if (!res.ok) {
+            showBanner(composeBanner, body.error || "Failed to publish.", "error");
+            return;
+          }
+          composeForm.reset();
+          dateInput.value = new Date().toISOString().slice(0, 10);
+          showBanner(
+            composeBanner,
+            `Published. It'll be live at ${body.data.url} in about a minute, once Vercel finishes deploying.`,
+            "success"
+          );
+        } catch (err) {
+          showBanner(composeBanner, "Network error — could not reach the publish endpoint.", "error");
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Publish post";
+        }
+      });
+    </script>
+  </body>
+</html>
