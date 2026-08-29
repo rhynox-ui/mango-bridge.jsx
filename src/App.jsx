@@ -986,7 +986,11 @@ function AssetIcon({ symbol, size = 18, chainId, address, logoUrl }) {
 // source at all). Either way this offers an "Add {symbol}" row; confirming
 // stores it in customTokens.js (the same registry MangoWallet.jsx's own
 // wallet-dashboard "add custom token" flow already uses) and selects it
-// immediately — nothing here is ever typed in by the user.
+// immediately. A mint DexScreener has no indexed pair for yet — the
+// common case for a pump.fun token before it graduates to a real DEX
+// pool — falls back to manual symbol entry (splDecimals/splSymbolInput
+// below) rather than blocking the add entirely: decimals already
+// confirmed it's a real mint, there's just no live name for it yet.
 function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true, discoveredLogos }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
@@ -994,6 +998,14 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   const [customTokensForChain, setCustomTokensForChain] = useState([]);
   const [fetching, setFetching] = useState(false);
   const [fetchedToken, setFetchedToken] = useState(null);
+  // Fallback for a real, verified mint (decimals confirmed on-chain)
+  // that fetchSplTokenSymbol couldn't find anything for — most commonly
+  // a pump.fun token that hasn't graduated to a real DEX pool yet, so
+  // DexScreener has never indexed a pair for it. splDecimals !== null
+  // means exactly that case: real mint, no live symbol source, so the
+  // user types one same as before this auto-fetch existed.
+  const [splDecimals, setSplDecimals] = useState(null);
+  const [splSymbolInput, setSplSymbolInput] = useState("");
   const [fetchError, setFetchError] = useState("");
   const ref = useRef(null);
   const asset = customToken || ASSETS[assetIdx];
@@ -1048,6 +1060,8 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     } else {
       setQuery("");
       setFetchedToken(null);
+      setSplDecimals(null);
+      setSplSymbolInput("");
       setFetchError("");
     }
     setOpen((o) => !o);
@@ -1058,6 +1072,8 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
 
   useEffect(() => {
     setFetchedToken(null);
+    setSplDecimals(null);
+    setSplSymbolInput("");
     setFetchError("");
     if (!open || !looksLikeAddress) return;
     // Already a known built-in or already-added custom token at this
@@ -1075,12 +1091,23 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     let cancelled = false;
     setFetching(true);
     if (isSolanaChain) {
-      Promise.all([fetchSplMintDecimals(trimmedQuery), fetchSplTokenSymbol(trimmedQuery)])
-        .then(([decimals, { symbol }]) => {
-          if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery, mint: trimmedQuery });
+      fetchSplMintDecimals(trimmedQuery)
+        .then((decimals) => {
+          if (cancelled) return;
+          // Decimals confirm this is a real mint — try the live symbol
+          // lookup next, but a miss there (no DexScreener-indexed pair,
+          // very common for a pump.fun token pre-graduation) falls back
+          // to manual entry instead of blocking the add entirely.
+          fetchSplTokenSymbol(trimmedQuery)
+            .then(({ symbol }) => { if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery, mint: trimmedQuery }); })
+            .catch(() => { if (!cancelled) setSplDecimals(decimals); })
+            .finally(() => { if (!cancelled) setFetching(false); });
         })
-        .catch((err) => { if (!cancelled) setFetchError(err?.message || "Couldn't verify this mint — check the address and network."); })
-        .finally(() => { if (!cancelled) setFetching(false); });
+        .catch((err) => {
+          if (cancelled) return;
+          setFetchError(err?.message || "Couldn't verify this mint — check the address and network.");
+          setFetching(false);
+        });
     } else {
       fetchErc20TokenMetadata(chainId, trimmedQuery)
         .then(({ symbol, decimals }) => { if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery }); })
@@ -1101,6 +1128,22 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
       setOpen(false);
       setQuery("");
       setFetchedToken(null);
+    } catch (err) {
+      setFetchError(err?.message || "Could not add this token.");
+    }
+  }
+
+  function handleAddSplToken() {
+    const symbol = splSymbolInput.trim().toUpperCase();
+    if (splDecimals === null || !symbol) return;
+    try {
+      addCustomToken("solana", { symbol, decimals: splDecimals, mint: trimmedQuery });
+      setCustomTokensForChain(loadCustomTokens("solana").map((t) => ({ ...t, address: t.mint })));
+      onCustomTokenSelect({ symbol, decimals: splDecimals, address: trimmedQuery });
+      setOpen(false);
+      setQuery("");
+      setSplDecimals(null);
+      setSplSymbolInput("");
     } catch (err) {
       setFetchError(err?.message || "Could not add this token.");
     }
@@ -1186,6 +1229,29 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                     </div>
                     <span className="text-[16px] font-semibold" style={{ color: LIME_DEEP }}>+</span>
                   </button>
+                ) : isSolanaChain && splDecimals !== null ? (
+                  <div className="flex flex-col gap-2">
+                    <input
+                      value={splSymbolInput}
+                      onChange={(e) => setSplSymbolInput(e.target.value.toUpperCase())}
+                      placeholder="Symbol (e.g. BONK)"
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      className="w-full px-2.5 py-2 rounded-lg text-[12.5px]"
+                      style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+                    />
+                    <span className="text-[10.5px]" style={{ color: P.textMuted }}>
+                      No live listing found for this mint yet (common for a token that hasn't hit a real DEX pool) — enter its symbol yourself.
+                    </span>
+                    <button
+                      onClick={handleAddSplToken}
+                      disabled={!splSymbolInput.trim()}
+                      className="w-full py-2 rounded-lg text-[12.5px] font-semibold"
+                      style={{ background: splSymbolInput.trim() ? `${LIME}1A` : P.pillBg, color: splSymbolInput.trim() ? LIME_DEEP : P.textMuted }}
+                    >
+                      Add token
+                    </button>
+                  </div>
                 ) : fetchError ? (
                   <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{fetchError}</div>
                 ) : null}

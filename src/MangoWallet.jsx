@@ -1089,14 +1089,24 @@ function ChangePasswordModal({ onClose, P }) {
 // real part of the ERC-20 standard); an SPL mint only has decimals
 // on-chain, so its symbol/name comes from fetchSplTokenSymbol
 // (walletRpc.js — DexScreener's public tokens API, the same source this
-// app already trusts for custom-token icons). Either way this is a real,
-// fetched value, never something the user types in themselves.
+// app already trusts for custom-token icons). A mint DexScreener has no
+// indexed pair for yet — the common case for a pump.fun token before it
+// graduates to a real DEX pool — falls back to asking the user for a
+// symbol instead of blocking the add: decimals already confirmed it's a
+// real mint, there's just no live name for it yet.
 function AddCustomTokenScreen({ chains, onBack, onAdded, onClose, P }) {
   const [chainKey, setChainKey] = useState(chains[0]);
   const [address, setAddress] = useState("");
+  const [manualSymbol, setManualSymbol] = useState("");
+  const [needsManualSymbol, setNeedsManualSymbol] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const isSolana = chainKey === "solana";
+
+  function resetManualSymbol() {
+    setNeedsManualSymbol(false);
+    setManualSymbol("");
+  }
 
   async function handleSubmit() {
     setBusy(true);
@@ -1107,8 +1117,23 @@ function AddCustomTokenScreen({ chains, onBack, onAdded, onClose, P }) {
         throw new Error(isSolana ? "Enter a valid mint address." : "Enter a valid contract address.");
       }
       if (isSolana) {
-        const [decimals, { symbol }] = await Promise.all([fetchSplMintDecimals(trimmed), fetchSplTokenSymbol(trimmed)]);
-        addCustomToken("solana", { symbol, mint: trimmed, decimals });
+        const decimals = await fetchSplMintDecimals(trimmed);
+        if (needsManualSymbol) {
+          if (!manualSymbol.trim()) throw new Error("Enter a symbol/ticker for this token.");
+          addCustomToken("solana", { symbol: manualSymbol.trim().toUpperCase(), mint: trimmed, decimals });
+        } else {
+          try {
+            const { symbol } = await fetchSplTokenSymbol(trimmed);
+            addCustomToken("solana", { symbol, mint: trimmed, decimals });
+          } catch {
+            // Real mint, no live listing to name it from — reveal the
+            // manual field and let the user resubmit with a symbol,
+            // rather than failing this attempt outright.
+            setNeedsManualSymbol(true);
+            setBusy(false);
+            return;
+          }
+        }
       } else {
         const { symbol, decimals } = await fetchErc20TokenMetadata(chainKey, trimmed);
         addCustomToken(chainKey, { symbol, address: trimmed, decimals });
@@ -1132,18 +1157,32 @@ function AddCustomTokenScreen({ chains, onBack, onAdded, onClose, P }) {
           Paste a token's contract address (or mint, for Solana). Mango hasn't reviewed this token — trade at your own risk, especially with new or low-liquidity coins.
         </div>
         <div className="mb-2.5">
-          <SendChainPicker value={chainKey} onChange={(k) => { setChainKey(k); setError(""); }} chains={chains} P={P} />
+          <SendChainPicker value={chainKey} onChange={(k) => { setChainKey(k); setError(""); resetManualSymbol(); }} chains={chains} P={P} />
         </div>
         <input
           value={address}
-          onChange={(e) => setAddress(e.target.value)}
+          onChange={(e) => { setAddress(e.target.value); resetManualSymbol(); }}
           placeholder={isSolana ? "Token mint address" : "Contract address (0x…)"}
           {...NO_CAPTURE_ATTRS}
           className="w-full px-3.5 py-3 rounded-xl text-[13px] font-mono mb-2.5"
           style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
         />
+        {needsManualSymbol && (
+          <>
+            <input
+              value={manualSymbol}
+              onChange={(e) => setManualSymbol(e.target.value)}
+              placeholder="Symbol, e.g. BONK"
+              className="w-full px-3.5 py-3 rounded-xl text-[13px] mb-2.5"
+              style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+            />
+            <div className="text-[11.5px] mb-2.5" style={{ color: P.textMuted }}>
+              No live listing found for this mint yet (common for a token that hasn't hit a real DEX pool) — enter its symbol yourself.
+            </div>
+          </>
+        )}
         {error && <div className="text-[11.5px] mb-2.5" style={{ color: "#D92D20" }}>{error}</div>}
-        <PrimaryButton onClick={handleSubmit} disabled={!address.trim() || busy} P={P}>
+        <PrimaryButton onClick={handleSubmit} disabled={!address.trim() || busy || (needsManualSymbol && !manualSymbol.trim())} P={P}>
           {busy ? "Verifying…" : "Add token"}
         </PrimaryButton>
       </div>
