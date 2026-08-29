@@ -309,6 +309,25 @@ function summarizeQuote(quote, fallbackDecimals) {
   return { totalFeeUsd, etaSeconds, receivedAmount };
 }
 
+// A real logo, straight from Relay's own quote response, for whichever
+// symbol(s) this specific quote happened to involve — the only real
+// source that exists for a symbol with no curated icon anywhere (see
+// AssetIcon's own comment on this: USDT0 has no entry in @web3icons,
+// Trust Wallet's assets repo, or Uniswap's token lists, confirmed by
+// directly checking each). Returns {} when neither side's currency
+// carries a logoURI, so a caller can always spread the result in
+// without a null check.
+function extractLogoUpdates(quote) {
+  const details = quote?.details ?? {};
+  const updates = {};
+  for (const leg of [details.currencyIn, details.currencyOut]) {
+    const symbol = leg?.currency?.symbol;
+    const logoURI = leg?.currency?.metadata?.logoURI;
+    if (symbol && logoURI) updates[symbol] = logoURI;
+  }
+  return updates;
+}
+
 const ASSETS = [
   { symbol: "USDC", name: "USD Coin", decimals: 2, price: 1, color: "#2775CA" },
   { symbol: "ETH", name: "Ether", decimals: 5, price: 3120, color: "#8C9BAE" },
@@ -820,7 +839,27 @@ function CustomTokenIcon({ size, chainId, address, fallback }) {
   );
 }
 
-function AssetIcon({ symbol, size = 18, chainId, address }) {
+// A logo URL discovered from Relay's own live quote responses
+// (details.currencyIn/currencyOut.currency.metadata.logoURI — see
+// MangoBridge's own discoveredAssetLogos state and extractLogoUpdates)
+// rather than a guessed external domain. Same safe onError-fallback
+// shape as USDGIcon/SolanaLogoIcon above.
+function DiscoveredLogoIcon({ url, size, fallback }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return fallback;
+  return (
+    <img
+      src={url}
+      alt=""
+      width={size}
+      height={size}
+      style={{ width: size, height: size, objectFit: "contain", borderRadius: "9999px" }}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function AssetIcon({ symbol, size = 18, chainId, address, logoUrl }) {
   const asset = ASSETS.find((a) => a.symbol === symbol);
   const color = asset?.color || "#8C9BAE";
 
@@ -916,6 +955,21 @@ function AssetIcon({ symbol, size = 18, chainId, address }) {
     );
   }
 
+  // A symbol with no curated icon anywhere in this file (USDT0 being
+  // the real case that prompted this — no entry in @web3icons/react,
+  // @web3icons/core, Trust Wallet's assets repo, or Uniswap's token
+  // lists, confirmed by directly checking each), but that a live Relay
+  // quote has already reported a real logoURI for. Tried last, after
+  // every curated/verified icon above, so a discovered URL can never
+  // override an icon already known to be correct.
+  if (logoUrl) {
+    return (
+      <span className="flex items-center justify-center rounded-full shrink-0 overflow-hidden" style={{ width: size, height: size }}>
+        <DiscoveredLogoIcon url={logoUrl} size={size} fallback={<HandDrawnAssetGlyph symbol={symbol} size={size} color={color} />} />
+      </span>
+    );
+  }
+
   return <HandDrawnAssetGlyph symbol={symbol} size={size} color={color} />;
 }
 
@@ -931,7 +985,7 @@ function AssetIcon({ symbol, size = 18, chainId, address }) {
 // symbol anyway (a real, separate limitation mobile's own DexScreen.tsx
 // asks the user to type one for), a genuinely bigger UI to add later,
 // not silently done wrong now.
-function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true }) {
+function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true, discoveredLogos }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const [query, setQuery] = useState("");
@@ -1029,7 +1083,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   return (
     <div className="relative shrink-0" ref={ref}>
       <button onClick={handleToggle} className="flex items-center gap-1.5 pl-2 pr-2.5 py-1.5 rounded-full" style={{ background: P.pillBg }}>
-        <AssetIcon symbol={asset.symbol} size={18} chainId={chainId} address={asset.address} />
+        <AssetIcon symbol={asset.symbol} size={18} chainId={chainId} address={asset.address} logoUrl={discoveredLogos?.[asset.symbol]} />
         <span className="text-[14px] font-semibold" style={{ color: P.textPrimary }}>{asset.symbol}</span>
         <ChevronDown size={14} color={P.textMuted} />
       </button>
@@ -1062,7 +1116,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
               return (
                 <button key={a.symbol} onClick={() => { setAssetIdx(i); setOpen(false); }} className="w-full flex items-center justify-between gap-2.5 px-3 py-2.5 text-left">
                   <div className="flex items-center gap-2.5">
-                    <AssetIcon symbol={a.symbol} size={22} />
+                    <AssetIcon symbol={a.symbol} size={22} logoUrl={discoveredLogos?.[a.symbol]} />
                     <div className="flex flex-col">
                       <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{a.symbol}</span>
                       <span className="text-[11px]" style={{ color: P.textMuted }}>{a.name}</span>
@@ -3086,6 +3140,13 @@ export default function MangoBridge() {
   // This is what actually answers "tell the user there's no available route"
   // — a live check, not a guess based on which addresses we happen to have.
   const [routeCheck, setRouteCheck] = useState({ status: "idle" });
+  // Logos discovered from Relay's own quote responses — see
+  // extractLogoUpdates' own comment on why this is the only real
+  // source for a symbol like USDT0 that no curated icon package or
+  // open token list has. Grows across the session (never cleared),
+  // since a symbol's real logo doesn't change chain-to-chain or
+  // quote-to-quote — once discovered, it's discovered for good.
+  const [discoveredAssetLogos, setDiscoveredAssetLogos] = useState({});
   useEffect(() => {
     if (kind !== "relay" || amtNum <= 0 || !connected || !address || (CHAINS[to]?.isSolana && !sendToOther && !activeSolanaAddress)) {
       setRouteCheck({ status: "idle" });
@@ -3124,7 +3185,21 @@ export default function MangoBridge() {
         // discarded — see summarizeQuote's own comment. The quote
         // itself is kept here so the fee/ETA/received preview below
         // can show Relay's real numbers instead of a static estimate.
-        if (!cancelled) setRouteCheck({ status: "ok", quote });
+        if (!cancelled) {
+          setRouteCheck({ status: "ok", quote });
+          const logoUpdates = extractLogoUpdates(quote);
+          if (Object.keys(logoUpdates).length > 0) {
+            setDiscoveredAssetLogos((prev) => {
+              // Skip the update entirely (same object reference back)
+              // when nothing's actually new — every symbol already
+              // known maps to the exact same URL — so this doesn't
+              // trigger an extra re-render on every single quote tick
+              // once a symbol's logo has already been discovered once.
+              const changed = Object.entries(logoUpdates).some(([sym, url]) => prev[sym] !== url);
+              return changed ? { ...prev, ...logoUpdates } : prev;
+            });
+          }
+        }
       } catch (err) {
         if (!cancelled) setRouteCheck({ status: "unavailable", message: err?.message || String(err) });
       }
@@ -3363,7 +3438,7 @@ export default function MangoBridge() {
                     style={{ color: P.textPrimary }}
                   />
                   <button onClick={setMax} disabled={availableBalance === null} className="text-[10.5px] font-bold px-2 py-1 rounded-md mr-2 shrink-0" style={{ background: availableBalance === null ? P.pillBg : `${LIME}1A`, color: availableBalance === null ? P.textMuted : LIME_DEEP, opacity: availableBalance === null ? 0.6 : 1 }}>MAX</button>
-                  <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} allowCustomToken={isSwapTab} />
+                  <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} allowCustomToken={isSwapTab} discoveredLogos={discoveredAssetLogos} />
                 </div>
                 {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>Insufficient balance on {CHAINS[from].name}</div>}
               </div>
@@ -3399,7 +3474,7 @@ export default function MangoBridge() {
                 )}
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
                   <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 ? P.textPrimary : P.textMuted }}>{amtNum > 0 ? fmt(received, 4) : "0"}</span>
-                  <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken={isSwapTab} />
+                  <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken={isSwapTab} discoveredLogos={discoveredAssetLogos} />
                 </div>
               </div>
 
