@@ -121,8 +121,18 @@ export const WALLET_ONLY_NATIVE_SYMBOL = {
 // directly from ethereum-lists/chains (the same chain registry wagmi/chains
 // itself is built from, fetched via raw.githubusercontent.com), not
 // guessed, and cross-checked against wagmi.js's own "no Thirdweb" policy.
-// Monad and Sei genuinely have no second documented public HTTP endpoint
-// in that registry — left single-endpoint rather than inventing one.
+//
+// Expanded from 12 to 42 entries in one pass: every WALLET_ONLY_CHAIN_ORDER
+// chain without one here was checked against its own
+// eip155-{chainId}.json in that registry, filtering out API-key-templated
+// URLs (${...}), wss:// entries, thirdweb.com domains, and exact
+// duplicates of the chain's own wagmi/chains default (a "fallback" that's
+// really the same endpoint twice is no fallback at all). The remaining 27
+// chains genuinely have no second documented public HTTP endpoint in that
+// registry as of this check — left single-endpoint rather than inventing
+// one, same honest limitation Monad/Sei already established: their own
+// .rpc array is either just the one default URL, a wss://-only second
+// entry, or a trailing-slash duplicate of the default.
 export const WALLET_ONLY_RPC_FALLBACK = {
   [polygon.id]: "https://polygon-bor-rpc.publicnode.com",
   [optimism.id]: "https://optimism-rpc.publicnode.com",
@@ -140,10 +150,38 @@ export const WALLET_ONLY_RPC_FALLBACK = {
   // URL, disallowed unreplaced by this project's own "no Thirdweb
   // defaults" policy — api.harmony.one is Harmony's own real,
   // long-documented public endpoint (their own docs, chainlist.org), not
-  // guessed. Every other chain in that batch keeps wagmi's own single
-  // bundled default, same accepted limitation Monad/Sei already carry
-  // above.
+  // guessed.
   [harmonyOne.id]: "https://api.harmony.one",
+  [fantom.id]: "https://rpc.ftm.tools",
+  [moonbeam.id]: "https://moonbeam.public.blastapi.io",
+  [cronos.id]: "https://cronos-evm-rpc.publicnode.com",
+  [metis.id]: "https://andromeda.metis.io/?owner=1088",
+  [mode.id]: "https://mode.drpc.org",
+  [manta.id]: "https://manta-pacific.drpc.org",
+  [opBNB.id]: "https://opbnb-rpc.publicnode.com",
+  [taiko.id]: "https://taiko-rpc.publicnode.com",
+  [polygonZkEvm.id]: "https://polygon-zkevm.drpc.org",
+  [fraxtal.id]: "https://fraxtal-rpc.publicnode.com",
+  [arbitrumNova.id]: "https://arbitrum-nova-rpc.publicnode.com",
+  [aurora.id]: "https://aurora.drpc.org",
+  [beam.id]: "https://subnets.avax.network/beam/mainnet/rpc",
+  [bob.id]: "https://bob-mainnet.public.blastapi.io",
+  [boba.id]: "https://replica.boba.network",
+  [chiliz.id]: "https://rpc.ankr.com/chiliz",
+  [flare.id]: "https://rpc.ankr.com/flare",
+  [fuse.id]: "https://fuse.drpc.org",
+  [gravity.id]: "https://rpc.ankr.com/gravity",
+  [immutableZkEvm.id]: "https://immutable-zkevm.drpc.org",
+  [katana.id]: "https://katana.gateway.tenderly.co/",
+  [kava.id]: "https://kava-evm-rpc.publicnode.com",
+  [kroma.id]: "https://rpc-kroma.rockx.com",
+  [lukso.id]: "https://rpc.lukso.sigmacore.io",
+  [mint.id]: "https://global.rpc.mintchain.io",
+  [rootstock.id]: "https://mycrypto.rsk.co",
+  [swellchain.id]: "https://rpc.ankr.com/swell",
+  [telos.id]: "https://telos.drpc.org",
+  [xdc.id]: "https://erpc.xinfin.network",
+  [zetachain.id]: "https://zetachain-mainnet.g.allthatnode.com/archive/evm",
 };
 
 // The @web3icons/react "Network*" icon for each chain is imported and
