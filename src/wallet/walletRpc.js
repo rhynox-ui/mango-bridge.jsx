@@ -256,10 +256,30 @@ export async function fetchErc20TokenMetadata(chainKey, tokenAddress) {
  * Metaplex metadata account this project doesn't parse) — the caller
  * asks the user for a symbol directly, same honest limitation
  * documented on the "import custom token" UI itself.
+ *
+ * Real bug fix: this used to go through getWalletSolanaConnection()
+ * — a single, non-retried endpoint, deliberately built that way for
+ * signing/broadcasting a real transaction (see that function's own
+ * comment on why retrying a SIGNED call risks a double-send). A mint
+ * lookup is a pure read with no such risk, and every other read in
+ * this file (fetchWalletSolanaBalance/fetchWalletSplTokenBalance)
+ * already retries across solanaRpcUrls() for exactly that reason —
+ * this was the one read path that didn't, so a single flaky/rate-
+ * limited endpoint could reject a genuinely real mint.
  */
 export async function fetchSplMintDecimals(mintAddress) {
-  const [{ getMint }, { PublicKey }] = await Promise.all([import("@solana/spl-token"), import("@solana/web3.js")]);
-  const connection = await getWalletSolanaConnection();
-  const mint = await getMint(connection, new PublicKey(mintAddress));
-  return mint.decimals;
+  const [{ getMint }, { Connection, PublicKey }] = await Promise.all([import("@solana/spl-token"), import("@solana/web3.js")]);
+  const mintPubkey = new PublicKey(mintAddress);
+  const urls = [...solanaRpcUrls()].reverse();
+  let lastError;
+  for (const url of urls) {
+    try {
+      const connection = new Connection(url, "confirmed");
+      const mint = await getMint(connection, mintPubkey);
+      return mint.decimals;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
 }
