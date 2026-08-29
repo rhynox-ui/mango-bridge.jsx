@@ -26,6 +26,7 @@ import { useAppKit, useAppKitAccount, useAppKitProvider, useDisconnect as useApp
 import {
   ChevronDown,
   ArrowUpDown,
+  Repeat,
   Check,
   Loader2,
   ExternalLink,
@@ -1155,7 +1156,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
               </div>
             )}
             <button onClick={handleConfirm} className="w-full py-3 rounded-xl font-display font-semibold text-[14.5px]" style={{ background: `linear-gradient(135deg, ${LIME}, ${LIME_DEEP})`, color: "#10130A" }}>
-              {kind === "op-withdraw" || kind === "arb-withdraw" ? "Start withdrawal" : "Confirm bridge"}
+              {kind === "op-withdraw" || kind === "arb-withdraw" ? "Start withdrawal" : from === to ? "Confirm swap" : "Confirm bridge"}
             </button>
           </>
         )}
@@ -1243,7 +1244,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
             {phase === "done" && (
               <div className="mt-2 flex flex-col gap-2">
                 <div className="flex items-center gap-2 text-[13px] px-3 py-2.5 rounded-lg" style={{ background: `${LIME}14`, border: `1px solid ${LIME}40`, color: LIME }}>
-                  <Check size={14} /> Bridge complete
+                  <Check size={14} /> {from === to ? "Swap complete" : "Bridge complete"}
                 </div>
                 {isReal ? (
                   <>
@@ -2137,6 +2138,14 @@ export default function MangoBridge() {
     () => [...CHAIN_ORDER, ...WALLET_ONLY_CHAIN_ORDER.filter((key) => liveBridgeDestinations.has(key))],
     [liveBridgeDestinations]
   );
+  // Swap tab's single chain picker — a same-chain swap needs a chain
+  // Relay supports as BOTH an origin and a destination (unlike Bridge,
+  // where the two directions can differ), so this is the intersection
+  // of the two lists above rather than either one alone.
+  const swapChainOrder = useMemo(
+    () => bridgeFromChainOrder.filter((key) => bridgeToChainOrder.includes(key)),
+    [bridgeFromChainOrder, bridgeToChainOrder]
+  );
 
   const [amount, setAmount] = useState("");
   const [fromAssetIdx, setFromAssetIdxRaw] = useState(0);
@@ -2161,7 +2170,7 @@ export default function MangoBridge() {
     if (deepLinkTokenAddress) return "launchpad";
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
     if (requestedTab === "app") return "wallet";
-    const validTabs = ["bridge", "launchpad", "wallet", "history", "portfolio"];
+    const validTabs = ["bridge", "swap", "launchpad", "wallet", "history", "portfolio"];
     return validTabs.includes(requestedTab) ? requestedTab : "bridge";
   });
   // Which network's launchpad is showing — Robinhood Chain (real, working)
@@ -2341,6 +2350,21 @@ export default function MangoBridge() {
   }
   function handleFromChange(id) { setFrom(id); if (id === to) setTo(CHAIN_ORDER.find((c) => c !== id)); setFromAssetIdxRaw(defaultAssetIdxFor(id)); setAmount(""); }
   function handleToChange(id) { setTo(id); if (id === from) setFrom(CHAIN_ORDER.find((c) => c !== id)); setToAssetIdxRaw(defaultAssetIdxFor(id)); setAmount(""); }
+  // Swap tab's own single chain picker — sets from AND to together
+  // (same chain on both sides, since a swap trades one asset for
+  // another on ONE chain, unlike Bridge which moves one asset across
+  // two). Defaults "you pay" to the chain's native asset and "you
+  // receive" to the first other asset in the list, same reasoning
+  // defaultAssetIdxFor above already uses for the Bridge tab.
+  function handleSwapChainChange(id) {
+    setFrom(id);
+    setTo(id);
+    const nativeIdx = defaultAssetIdxFor(id);
+    setFromAssetIdxRaw(nativeIdx);
+    const otherIdx = ASSETS.findIndex((a, i) => i !== nativeIdx);
+    setToAssetIdxRaw(otherIdx >= 0 ? otherIdx : nativeIdx);
+    setAmount("");
+  }
   function handleConnect() {
     if (isFromSolana || CHAINS[to]?.isSolana) {
       setShowWalletSelector(true);
@@ -2352,6 +2376,18 @@ export default function MangoBridge() {
   const isCrossAsset = fromAsset.symbol !== toAsset.symbol;
   const kind = getTransferKind(from, to, fromAsset.symbol, toAsset.symbol);
   const amtNum = Math.max(0, parseFloat(amount) || 0);
+  // Swap tab reuses this entire form (state, quote-checking, BridgeModal
+  // execution) rather than a separate implementation — getTransferKind
+  // already falls through to "relay" for any same-chain pair (none of
+  // its CCTP/OP-stack/Arbitrum/Wormhole special cases can match when
+  // from === to, they all require two specific DIFFERENT chains), and
+  // getRelayQuote/executeRelayQuote are chain-count-agnostic the same
+  // way mango-mobile's own DexScreen.tsx documents for its own,
+  // separate-screen port of this same idea. Only the chain-picker UI,
+  // the "different chain" vs "different asset" validity rule, and the
+  // (same-chain-irrelevant) "send to another address" section differ
+  // between the two tabs — everything else below is shared.
+  const isSwapTab = tab === "swap";
 
   // Proactive route check: for anything going through Relay, fetch a real
   // quote in the background as soon as there's a valid amount, rather than
@@ -2399,7 +2435,10 @@ export default function MangoBridge() {
   }, [kind, amtNum, connected, address, from, to, fromAsset.symbol, toAsset.symbol, amount]);
   const routeUnavailable = kind === "relay" && routeCheck.status === "unavailable";
   const routeChecking = kind === "relay" && routeCheck.status === "checking";
-  const fee = CHAINS[from].baseFee + CHAINS[to].baseFee;
+  // A same-chain swap is one transaction, not two — charging both
+  // "source gas" and "destination gas" for the same chain would double
+  // count it. Bridge (from !== to) keeps paying for both legs.
+  const fee = isSwapTab ? CHAINS[from].baseFee : CHAINS[from].baseFee + CHAINS[to].baseFee;
   const devFeeAmount = amtNum * DEV_FEE_PCT;
   const seconds = Math.max(CHAINS[from].baseSeconds, CHAINS[to].baseSeconds);
   const etaLabel = seconds < 60 ? `~${seconds}s` : `~${Math.round(seconds / 60)} min`;
@@ -2424,17 +2463,38 @@ export default function MangoBridge() {
   // not just when it's the source.
   const needsEvmAddressForSolanaSource = isFromSolana && !CHAINS[to]?.isSolana && !sendToOther && !address;
   const needsSolanaAddressForSolanaDest = CHAINS[to]?.isSolana && !isFromSolana && !sendToOther && !activeSolanaAddress;
-  const canBridge = amtNum > 0 && from !== to && !insufficient && !onWrongNetwork && !needsEvmAddressForSolanaSource && !needsSolanaAddressForSolanaDest && (!sendToOther || isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana));
+  // Bridge requires two different chains (that's what makes it a
+  // bridge); Swap requires the same chain but two different assets
+  // (that's what makes it a trade — same-asset same-chain is a no-op).
+  // "Send to another address" is Bridge-only (a swap always lands back
+  // in the connected wallet, same reasoning mobile's own DexScreen.tsx
+  // gives for not offering that section at all) — isSwapTab short-
+  // circuits that clause rather than relying on sendToOther happening
+  // to still be false, in case it was left checked from the Bridge tab.
+  const chainAssetPairValid = isSwapTab ? from === to && fromAsset.symbol !== toAsset.symbol : from !== to;
+  const canBridge = amtNum > 0 && chainAssetPairValid && !insufficient && !onWrongNetwork && !needsEvmAddressForSolanaSource && !needsSolanaAddressForSolanaDest && (isSwapTab || !sendToOther || isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana));
 
   function persist(newBalances, newHistory) {
     saveJSON("mango:balances", newBalances);
     saveJSON("mango:history", newHistory);
   }
   function handleComplete(hash) {
+    // Real bug fix, newly reachable now that the Swap tab allows from ===
+    // to: building [from]: {...} and [to]: {...} as two separate object-
+    // literal entries silently drops the first one whenever they're the
+    // same key — the second entry's spread reads the ORIGINAL balances,
+    // not the just-computed debit, so it overwrites rather than adds to
+    // it. Applying the "to" update on top of the already-updated "from"
+    // chain entry (not the stale original `balances`) keeps both the
+    // debit and the credit when they land on the same chain.
+    const fromChainBalances = { ...balances[from], [fromAsset.symbol]: Math.max(0, (balances[from][fromAsset.symbol] || 0) - amtNum) };
+    const toChainBalances = from === to
+      ? { ...fromChainBalances, [toAsset.symbol]: (fromChainBalances[toAsset.symbol] || 0) + received }
+      : { ...balances[to], [toAsset.symbol]: (balances[to][toAsset.symbol] || 0) + received };
     const newBalances = {
       ...balances,
-      [from]: { ...balances[from], [fromAsset.symbol]: Math.max(0, (balances[from][fromAsset.symbol] || 0) - amtNum) },
-      [to]: { ...balances[to], [toAsset.symbol]: (balances[to][toAsset.symbol] || 0) + received },
+      [from]: fromChainBalances,
+      [to]: toChainBalances,
     };
     const entry = { id: Date.now(), from, to, amount: amtNum, symbol: fromAsset.symbol, toSymbol: toAsset.symbol, hash, timestamp: Date.now(), status: "complete" };
     const newHistory = [entry, ...history];
@@ -2519,7 +2579,7 @@ export default function MangoBridge() {
         </div>
       </div>
 
-      {tab === "bridge" && onWrongNetwork && (
+      {(tab === "bridge" || tab === "swap") && onWrongNetwork && (
         <div className="flex items-center justify-between gap-3 px-6 py-2.5" style={{ background: "#FCEFD9", borderBottom: "1px solid #F0D9A8" }}>
           <span className="flex items-center gap-2 text-[12.5px]" style={{ color: "#8A5A00" }}>
             <AlertTriangle size={13} /> Wallet is on the wrong network for {CHAINS[from].name}
@@ -2563,6 +2623,18 @@ export default function MangoBridge() {
             <MangoWalletTab P={P} />
           ) : (
             <>
+              {/* Swap tab: one chain for both legs, picked here — Bridge
+                  keeps its own two independent chain pickers below,
+                  inside each card, same as before this tab existed. */}
+              {isSwapTab && (
+                <div className="rounded-2xl p-4 shadow-sm mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>Swap on</span>
+                    <ChainDropdown value={from} onChange={handleSwapChainChange} P={P} chainOrder={swapChainOrder} />
+                  </div>
+                </div>
+              )}
+
               {/* You send */}
               <div className="rounded-2xl p-4 shadow-sm" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                 <div className="flex items-center justify-between mb-2.5">
@@ -2571,9 +2643,11 @@ export default function MangoBridge() {
                     {usingLiveBalance && (liveBalanceLoading ? "Loading balance…" : `Balance: ${fmt(availableBalance, fromAsset.decimals)} ${fromAsset.symbol}`)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between mb-3">
-                  <ChainDropdown value={from} exclude={to} onChange={handleFromChange} P={P} chainOrder={bridgeFromChainOrder} />
-                </div>
+                {!isSwapTab && (
+                  <div className="flex items-center justify-between mb-3">
+                    <ChainDropdown value={from} exclude={to} onChange={handleFromChange} P={P} chainOrder={bridgeFromChainOrder} />
+                  </div>
+                )}
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${insufficient ? "#D92D20" : P.panelBorder}` }}>
                   <input
                     type="number"
@@ -2606,9 +2680,11 @@ export default function MangoBridge() {
                     {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between mb-3">
-                  <ChainDropdown value={to} exclude={from} onChange={handleToChange} P={P} chainOrder={bridgeToChainOrder} />
-                </div>
+                {!isSwapTab && (
+                  <div className="flex items-center justify-between mb-3">
+                    <ChainDropdown value={to} exclude={from} onChange={handleToChange} P={P} chainOrder={bridgeToChainOrder} />
+                  </div>
+                )}
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
                   <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 ? P.textPrimary : P.textMuted }}>{amtNum > 0 ? fmt(received, 4) : "0"}</span>
                   <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} />
@@ -2627,9 +2703,18 @@ export default function MangoBridge() {
               </button>
               {detailsOpen && (
                 <div className="mt-2 px-4 py-3 rounded-xl flex flex-col gap-2" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
-                  <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Route</span><span style={{ color: P.textPrimary }}>{CHAINS[from].name} → {CHAINS[to].name}</span></div>
-                  <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Source gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[from].baseFee, 2)}</span></div>
-                  <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Destination gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[to].baseFee, 2)}</span></div>
+                  {isSwapTab ? (
+                    <>
+                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Route</span><span style={{ color: P.textPrimary }}>{fromAsset.symbol} → {toAsset.symbol} on {CHAINS[from].name}</span></div>
+                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[from].baseFee, 2)}</span></div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Route</span><span style={{ color: P.textPrimary }}>{CHAINS[from].name} → {CHAINS[to].name}</span></div>
+                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Source gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[from].baseFee, 2)}</span></div>
+                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Destination gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[to].baseFee, 2)}</span></div>
+                    </>
+                  )}
                   <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Protocol fee (1%)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmt(devFeeAmount, fromAsset.decimals)} {fromAsset.symbol}</span></div>
                 </div>
               )}
@@ -2682,29 +2767,34 @@ export default function MangoBridge() {
                 </div>
               )}
 
-              {/* Send to another address */}
-              <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-                <label className="flex items-center gap-2.5 cursor-pointer">
-                  <input type="checkbox" checked={sendToOther} onChange={(e) => setSendToOther(e.target.checked)} className="w-4 h-4 rounded" style={{ accentColor: LIME }} />
-                  <span className="text-[12.5px] font-medium" style={{ color: P.textPrimary }}>Send to another address</span>
-                </label>
-                {sendToOther && (
-                  <>
-                    <input
-                      value={destAddress}
-                      onChange={(e) => setDestAddress(e.target.value)}
-                      placeholder={`Enter ${CHAINS[to].name} address`}
-                      className="w-full mt-2.5 px-3 py-2.5 rounded-lg text-[13px] font-mono"
-                      style={{ background: P.input, border: `1px solid ${destAddress.trim() && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? "#D92D20" : P.panelBorder}`, color: P.textPrimary }}
-                    />
-                    {destAddress.trim() && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) && (
-                      <div className="text-[11px] mt-1.5" style={{ color: "#D92D20" }}>
-                        Invalid {CHAINS[to].name} address
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
+              {/* Send to another address — Bridge only. A swap always
+                  lands back in the connected wallet, same reasoning
+                  mobile's own DexScreen.tsx gives for not offering this
+                  section at all on its swap screen. */}
+              {!isSwapTab && (
+                <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input type="checkbox" checked={sendToOther} onChange={(e) => setSendToOther(e.target.checked)} className="w-4 h-4 rounded" style={{ accentColor: LIME }} />
+                    <span className="text-[12.5px] font-medium" style={{ color: P.textPrimary }}>Send to another address</span>
+                  </label>
+                  {sendToOther && (
+                    <>
+                      <input
+                        value={destAddress}
+                        onChange={(e) => setDestAddress(e.target.value)}
+                        placeholder={`Enter ${CHAINS[to].name} address`}
+                        className="w-full mt-2.5 px-3 py-2.5 rounded-lg text-[13px] font-mono"
+                        style={{ background: P.input, border: `1px solid ${destAddress.trim() && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? "#D92D20" : P.panelBorder}`, color: P.textPrimary }}
+                      />
+                      {destAddress.trim() && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) && (
+                        <div className="text-[11px] mt-1.5" style={{ color: "#D92D20" }}>
+                          Invalid {CHAINS[to].name} address
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* CTA */}
               <button
@@ -2717,7 +2807,7 @@ export default function MangoBridge() {
                   cursor: connected && canBridge && !routeUnavailable ? "pointer" : "not-allowed",
                 }}
               >
-                {!connected ? "Connect wallet" : onWrongNetwork ? "Switch network to continue" : from === to ? "Choose different chains" : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
+                {!connected ? "Connect wallet" : onWrongNetwork ? "Switch network to continue" : !chainAssetPairValid ? (isSwapTab ? "Choose different assets" : "Choose different chains") : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
               </button>
               {routeUnavailable && (
                 <div className="text-center mt-2 text-[11.5px]" style={{ color: "#D92D20" }}>
@@ -2743,6 +2833,7 @@ export default function MangoBridge() {
         <div className="flex items-center gap-0.5 p-1.5 rounded-full shadow-lg overflow-x-auto max-w-full" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           {[
             { id: "bridge", label: "Bridge", icon: ArrowUpDown },
+            { id: "swap", label: "Swap", icon: Repeat },
             { id: "launchpad", label: "Launch", icon: Rocket },
             { id: "wallet", label: "Wallet", icon: Wallet },
             { id: "history", label: "History", icon: HistoryIcon },
@@ -2768,7 +2859,14 @@ export default function MangoBridge() {
         <BridgeModal
           from={from} to={to} amount={amount} asset={fromAsset.symbol} toAsset={toAsset.symbol} fee={fee} etaLabel={etaLabel} received={received}
           devFeeAmount={devFeeAmount}
-          destination={sendToOther ? destAddress : null}
+          // isSwapTab-gated even though the "Send to another address"
+          // section itself is already hidden on the swap tab: sendToOther/
+          // destAddress are shared state with the Bridge tab, so a user
+          // who checked it there and then switched to Swap without
+          // unchecking it must not have a stale destination silently
+          // carried into a swap that's supposed to always land back in
+          // their own wallet.
+          destination={!isSwapTab && sendToOther ? destAddress : null}
           account={activeAccount}
           evmAddress={address}
           isFromSolana={isFromSolana}
