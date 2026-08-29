@@ -54,12 +54,30 @@ function toCsv(records) {
   return header + rows + (records.length > 0 ? "\n" : "");
 }
 
-// Deliberately no Access-Control-Allow-Origin header, unlike every
-// other endpoint in this API — this is meant to be called from a
-// script/curl with the secret, never from a public browser page. The
-// secret is the real gate either way; this is just not inviting
-// browser-based use of it.
+// AdminReferralsPage.jsx now calls this from the browser (real, in-app
+// use, not just curl/scripts anymore) — a cross-origin fetch with a
+// custom Authorization header triggers a CORS preflight (an OPTIONS
+// request) first, and this handler used to only ever answer GET,
+// rejecting that preflight with a 405. The browser reports a failed
+// preflight to JS as a generic "Failed to fetch", not a real error
+// message, which is exactly what that bug looked like live. Scoped to
+// this project's own two real domains, not a wildcard "*" — the
+// ADMIN_API_SECRET is still the actual gate either way, this is just
+// not inviting a third-party page to attempt the call at all.
+const ALLOWED_ORIGINS = new Set(["https://mangoprotocol.site", "https://www.mangoprotocol.site"]);
+
 export default async function handler(request, response) {
+  const origin = request.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  }
+
+  if (request.method === "OPTIONS") {
+    return response.status(204).end();
+  }
+
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });
   }
