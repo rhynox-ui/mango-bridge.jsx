@@ -1,39 +1,36 @@
-import { getAccount, switchChain, sendTransaction, waitForTransactionReceipt, writeContract } from "wagmi/actions";
+import { getAccount, switchChain, sendTransaction, waitForTransactionReceipt } from "wagmi/actions";
 import { config } from "./wagmi.js";
 export { MAINNET_CHAIN_IDS, NATIVE_SYMBOL, TOKEN_ADDRESSES, currencyAddress, canRelayHandle, ASSET_ONCHAIN_DECIMALS } from "./chainData.js";
 import { MAINNET_CHAIN_IDS, currencyAddress } from "./chainData.js";
-
-const DEV_FEE_WALLET = "0xf07becc2401a646fff10d10b969ef18b03582e88";
-const DEV_FEE_PCT = 0.01;
+import { DEV_FEE_WALLET, DEV_FEE_WALLET_SOLANA, DEV_FEE_PCT } from "./devFeeWallets.js";
 export { DEV_FEE_WALLET, DEV_FEE_PCT };
 
-const ERC20_TRANSFER_ABI = [
-  { name: "transfer", type: "function", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
-];
-
-/**
- * Sends the 1% protocol fee as its own visible on-chain transfer, same
- * pattern used for CCTP transfers elsewhere in this app — the fee is never
- * silently bundled into another transaction.
- */
-export async function sendRelayProtocolFee({ chainKey, chainId, assetSymbol, feeBaseUnits }) {
-  if (feeBaseUnits <= 0n) return null;
-  await switchChain(config, { chainId });
-  const currency = currencyAddress(chainKey, assetSymbol);
-  let hash;
-  if (currency === NATIVE_TOKEN_ADDRESS) {
-    hash = await sendTransaction(config, { to: DEV_FEE_WALLET, value: feeBaseUnits, chainId });
-  } else {
-    hash = await writeContract(config, {
-      address: currency,
-      abi: ERC20_TRANSFER_ABI,
-      functionName: "transfer",
-      args: [DEV_FEE_WALLET, feeBaseUnits],
-      chainId,
-    });
-  }
-  await waitForTransactionReceipt(config, { hash, chainId });
-  return hash;
+// Real fix for a real problem the previous "send a standalone fee
+// transfer, then quote/execute the transfer" design had:
+// (1) a failed/reverted transfer could still have already collected
+//     the fee, since that transfer landed BEFORE the real transfer even
+//     started — sendRelayProtocolFee (removed) was awaited first, with
+//     no way to reverse it if what followed then failed;
+// (2) the user's requested amount had to be shrunk by 1% up front to
+//     leave room for that separate fee transfer, so a MAX-balance
+//     transfer could never actually move the user's full balance.
+//
+// Relay's own quote request accepts an `appFees` array — confirmed
+// directly against @relayprotocol/relay-sdk's own shipped type
+// definitions (node_modules/@relayprotocol/relay-sdk/_types/src/types/api.d.ts):
+// "App fees to be charged for execution in basis points, e.g. 100 = 1%".
+// Attaching it here means the fee is deducted by Relay's own solver as
+// part of the SAME settlement the transfer itself is — atomically, only
+// if the transfer actually succeeds, and the full requested amount goes
+// into the quote with nothing carved out beforehand.
+//
+// Fee recipient depends on the quote's DESTINATION chain — an EVM
+// destination pays DEV_FEE_WALLET, a Solana destination pays
+// DEV_FEE_WALLET_SOLANA (an EVM address can't receive SOL) — matching
+// how Relay's own appFees settle: out of what's actually delivered on
+// the destination side, not what's deposited on the origin side.
+function feeRecipientForChainId(chainId) {
+  return chainId === MAINNET_CHAIN_IDS.solana ? DEV_FEE_WALLET_SOLANA : DEV_FEE_WALLET;
 }
 
 // Relay Protocol — confirmed independently across three sources: Relay's own
@@ -62,7 +59,6 @@ export async function sendRelayProtocolFee({ chainKey, chainId, assetSymbol, fee
 
 const RELAY_QUOTE_URL = "https://api.relay.link/quote/v2";
 const RELAY_STATUS_URL = "https://api.relay.link/intents/status/v3";
-const NATIVE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 /**
  * Fetches a Relay quote for moving `amountBaseUnits` of `fromAsset` on
@@ -71,6 +67,7 @@ const NATIVE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000";
  * actual decimals — this function does not do decimal conversion itself.
  */
 export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress }) {
+  const destinationChainId = MAINNET_CHAIN_IDS[toChainKey];
   const body = {
     user: userAddress,
     // Real fix for a real gap: previously this always used userAddress as
@@ -84,11 +81,12 @@ export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAss
     // given, preserving the original behavior exactly for the common case.
     recipient: recipientAddress || userAddress,
     originChainId: MAINNET_CHAIN_IDS[fromChainKey],
-    destinationChainId: MAINNET_CHAIN_IDS[toChainKey],
+    destinationChainId,
     originCurrency: currencyAddress(fromChainKey, fromAsset),
     destinationCurrency: currencyAddress(toChainKey, toAsset),
     amount: amountBaseUnits,
     tradeType: "EXACT_INPUT",
+    appFees: [{ recipient: feeRecipientForChainId(destinationChainId), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
   };
   const res = await fetch(RELAY_QUOTE_URL, {
     method: "POST",

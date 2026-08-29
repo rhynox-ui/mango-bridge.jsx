@@ -2,6 +2,8 @@ import { readContract, writeContract, waitForTransactionReceipt, switchChain } f
 import { parseUnits, pad } from "viem";
 import { config } from "./wagmi.js";
 import { isMainnet } from "./networkMode.js";
+import { DEV_FEE_WALLET, DEV_FEE_PCT } from "./devFeeWallets.js";
+export { DEV_FEE_WALLET, DEV_FEE_PCT };
 
 // Shared CCTP V2 contract addresses on TESTNET — identical across Ethereum
 // and Base testnet (deployed deterministically via CREATE2). Arc testnet has
@@ -71,11 +73,12 @@ export function isCctpSupportedPair(fromKey, toKey) {
   return !!chains[fromKey] && !!chains[toKey] && fromKey !== toKey;
 }
 
-// Dev fee: 1% of every real transfer is sent to this wallet before the burn.
-// This is a plain, visible on-chain USDC transfer — not hidden in the CCTP
-// call — so it shows up as its own transaction in the user's wallet/explorer.
-export const DEV_FEE_WALLET = "0xf07becc2401a646fff10d10b969ef18b03582e88";
-export const DEV_FEE_PCT = 0.01;
+// Dev fee: 1% of every real transfer is sent to this wallet AFTER the burn
+// succeeds (see runCctpTransfer below for why the ordering matters). This
+// is a plain, visible on-chain USDC transfer — not hidden in the CCTP call —
+// so it shows up as its own transaction in the user's wallet/explorer.
+// DEV_FEE_WALLET/DEV_FEE_PCT now live in devFeeWallets.js — re-exported here
+// for existing call sites (App.jsx imports them from this module).
 
 const ERC20_ABI = [
   { name: "approve", type: "function", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
@@ -178,18 +181,6 @@ export async function runCctpTransfer({ fromKey, toKey, account, amountHuman, re
     await waitForTransactionReceipt(config, { hash: approveHash, chainId: from.chainId });
   }
 
-  if (devFeeAmount > 0n) {
-    onStep?.("fee");
-    const feeHash = await writeContract(config, {
-      address: from.usdc,
-      abi: ERC20_ABI,
-      functionName: "transfer",
-      args: [DEV_FEE_WALLET, devFeeAmount],
-      chainId: from.chainId,
-    });
-    await waitForTransactionReceipt(config, { hash: feeHash, chainId: from.chainId });
-  }
-
   onStep?.("burn");
   const burnHash = await writeContract(config, {
     address: from.tokenMessenger,
@@ -207,6 +198,28 @@ export async function runCctpTransfer({ fromKey, toKey, account, amountHuman, re
     chainId: from.chainId,
   });
   const burnReceipt = await waitForTransactionReceipt(config, { hash: burnHash, chainId: from.chainId });
+
+  // Real fix for a real bug: this fee transfer used to run BEFORE the burn,
+  // so a burn that then failed had still already cost the user the fee.
+  // CCTP's depositForBurn has no atomic third-party-fee mechanism (unlike
+  // Relay's appFees) — this transfer necessarily stays a separate
+  // transaction — but sending it only now, after burnReceipt confirms the
+  // burn actually succeeded, means a failed burn never costs a fee at all.
+  // The upfront amount shrink (devFeeAmount computed above) is still
+  // unavoidable here for the same reason: CCTP has no way to carve the fee
+  // out of the settlement after the fact, so it has to come out of what's
+  // requested before the burn is submitted.
+  if (devFeeAmount > 0n) {
+    onStep?.("fee");
+    const feeHash = await writeContract(config, {
+      address: from.usdc,
+      abi: ERC20_ABI,
+      functionName: "transfer",
+      args: [DEV_FEE_WALLET, devFeeAmount],
+      chainId: from.chainId,
+    });
+    await waitForTransactionReceipt(config, { hash: feeHash, chainId: from.chainId });
+  }
 
   onStep?.("attest");
   const attestation = await pollAttestation(from.domain, burnReceipt.transactionHash);

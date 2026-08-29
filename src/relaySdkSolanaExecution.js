@@ -27,7 +27,8 @@ import { createClient, getClient, convertViemChainToRelayChain, MAINNET_RELAY_AP
 import { adaptSolanaWallet } from "@relayprotocol/relay-svm-wallet-adapter";
 import { mainnet, base, bsc } from "wagmi/chains";
 import { robinhoodMainnet, stableMainnet } from "./wagmi.js";
-import { SOLANA_RPC_PRIMARY, withSolanaFallback } from "./solanaRpc.js";
+import { SOLANA_RPC_PRIMARY } from "./solanaRpc.js";
+import { DEV_FEE_WALLET, DEV_FEE_WALLET_SOLANA, DEV_FEE_PCT } from "./devFeeWallets.js";
 
 let clientInitialized = false;
 let initPromise = null;
@@ -81,56 +82,20 @@ function ensureClientInitialized() {
 // relaybridge.js tonight.
 const RELAY_SOLANA_CHAIN_ID = 792703809;
 
-// Protocol fee wallet for Solana-SOURCED transfers — a real Solana address,
-// separate from DEV_FEE_WALLET in relaybridge.js (that one is EVM-only and
-// cannot receive SOL). Same 1% rate as the EVM side, kept as its own visible
-// on-chain transfer rather than bundled into the Relay deposit, matching the
-// pattern sendRelayProtocolFee already uses for EVM-sourced transfers.
-export const DEV_FEE_WALLET_SOLANA = "CFqNwTuTkqkaVoNZmNE6q5TeV6CcNwGRns2NSEY72Fu2";
-
-/**
- * Sends the 1% protocol fee as a native SOL transfer, signed by the same
- * connected Solana wallet (OKX Connect) used for the transfer itself. Must
- * be called BEFORE executeSolanaSourcedTransfer with the reduced remainder,
- * same two-step pattern as sendRelayProtocolFee + getRelayQuote on the EVM
- * side.
- */
-export async function sendSolanaProtocolFee({ solanaAddress, solanaProvider, feeBaseUnits }) {
-  if (feeBaseUnits <= 0n) return null;
-
-  const { PublicKey, SystemProgram, Transaction } = await import("@solana/web3.js");
-
-  // Whole flow (blockhash -> sign -> broadcast -> confirm) runs against
-  // ONE connection per attempt, retried as a unit against the next
-  // endpoint on failure — see solanaRpc.js. Both configured endpoints
-  // genuinely support sendTransaction (the reason the primary was chosen
-  // over Solana's own default public RPC, which disables it for most
-  // callers, confirmed as a real 403 earlier in this project); a retry
-  // means a second signature prompt for the user, which is the correct,
-  // safe behavior here — a transaction that never broadcast successfully
-  // the first time can't become a duplicate on-chain.
-  return withSolanaFallback(async (connection) => {
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-    const fromPubkey = new PublicKey(solanaAddress);
-    const transaction = new Transaction({
-      feePayer: fromPubkey,
-      recentBlockhash: blockhash,
-    }).add(
-      SystemProgram.transfer({
-        fromPubkey,
-        toPubkey: new PublicKey(DEV_FEE_WALLET_SOLANA),
-        lamports: feeBaseUnits,
-      })
-    );
-
-    // Same CAIP-2 identifier and signing call already confirmed working
-    // against OKX's installed solana-provider source, immediately below in
-    // executeSolanaSourcedTransfer.
-    const signed = await solanaProvider.signTransaction(transaction, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`);
-    const signature = await connection.sendRawTransaction(signed.serialize());
-    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
-    return signature;
-  });
+// Real fix for the same problem relaybridge.js's own header now
+// documents in full: a standalone pre-transfer fee (the previous
+// sendSolanaProtocolFee, removed) could be collected even if the real
+// transfer then failed, and forced shrinking the requested amount by
+// 1% up front, breaking a MAX-balance transfer. Relay's official SDK's
+// getQuote action accepts appFees via its own `options` parameter
+// (confirmed directly against the installed @relayprotocol/relay-sdk's
+// own type definitions — GetQuoteParameters.options is typed as
+// Partial<QuoteBodyOptions>, and QuoteBodyOptions includes appFees; it
+// is NOT a top-level getQuote parameter the way chainId/currency are),
+// so the fee is deducted atomically by Relay's own solver as part of
+// the same settlement, same as the EVM-sourced path.
+function feeRecipientForChainId(chainId) {
+  return chainId === RELAY_SOLANA_CHAIN_ID ? DEV_FEE_WALLET_SOLANA : DEV_FEE_WALLET;
 }
 
 /**
@@ -161,9 +126,9 @@ export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvid
     // genuinely free, no-signup alternative that does support
     // sendTransaction.
     //
-    // Deliberately NOT wrapped in withSolanaFallback's retry-the-whole-
-    // flow pattern (see sendSolanaProtocolFee above for that pattern) —
-    // this connection is captured in adaptedWallet's closure and reused
+    // Deliberately NOT wrapped in solanaRpc.js's withSolanaFallback
+    // retry-the-whole-flow helper — this connection is captured in
+    // adaptedWallet's closure and reused
     // across getQuote AND execute below, several steps and an external
     // SDK call apart. Retrying that whole sequence against a second
     // endpoint mid-flow risks a real regression in an already fragile,
@@ -204,6 +169,9 @@ export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvid
       wallet: adaptedWallet,
       user: solanaAddress,
       recipient: recipient || solanaAddress,
+      options: {
+        appFees: [{ recipient: feeRecipientForChainId(toChainId), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
+      },
     });
   } catch (err) {
     throw new Error(`[getQuote step] ${err?.message || String(err)}`);
