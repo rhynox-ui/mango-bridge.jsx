@@ -78,6 +78,7 @@ import { isMainnet, getWagmiChain } from "./networkMode.js";
 import { LaunchpadTab } from "./Launchpad.jsx";
 import { MangoWalletTab } from "./MangoWallet.jsx";
 import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
+import { AdminReferralsPage } from "./AdminReferralsPage.jsx";
 
 // ---------------------------------------------------------------------------
 // Data
@@ -2975,6 +2976,13 @@ export default function MangoBridge() {
   // idea as ?tab= above, for a link that should land someone directly on
   // the documentation rather than the Bridge homepage first.
   const [showDocs, setShowDocs] = useState(() => new URLSearchParams(window.location.search).get("docs") === "1");
+  // ?admin-referrals=1 opens AdminReferralsPage.jsx — same deep-link
+  // pattern as ?docs= above. Not linked anywhere in this app's own nav;
+  // the real gate is the ADMIN_API_SECRET that page itself asks for
+  // (see its own header), not this URL's obscurity.
+  const [showAdminReferrals, setShowAdminReferrals] = useState(
+    () => new URLSearchParams(window.location.search).get("admin-referrals") === "1",
+  );
   const [showNetworkSelector, setShowNetworkSelector] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sendToOther, setSendToOther] = useState(false);
@@ -3787,6 +3795,7 @@ export default function MangoBridge() {
         />
       )}
       {showDocs && <DocsModal onClose={() => setShowDocs(false)} P={P} />}
+      {showAdminReferrals && <AdminReferralsPage onClose={() => setShowAdminReferrals(false)} />}
       {showWalletSelector && <WalletSelectorModal onClose={() => setShowWalletSelector(false)} P={P} solanaRelevant={isFromSolana || !!CHAINS[to]?.isSolana} />}
       {showNetworkSelector && (
         <NetworkSelectorModal
