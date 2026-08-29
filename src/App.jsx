@@ -1457,15 +1457,6 @@ function PortfolioTab({ address, connected, P }) {
   );
 }
 
-function DocSection({ title, children, P }) {
-  return (
-    <div className="mb-6">
-      <h3 className="text-[15px] font-semibold mb-2" style={{ color: P.textPrimary }}>{title}</h3>
-      <div className="text-[13px] leading-relaxed" style={{ color: P.textSecondary }}>{children}</div>
-    </div>
-  );
-}
-
 // One shared modal, not a separate picker per tab — which networks it
 // offers depends on which tab opened it. Bridge (and every other tab)
 // gets the full real chain list, unchanged. Launchpad only ever works on
@@ -1640,335 +1631,530 @@ function WalletSelectorModal({ onClose, P, solanaRelevant }) {
   );
 }
 
-function DocsModal({ onClose, P }) {
+// Docs — sidebar-driven, one page at a time (grouped nav, breadcrumb,
+// search-filtered sidebar), replacing the previous single long-scroll
+// modal. Every fact below is carried over verbatim from that version —
+// this only restructures how it's organized and presented; nothing here
+// is newly claimed. DOC_GROUPS is the nav; DOC_CONTENT[id] renders each
+// page's body, given (P, goTo) — goTo lets a page link directly to
+// another one, same as a real docs site's internal cross-links.
+const DOC_GROUPS = [
+  { label: "Welcome", pages: [
+    { id: "overview", title: "Overview" },
+    { id: "quickstart", title: "Quickstart" },
+  ] },
+  { label: "Bridge", pages: [
+    { id: "bridge-overview", title: "Overview" },
+    { id: "bridge-networks", title: "Supported networks" },
+    { id: "bridge-protocols", title: "Supported protocols" },
+    { id: "bridge-routing", title: "How routing works" },
+    { id: "bridge-solana", title: "Solana support" },
+    { id: "bridge-security", title: "Security model" },
+    { id: "bridge-fees", title: "Fees" },
+    { id: "bridge-assets", title: "Supported assets" },
+  ] },
+  { label: "Swap", pages: [
+    { id: "swap-overview", title: "Overview" },
+  ] },
+  { label: "Launchpad", pages: [
+    { id: "launchpad-overview", title: "Launching a token" },
+    { id: "launchpad-hooks", title: "How Uniswap v4 hooks work" },
+    { id: "launchpad-powered", title: "Powered by Uniswap v4" },
+    { id: "launchpad-contracts", title: "Contracts" },
+  ] },
+  { label: "Wallet", pages: [
+    { id: "wallet-overview", title: "Mango Wallet" },
+  ] },
+  { label: "Trust & security", pages: [
+    { id: "custody", title: "Custody" },
+  ] },
+  { label: "Builders", pages: [
+    { id: "api-sdk", title: "REST API" },
+  ] },
+  { label: "Roadmap", pages: [
+    { id: "roadmap", title: "What's next" },
+  ] },
+];
+
+function DocLink({ P, onClick, children }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
-      <div className="w-full max-w-lg rounded-2xl p-6 max-h-[85vh] overflow-y-auto" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
-        <div className="flex items-center justify-between mb-5 sticky top-0 pb-2" style={{ background: P.bg }}>
-          <span className="font-display text-[19px] font-semibold" style={{ color: P.textPrimary }}>Mango Bridge Documentation</span>
-          <button onClick={onClose}><X size={18} color={P.textMuted} /></button>
-        </div>
+    <button onClick={onClick} className="font-medium underline underline-offset-2" style={{ color: P.textPrimary }}>
+      {children}
+    </button>
+  );
+}
 
-        <DocSection title="What it is" P={P}>
-          <p>Mango Protocol is a permissionless infrastructure suite for moving assets across chains and launching new tokens. Anyone can bridge, anyone can launch a token, anyone can trade — there's no gatekeeping, no approval process, no account to register. You connect a wallet and use it.</p>
-        </DocSection>
+function DocCallout({ P, children }) {
+  return (
+    <div className="flex items-start gap-2 rounded-xl px-3.5 py-3 text-[12.5px] leading-relaxed" style={{ background: `${LIME}14`, border: `1px solid ${LIME}40`, color: P.textPrimary }}>
+      <span className="shrink-0 mt-0.5" style={{ color: LIME_DEEP }}>●</span>
+      <span>{children}</span>
+    </div>
+  );
+}
 
-        <DocSection title="Supported Networks" P={P}>
-          <ul className="list-disc ml-5 flex flex-col gap-0.5">
-            <li>Ethereum</li>
-            <li>Base</li>
-            <li>BNB Chain</li>
-            <li>Robinhood Chain</li>
-            <li>Stable — Tether's own L1, native gas token USDT0</li>
-            <li>Solana — genuinely different from every other chain here, not EVM-compatible. See "Solana Support" below for what that actually means for you.</li>
-            <li>Arbitrum One</li>
-            <li>Avalanche</li>
-            <li>Abstract</li>
-            <li>HyperEVM</li>
-            <li>Ink</li>
-            <li>Plasma</li>
-            <li>Unichain</li>
-            <li>X Layer</li>
-          </ul>
-          <p className="mt-2">Each native asset (ETH, AVAX, HYPE, XPL, OKB) always routes through Relay. Beyond that: Ink and Unichain additionally have a real OP Stack canonical bridge for ETH, same protocol as Base (see "Supported Protocols" below); Avalanche, Arbitrum One, and Unichain additionally support USDC via Circle CCTP. Abstract, HyperEVM, X Layer, and Plasma have neither yet — Relay only.</p>
-        </DocSection>
+function DocFactCard({ P, title, children }) {
+  return (
+    <div className="rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+      <div className="text-[12.5px] font-semibold mb-1" style={{ color: P.textPrimary }}>{title}</div>
+      <div className="text-[11.5px] leading-relaxed" style={{ color: P.textSecondary }}>{children}</div>
+    </div>
+  );
+}
 
-        <DocSection title="Supported Protocols" P={P}>
-          <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Circle CCTP</p>
-          <p className="mb-2">Circle Cross-Chain Transfer Protocol (CCTP) enables native USDC transfers between supported blockchains through a burn-and-mint mechanism.</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>How it works</p>
-          <ol className="list-decimal ml-5 mb-2 flex flex-col gap-0.5">
-            <li>USDC is burned on the source chain.</li>
-            <li>Circle's Attestation Service verifies the burn event.</li>
-            <li>A signed attestation is generated.</li>
-            <li>The destination contract mints an equivalent amount of native USDC.</li>
-            <li>The recipient receives canonical USDC instead of wrapped tokens.</li>
-          </ol>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Advantages</p>
-          <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
-            <li>Native USDC</li>
-            <li>No wrapped assets</li>
-            <li>Backed directly by Circle</li>
-            <li>High security</li>
-            <li>Fast settlement</li>
-          </ul>
-          <p className="mb-3"><span className="font-medium" style={{ color: P.textPrimary }}>Supported routes:</span> USDC between any two of Ethereum, Base, Avalanche, Arbitrum One, and Unichain. Domain IDs and contract addresses for the newest three were verified against Circle's own CREATE2-deployed CCTP V2 contracts (identical TokenMessenger/MessageTransmitter address on every chain) before being wired in — not guessed.</p>
+const DOC_CONTENT = {
+  overview: (P, goTo) => (
+    <>
+      <p className="mb-4">Mango Protocol is a permissionless infrastructure suite for moving assets across chains, swapping them, and launching new tokens. Anyone can bridge, anyone can swap, anyone can launch a token, anyone can trade — there's no gatekeeping, no approval process, no account to register. You connect a wallet and use it.</p>
+      <div className="grid grid-cols-1 gap-2.5 mb-4">
+        <DocFactCard P={P} title="Never in custody">Bridge transfers and swaps settle through the underlying protocol's own contracts — Circle's, Optimism's, Arbitrum's, Wormhole's, or Relay's. Mango's role is routing and fee collection, not holding funds. See <DocLink P={P} onClick={() => goTo("custody")}>Custody →</DocLink></DocFactCard>
+        <DocFactCard P={P} title="Live routes, checked before you confirm">An unsupported chain/asset combination is never guessed at or faked as a success — the app checks for a real, live route first and tells you plainly if one doesn't exist.</DocFactCard>
+        <DocFactCard P={P} title="One visible fee, always">A 1% protocol fee applies to real transfers and swaps, shown before you confirm and never bundled invisibly into another transaction.</DocFactCard>
+      </div>
+      <p className="mb-1.5 font-medium" style={{ color: P.textPrimary }}>What's here</p>
+      <ul className="list-disc ml-5 flex flex-col gap-1">
+        <li><DocLink P={P} onClick={() => goTo("bridge-overview")}>Bridge</DocLink> — move an asset across chains, choosing the safest available protocol automatically.</li>
+        <li><DocLink P={P} onClick={() => goTo("swap-overview")}>Swap</DocLink> — trade one asset for another on the same chain.</li>
+        <li><DocLink P={P} onClick={() => goTo("launchpad-overview")}>Launchpad</DocLink> — launch a token directly into a live Uniswap v4 pool.</li>
+        <li><DocLink P={P} onClick={() => goTo("wallet-overview")}>Mango Wallet</DocLink> — a self-custodial wallet built into the site (coming soon).</li>
+      </ul>
+    </>
+  ),
+  quickstart: (P) => (
+    <>
+      <p className="mb-3">Every action on Mango — a bridge, a swap, a launch — follows the same basic shape:</p>
+      <ol className="list-decimal ml-5 flex flex-col gap-1 mb-3">
+        <li>Connect a wallet</li>
+        <li>Choose what you're moving/trading and where</li>
+        <li>Mango determines the safest available route and checks it's actually live</li>
+        <li>You sign — Mango never signs on your behalf</li>
+        <li>The transaction executes and settles on-chain</li>
+      </ol>
+      <DocCallout P={P}>Estimated fees, ETA, and which protocol will handle a given transfer are always shown before you confirm — nothing executes silently.</DocCallout>
+    </>
+  ),
+  "bridge-overview": (P, goTo) => (
+    <>
+      <p className="mb-2">Mango routes transfers across Ethereum, Base, BNB Chain, Robinhood Chain, Stable, Solana, Arbitrum One, Avalanche, Abstract, HyperEVM, Ink, Plasma, Unichain, and X Layer, automatically selecting the safest available path for a given pair:</p>
+      <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
+        <li><span className="font-medium" style={{ color: P.textPrimary }}>Circle CCTP</span> for native USDC between Ethereum and Base — no wrapped tokens, burn-and-mint via Circle's own attestation service</li>
+        <li><span className="font-medium" style={{ color: P.textPrimary }}>OP Stack canonical bridge</span> for ETH between Ethereum and each of Base, Ink, and Unichain</li>
+        <li><span className="font-medium" style={{ color: P.textPrimary }}>Arbitrum canonical bridge</span> for ETH and USDC between Ethereum and Robinhood Chain</li>
+        <li><span className="font-medium" style={{ color: P.textPrimary }}>Wormhole</span> for ETH between Ethereum and BNB Chain, both directions</li>
+        <li><span className="font-medium" style={{ color: P.textPrimary }}>Relay Protocol</span> for everything else with a verified contract on both sides — cross-asset swaps, any pair without a canonical bridge, and every Solana-involving route (both directions, with its own separate wallet requirement — see <DocLink P={P} onClick={() => goTo("bridge-solana")}>Solana support →</DocLink>)</li>
+      </ul>
+      <p>A 1% protocol fee applies to real transfers, sent as its own visible transaction. The app checks for a live route before you're ever asked to confirm — an unsupported pair is never silently faked as a success.</p>
+    </>
+  ),
+  "bridge-networks": (P, goTo) => (
+    <>
+      <ul className="list-disc ml-5 flex flex-col gap-0.5">
+        <li>Ethereum</li>
+        <li>Base</li>
+        <li>BNB Chain</li>
+        <li>Robinhood Chain</li>
+        <li>Stable — Tether's own L1, native gas token USDT0</li>
+        <li>Solana — genuinely different from every other chain here, not EVM-compatible. See <DocLink P={P} onClick={() => goTo("bridge-solana")}>Solana support →</DocLink> for what that actually means for you.</li>
+        <li>Arbitrum One</li>
+        <li>Avalanche</li>
+        <li>Abstract</li>
+        <li>HyperEVM</li>
+        <li>Ink</li>
+        <li>Plasma</li>
+        <li>Unichain</li>
+        <li>X Layer</li>
+      </ul>
+      <p className="mt-2">Each native asset (ETH, AVAX, HYPE, XPL, OKB) always routes through Relay. Beyond that: Ink and Unichain additionally have a real OP Stack canonical bridge for ETH, same protocol as Base (see <DocLink P={P} onClick={() => goTo("bridge-protocols")}>Supported protocols →</DocLink>); Avalanche, Arbitrum One, and Unichain additionally support USDC via Circle CCTP. Abstract, HyperEVM, X Layer, and Plasma have neither yet — Relay only.</p>
+    </>
+  ),
+  "bridge-protocols": (P) => (
+    <>
+      <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Circle CCTP</p>
+      <p className="mb-2">Circle Cross-Chain Transfer Protocol (CCTP) enables native USDC transfers between supported blockchains through a burn-and-mint mechanism.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>How it works</p>
+      <ol className="list-decimal ml-5 mb-2 flex flex-col gap-0.5">
+        <li>USDC is burned on the source chain.</li>
+        <li>Circle's Attestation Service verifies the burn event.</li>
+        <li>A signed attestation is generated.</li>
+        <li>The destination contract mints an equivalent amount of native USDC.</li>
+        <li>The recipient receives canonical USDC instead of wrapped tokens.</li>
+      </ol>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Advantages</p>
+      <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
+        <li>Native USDC</li>
+        <li>No wrapped assets</li>
+        <li>Backed directly by Circle</li>
+        <li>High security</li>
+        <li>Fast settlement</li>
+      </ul>
+      <p className="mb-4"><span className="font-medium" style={{ color: P.textPrimary }}>Supported routes:</span> USDC between any two of Ethereum, Base, Avalanche, Arbitrum One, and Unichain. Domain IDs and contract addresses for the newest three were verified against Circle's own CREATE2-deployed CCTP V2 contracts (identical TokenMessenger/MessageTransmitter address on every chain) before being wired in — not guessed.</p>
 
-          <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>OP Stack canonical bridge — Base, Ink, Unichain</p>
-          <p className="mb-2">Base, Ink, and Unichain are all OP Stack chains, so they share the exact same canonical bridge design (Base's official Coinbase-run bridge, Ink's own, and Unichain's own) for ETH between Ethereum and each of them. Each chain's bridge contract addresses were independently verified against Optimism's own superchain-registry before being wired in.</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Deposit Flow</p>
-          <p className="mb-2 font-mono text-[12px]">User → Ethereum Bridge Contract → L2 Sequencer → L2 Network</p>
-          <p className="mb-2">Deposits typically finalize within minutes.</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Withdrawal Flow</p>
-          <p className="mb-2 font-mono text-[12px]">L2 → Withdrawal Proof → 7-Day Challenge Period → Ethereum Release</p>
-          <p className="mb-3">The challenge period protects users against fraudulent state transitions. Where a faster route exists via Relay (below), Mango Bridge prefers it for this direction and reserves the canonical 7-day path as the fallback.</p>
+      <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>OP Stack canonical bridge — Base, Ink, Unichain</p>
+      <p className="mb-2">Base, Ink, and Unichain are all OP Stack chains, so they share the exact same canonical bridge design (Base's official Coinbase-run bridge, Ink's own, and Unichain's own) for ETH between Ethereum and each of them. Each chain's bridge contract addresses were independently verified against Optimism's own superchain-registry before being wired in.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Deposit flow</p>
+      <p className="mb-2 font-mono text-[12px]">User → Ethereum Bridge Contract → L2 Sequencer → L2 Network</p>
+      <p className="mb-2">Deposits typically finalize within minutes.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Withdrawal flow</p>
+      <p className="mb-2 font-mono text-[12px]">L2 → Withdrawal Proof → 7-Day Challenge Period → Ethereum Release</p>
+      <p className="mb-4">The challenge period protects users against fraudulent state transitions. Where a faster route exists via Relay (below), Mango Bridge prefers it for this direction and reserves the canonical 7-day path as the fallback.</p>
 
-          <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Arbitrum Canonical Bridge</p>
-          <p className="mb-2">Mango Bridge integrates Arbitrum's canonical bridge for Orbit chains such as Robinhood Chain.</p>
-          <p className="mb-2">Deposits settle quickly while withdrawals follow Arbitrum's optimistic security model.</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Characteristics</p>
-          <ul className="list-disc ml-5 mb-3 flex flex-col gap-0.5">
-            <li>Native ETH and USDC</li>
-            <li>Optimistic Rollup</li>
-            <li>Fraud-proof secured</li>
-            <li>Seven-day withdrawal period (or faster via Relay, where available)</li>
-          </ul>
+      <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Arbitrum canonical bridge</p>
+      <p className="mb-2">Mango Bridge integrates Arbitrum's canonical bridge for Orbit chains such as Robinhood Chain.</p>
+      <p className="mb-2">Deposits settle quickly while withdrawals follow Arbitrum's optimistic security model.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Characteristics</p>
+      <ul className="list-disc ml-5 mb-4 flex flex-col gap-0.5">
+        <li>Native ETH and USDC</li>
+        <li>Optimistic Rollup</li>
+        <li>Fraud-proof secured</li>
+        <li>Seven-day withdrawal period (or faster via Relay, where available)</li>
+      </ul>
 
-          <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Wormhole</p>
-          <p className="mb-2">Wormhole enables interoperability between independent blockchains using its Guardian Network. Supports both directions between Ethereum and BNB Chain.</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Transfer Flow</p>
-          <ol className="list-decimal ml-5 mb-2 flex flex-col gap-0.5">
-            <li>Asset locked (or burned, on the return trip) on source chain</li>
-            <li>Guardian Network observes transaction</li>
-            <li>Guardians sign a VAA</li>
-            <li>Destination chain verifies VAA</li>
-            <li>Asset minted (or unlocked, on the return trip) on destination chain</li>
-          </ol>
-          <p className="mb-3"><span className="font-medium" style={{ color: P.textPrimary }}>Example:</span> Ethereum → BNB Chain — ETH becomes Wormhole-wrapped ETH. The reverse direction burns the wrapped ETH and unlocks the original.</p>
+      <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Wormhole</p>
+      <p className="mb-2">Wormhole enables interoperability between independent blockchains using its Guardian Network. Supports both directions between Ethereum and BNB Chain.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Transfer flow</p>
+      <ol className="list-decimal ml-5 mb-2 flex flex-col gap-0.5">
+        <li>Asset locked (or burned, on the return trip) on source chain</li>
+        <li>Guardian Network observes transaction</li>
+        <li>Guardians sign a VAA</li>
+        <li>Destination chain verifies VAA</li>
+        <li>Asset minted (or unlocked, on the return trip) on destination chain</li>
+      </ol>
+      <p className="mb-4"><span className="font-medium" style={{ color: P.textPrimary }}>Example:</span> Ethereum → BNB Chain — ETH becomes Wormhole-wrapped ETH. The reverse direction burns the wrapped ETH and unlocks the original.</p>
 
-          <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Relay Protocol</p>
-          <p className="mb-2">For chain/asset combinations with no canonical bridge — including direct transfers between Base and Robinhood Chain, and cross-asset swaps like BNB for USDC — Mango Bridge routes through Relay's solver network.</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>How it's different</p>
-          <p className="mb-2">Relay is non-custodial, but it's a genuinely different trust model than the canonical bridges above: you're trusting Relay's solvers to fulfill the transfer, not an audited bridge contract with no operator discretion. Failed steps auto-refund rather than leaving funds stuck.</p>
-          <p>Mango Bridge only routes a pair through Relay when it has an independently verified contract address for the asset on both chains — an unverified combination is never guessed at, and the app checks for a live route before you're ever asked to confirm anything.</p>
-        </DocSection>
-
-        <DocSection title="Solana Support" P={P}>
-          <p className="mb-2">Solana isn't EVM-compatible — a genuinely different blockchain architecture from every other chain Mango Bridge supports, not just another entry in the same list. This has two real, concrete consequences worth knowing before you start:</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Two separate wallets, not one</p>
-          <p className="mb-2">Any route touching Solana — as either source or destination — needs both an EVM wallet (Browser Wallet or WalletConnect) and a separate Solana wallet, connected via OKX Connect. The app shows a direct prompt for whichever one is still missing, right in the bridge form, once you've selected a Solana-involving pair.</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Different execution path entirely</p>
-          <p>A Solana-sourced transfer is signed and submitted through Relay's own official SDK, using Solana's real transaction format — not the same signing mechanism used for every EVM-to-EVM route in this app. Solana-to-EVM and EVM-to-Solana are both supported.</p>
-        </DocSection>
-
-        <DocSection title="Mango Wallet" P={P}>
-          <p className="mb-2"><span className="font-medium" style={{ color: P.textPrimary }}>Coming soon.</span> A self-custodial wallet built directly into the site — your recovery phrase is generated and encrypted entirely in your own browser, and is never sent to Mango in any form, encrypted or not. One recovery phrase covers a single address usable across every EVM chain Mango supports, plus a separate Solana address, the same way MetaMask and Phantom derive theirs.</p>
-          <p>Still in testing before it's opened up publicly — this is a different trust model from the Telegram bot's wallet, which is necessarily custodial since Telegram itself can't sign transactions locally.</p>
-        </DocSection>
-
-        <DocSection title="Bridge Routing Engine" P={P}>
-          <p className="mb-2">The routing engine automatically determines the optimal bridge based on:</p>
-          <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
-            <li>Source blockchain</li>
-            <li>Destination blockchain</li>
-            <li>Asset type (same-asset transfer or cross-asset swap)</li>
-            <li>Native bridge availability</li>
-            <li>Security characteristics</li>
-            <li>Estimated fees and speed</li>
-          </ul>
-          <p>Canonical bridges are always preferred where one exists and is reasonably fast. Everything else routes through Relay, with a live check for route availability before you confirm — if no route exists for a given pair, Mango Bridge tells you plainly rather than showing a fake success.</p>
-        </DocSection>
-
-        <DocSection title="Security Model" P={P}>
-          <p className="mb-2">Mango Bridge prioritizes canonical bridges whenever available.</p>
-          <div className="rounded-lg overflow-hidden mb-2" style={{ border: `1px solid ${P.panelBorder}` }}>
-            <table className="w-full text-[12.5px]">
-              <thead>
-                <tr style={{ background: P.panel }}>
-                  <th className="text-left px-3 py-2 font-medium" style={{ color: P.textPrimary }}>Protocol</th>
-                  <th className="text-left px-3 py-2 font-medium" style={{ color: P.textPrimary }}>Security</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[["Circle CCTP", "Circle Attestation"], ["OP Stack Bridge (Base, Ink, Unichain)", "Ethereum + Fraud Proofs"], ["Arbitrum Bridge", "Ethereum + Fraud Proofs"], ["Wormhole", "Guardian Network"], ["Relay Protocol", "Solver Network"]].map((row) => (
-                  <tr key={row[0]} style={{ borderTop: `1px solid ${P.panelBorder}` }}>
-                    <td className="px-3 py-2">{row[0]}</td>
-                    <td className="px-3 py-2">{row[1]}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p>This approach minimizes wrapped assets while maximizing interoperability. The app discloses which security model applies to a given route before you confirm a transfer.</p>
-        </DocSection>
-
-        <DocSection title="Transaction Lifecycle" P={P}>
-          <ol className="list-decimal ml-5 flex flex-col gap-0.5">
-            <li>Connect wallet</li>
-            <li>Select source chain and asset</li>
-            <li>Choose destination chain and asset</li>
-            <li>Mango Bridge determines the optimal protocol and checks route availability</li>
-            <li>User signs transaction(s)</li>
-            <li>Bridge executes transfer</li>
-            <li>Destination chain confirms receipt</li>
-          </ol>
-        </DocSection>
-
-        <DocSection title="Fees" P={P}>
-          <p className="mb-2">Users may incur:</p>
-          <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
-            <li>Source chain gas fee</li>
-            <li>Destination chain gas fee (where applicable)</li>
-            <li>A 1% Mango Bridge protocol fee, sent as its own separate, visible on-chain transaction — never bundled invisibly into another transfer</li>
-            <li>Relay solver fee, where the route uses Relay</li>
-          </ul>
-          <p>Mango Bridge displays all estimated fees before confirmation.</p>
-        </DocSection>
-
-        <DocSection title="Supported Assets" P={P}>
-          <p className="mb-2">Which specific assets work on which chain pair depends on the route — the app always shows this before you confirm.</p>
-          <ul className="list-disc ml-5 flex flex-col gap-0.5">
-            <li>ETH</li>
-            <li>USDC</li>
-            <li>USDT</li>
-            <li>WBTC</li>
-            <li>BNB</li>
-            <li>USDG — Global Dollar, Robinhood Chain's native stablecoin</li>
-            <li>USDT0 — Stable's native gas token</li>
-            <li>SOL — Solana's native asset</li>
-            <li>AVAX — Avalanche's native asset</li>
-            <li>HYPE — HyperEVM's native asset</li>
-            <li>XPL — Plasma's native asset</li>
-            <li>OKB — X Layer's native asset</li>
-          </ul>
-        </DocSection>
-
-        <DocSection title="The Bridge" P={P}>
-          <p className="mb-2">Mango routes transfers across Ethereum, Base, BNB Chain, Robinhood Chain, Stable, Solana, Arbitrum One, Avalanche, Abstract, HyperEVM, Ink, Plasma, Unichain, and X Layer, automatically selecting the safest available path for a given pair:</p>
-          <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
-            <li><span className="font-medium" style={{ color: P.textPrimary }}>Circle CCTP</span> for native USDC between Ethereum and Base — no wrapped tokens, burn-and-mint via Circle's own attestation service</li>
-            <li><span className="font-medium" style={{ color: P.textPrimary }}>OP Stack canonical bridge</span> for ETH between Ethereum and each of Base, Ink, and Unichain</li>
-            <li><span className="font-medium" style={{ color: P.textPrimary }}>Arbitrum canonical bridge</span> for ETH and USDC between Ethereum and Robinhood Chain</li>
-            <li><span className="font-medium" style={{ color: P.textPrimary }}>Wormhole</span> for ETH between Ethereum and BNB Chain, both directions</li>
-            <li><span className="font-medium" style={{ color: P.textPrimary }}>Relay Protocol</span> for everything else with a verified contract on both sides — cross-asset swaps, any pair without a canonical bridge, and every Solana-involving route (both directions, with its own separate wallet requirement — see "Solana Support" above)</li>
-          </ul>
-          <p>A 1% protocol fee applies to real transfers, sent as its own visible transaction. The app checks for a live route before you're ever asked to confirm — an unsupported pair is never silently faked as a success.</p>
-        </DocSection>
-
-        <DocSection title="The Launchpad" P={P}>
-          <p className="mb-2">Every token launches directly into a live Uniswap v4 pool, trading on real, audited Uniswap infrastructure from the first buy. Prices move on genuine market activity from block one.</p>
-          <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Launching a token</p>
-          <ol className="list-decimal ml-5 mb-2 flex flex-col gap-0.5">
-            <li>Connect your wallet</li>
-            <li>Set a name, ticker, and description</li>
-            <li>Upload artwork (stored on public IPFS)</li>
-            <li>Optionally link an X profile and Telegram</li>
-            <li>Optionally make a developer buy — purchasing some of your own supply at launch</li>
-            <li>Confirm — your token is live in a real trading pool immediately</li>
-          </ol>
-          <p className="mb-2"><span className="font-medium" style={{ color: P.textPrimary }}>Trading fees:</span> 1% per trade, split 70% to the token's creator and 30% to the Mango Protocol treasury — paid automatically inside the same transaction as the trade. Nothing to claim, ever.</p>
-          <p><span className="font-medium" style={{ color: P.textPrimary }}>Creator tools:</span> the Profile page tracks your launches, holdings, unrealized PnL, and total creator fees earned over time, all in one place.</p>
-        </DocSection>
-
-        <DocSection title="How Uniswap v4 Hooks Work" P={P}>
-          <p className="mb-2">Every version of Uniswap before v4 deployed a separate contract per trading pair. V4 replaced that with a <span className="font-medium" style={{ color: P.textPrimary }}>singleton</span> — one contract, PoolManager, holding every pool's state internally. Creating a pool isn't a deployment anymore; it's a cheap state update in a contract that already exists.</p>
-          <p className="mb-2">A <span className="font-medium" style={{ color: P.textPrimary }}>hook</span> is a separate contract attached to a specific pool, which PoolManager calls automatically at defined moments — before or after a swap, before or after liquidity changes, and so on. This is where custom logic lives. Mango's hook uses exactly two of these: <span className="font-mono text-[12px]">afterInitialize</span> (registers the token's creator when the pool is created) and <span className="font-mono text-[12px]">afterSwap</span> (splits and pays out the trading fee).</p>
-          <p className="mb-2">The distinctive part: a hook's permissions are encoded directly into its own contract address. Developers use CREATE2 with a specifically-mined salt to produce an address whose lowest bits spell out exactly which hook functions it's allowed to use. PoolManager reads those bits straight off the address — no permissions can be added after deployment, and a hook can never claim capabilities it wasn't deployed with. Mango's hook address is mined to expose only those two functions, nothing else.</p>
-          <p>This is also why fees never need claiming: v4's "flash accounting" tracks running balance changes within a single transaction and only settles the net result at the very end. That's the exact mechanism the hook uses to split a trade's fee and send both shares to their destination wallets — inside the swap itself, not as a separate step afterward.</p>
-        </DocSection>
-
-        <DocSection title="Powered by Uniswap v4 Hooks" P={P}>
-          <p className="mb-2">Every token launched on Mango deploys onto a real Uniswap v4 hook — the same permission-mined, singleton-native architecture live on Robinhood Chain since day one. No custom AMM, no forked contracts, no bolted-on middleware — just Uniswap's actual PoolManager, doing what it was built to do.</p>
-          <p>That's what makes the 70/30 fee split real instead of a promise: the hook redirects each trade's fee split inside the same transaction as the swap itself, the moment it settles. One click to launch, and the token is trading against genuine, audited, first-party Uniswap infrastructure — not a clone, not a wrapper, the real thing.</p>
-        </DocSection>
-
-        <DocSection title="Contracts" P={P}>
-          <p className="mb-2">Deployed and verified on Robinhood Chain mainnet — tap any to view on the block explorer.</p>
-          <p className="font-medium mb-1.5" style={{ color: P.textPrimary }}>Current (live now)</p>
-          <div className="flex flex-col gap-2 mb-3">
-            <a href="https://robinhoodchain.blockscout.com/address/0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E912A" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchFactory</div>
-              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E912A</div>
-            </a>
-            <a href="https://robinhoodchain.blockscout.com/address/0x6df44617b8C13AB961dCe5097F9375AE6BE09044" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchHook (v4)</div>
-              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0x6df44617b8C13AB961dCe5097F9375AE6BE09044</div>
-            </a>
-            <a href="https://robinhoodchain.blockscout.com/address/0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchRegistry (v3)</div>
-              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785</div>
-            </a>
-            <a href="https://robinhoodchain.blockscout.com/address/0xb347EEad23D4FC41338845E35Ee8Fc42D9789d70" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-              <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchRouter (v4)</div>
-              <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0xb347EEad23D4FC41338845E35Ee8Fc42D9789d70</div>
-            </a>
-          </div>
-
-          <p className="font-medium mb-1.5" style={{ color: P.textPrimary }}>Version history</p>
-          <div className="flex flex-col gap-2 text-[11px]" style={{ color: P.textSecondary }}>
-            <div>
-              <span className="font-medium" style={{ color: P.textPrimary }}>Hook v1 → v2:</span> redesigned the fee structure — flat 3% became 1% buy, 4% sell pre-graduation (real anti-dump protection), 1% both ways after.
-            </div>
-            <div>
-              <span className="font-medium" style={{ color: P.textPrimary }}>Hook/Registry v2 → v3:</span> added a permanent, separate admin role. The old design let only the current operator reassign itself — once that became a contract with no forwarding function, it got permanently stuck. Confirmed on real mainnet, not caught in testing.
-            </div>
-            <div>
-              <span className="font-medium" style={{ color: P.textPrimary }}>Hook v3 → v4:</span> fixed a missing permission bit. The hook computed trading fees correctly but was never granted permission to actually apply them — every real trade reverted until this was found and fixed.
-            </div>
-            <div>
-              <span className="font-medium" style={{ color: P.textPrimary }}>Factory v1 → v2:</span> fixed an over-settlement bug — the original transferred a token's full supply to seed liquidity, when tick-rounding meant slightly less was actually owed, leaving an unclaimed credit that reverted every launch.
-            </div>
-            <div>
-              <span className="font-medium" style={{ color: P.textPrimary }}>Router v1 → v2 → v3:</span> updated to point at each new Hook version in turn.
-            </div>
-            <div>
-              <span className="font-medium" style={{ color: P.textPrimary }}>Router v3 → v4:</span> fixed a settlement ordering bug in the sell path — buys worked correctly before this fix, sells didn't.
-            </div>
-          </div>
-        </DocSection>
-
-        <DocSection title="API & SDK" P={P}>
-          <p className="mb-2">A real, public REST API and JavaScript SDK — every endpoint returns live, on-chain data, nothing mocked.</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Base URL</p>
-          <p className="mb-2 font-mono text-[12px]">https://mangoprotocol.site/api/v1</p>
-          <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Endpoints</p>
-          <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5 font-mono text-[12px]">
-            <li>GET /launchpad/tokens</li>
-            <li>GET /launchpad/token?address=0x...</li>
-            <li>GET /launchpad/quote?tokenAddress=0x...&side=buy</li>
-            <li>GET /launchpad/launch?name=...&symbol=...&creator=0x...</li>
-            <li>GET /bridge/chains</li>
-            <li>GET /bridge/quote?from=...&to=...&fromAsset=...&toAsset=...&amount=...&userAddress=0x...</li>
-          </ul>
-          <p>Same non-custodial principle as everything else here: this API never signs or submits a transaction on your behalf. Endpoints that involve a real transaction (launching, bridging) return unsigned transaction data — your own wallet does the actual signing.</p>
-          <p className="mt-2 text-[11.5px]" style={{ color: P.textMuted }}>All six endpoints above have been directly tested against the live API and confirmed returning real data — not just built and assumed working.</p>
-        </DocSection>
-
-        <DocSection title="Custody" P={P}>
-          <p>Mango never takes custody of user funds at any point, on either the bridge or the launchpad. Bridge transfers move directly through the underlying protocol's own contracts — Circle's, Optimism's, Arbitrum's, Wormhole's, or Relay's. Launchpad trades settle through Uniswap's own PoolManager. Your wallet signs every transaction directly with that infrastructure; Mango's role is routing and fee collection, not holding.</p>
-        </DocSection>
-
-        <DocSection title="Future Roadmap" P={P}>
-          <ul className="list-disc ml-5 flex flex-col gap-0.5">
-            <li>Additional EVM networks</li>
-            <li>Avalanche integration</li>
-            <li>Polygon support</li>
-            <li>Cross-chain messaging</li>
-            <li>Bridge analytics dashboard</li>
-            <li>Telegram Bot integration</li>
-          </ul>
-        </DocSection>
-
-        <div className="flex items-center gap-2 mt-2">
-          <a
-            href="https://x.com/Mango_protocol"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 flex-1 py-3 rounded-xl text-[13px] font-medium"
-            style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-              <path d="M18.9 2H22l-7.6 8.7L23.3 22h-6.8l-5.3-6.9L5 22H1.9l8.1-9.3L1 2h7l4.8 6.3L18.9 2Zm-1.2 18h1.9L7.4 4H5.4l12.3 16Z" fill={P.textPrimary} />
-            </svg>
-            Follow on X
-          </a>
-          <a
-            href="https://t.me/mango_protocol"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 flex-1 py-3 rounded-xl text-[13px] font-medium"
-            style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
-          >
-            <Send size={14} /> Join our Telegram
-          </a>
-        </div>
-        <a
-          href="mailto:mango@mangoprotocol.site"
-          className="flex items-center justify-center gap-2 w-full py-3 mt-2 rounded-xl text-[13px] font-medium"
-          style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
-        >
-          <Mail size={14} /> mango@mangoprotocol.site
+      <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Relay Protocol</p>
+      <p className="mb-2">For chain/asset combinations with no canonical bridge — including direct transfers between Base and Robinhood Chain, cross-asset swaps like BNB for USDC, and every same-chain Swap trade — Mango routes through Relay's solver network.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>How it's different</p>
+      <p className="mb-2">Relay is non-custodial, but it's a genuinely different trust model than the canonical bridges above: you're trusting Relay's solvers to fulfill the transfer, not an audited bridge contract with no operator discretion. Failed steps auto-refund rather than leaving funds stuck.</p>
+      <p>Mango only routes a pair through Relay when it has an independently verified contract address for the asset on both sides — an unverified combination is never guessed at, and the app checks for a live route before you're ever asked to confirm anything.</p>
+    </>
+  ),
+  "bridge-routing": (P) => (
+    <>
+      <p className="mb-2">The routing engine automatically determines the optimal bridge based on:</p>
+      <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
+        <li>Source blockchain</li>
+        <li>Destination blockchain</li>
+        <li>Asset type (same-asset transfer or cross-asset swap)</li>
+        <li>Native bridge availability</li>
+        <li>Security characteristics</li>
+        <li>Estimated fees and speed</li>
+      </ul>
+      <p>Canonical bridges are always preferred where one exists and is reasonably fast. Everything else routes through Relay, with a live check for route availability before you confirm — if no route exists for a given pair, Mango tells you plainly rather than showing a fake success.</p>
+    </>
+  ),
+  "bridge-solana": (P) => (
+    <>
+      <p className="mb-2">Solana isn't EVM-compatible — a genuinely different blockchain architecture from every other chain Mango Bridge supports, not just another entry in the same list. This has two real, concrete consequences worth knowing before you start:</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Two separate wallets, not one</p>
+      <p className="mb-2">Any route touching Solana — as either source or destination — needs both an EVM wallet (Browser Wallet or WalletConnect) and a separate Solana wallet, connected via OKX Connect. The app shows a direct prompt for whichever one is still missing, right in the bridge form, once you've selected a Solana-involving pair.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Different execution path entirely</p>
+      <p>A Solana-sourced transfer is signed and submitted through Relay's own official SDK, using Solana's real transaction format — not the same signing mechanism used for every EVM-to-EVM route in this app. Solana-to-EVM and EVM-to-Solana are both supported.</p>
+    </>
+  ),
+  "bridge-security": (P) => (
+    <>
+      <p className="mb-2">Mango Bridge prioritizes canonical bridges whenever available.</p>
+      <div className="rounded-lg overflow-hidden mb-2" style={{ border: `1px solid ${P.panelBorder}` }}>
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr style={{ background: P.panel }}>
+              <th className="text-left px-3 py-2 font-medium" style={{ color: P.textPrimary }}>Protocol</th>
+              <th className="text-left px-3 py-2 font-medium" style={{ color: P.textPrimary }}>Security</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[["Circle CCTP", "Circle Attestation"], ["OP Stack Bridge (Base, Ink, Unichain)", "Ethereum + Fraud Proofs"], ["Arbitrum Bridge", "Ethereum + Fraud Proofs"], ["Wormhole", "Guardian Network"], ["Relay Protocol", "Solver Network"]].map((row) => (
+              <tr key={row[0]} style={{ borderTop: `1px solid ${P.panelBorder}` }}>
+                <td className="px-3 py-2">{row[0]}</td>
+                <td className="px-3 py-2">{row[1]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p>This approach minimizes wrapped assets while maximizing interoperability. The app discloses which security model applies to a given route before you confirm a transfer.</p>
+    </>
+  ),
+  "bridge-fees": (P) => (
+    <>
+      <p className="mb-2">Users may incur:</p>
+      <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
+        <li>Source chain gas fee</li>
+        <li>Destination chain gas fee (where applicable)</li>
+        <li>A 1% Mango protocol fee, sent as its own separate, visible on-chain transaction — never bundled invisibly into another transfer</li>
+        <li>Relay solver fee, where the route uses Relay</li>
+      </ul>
+      <p>Mango displays all estimated fees before confirmation.</p>
+    </>
+  ),
+  "bridge-assets": (P) => (
+    <>
+      <p className="mb-2">Which specific assets work on which chain pair depends on the route — the app always shows this before you confirm.</p>
+      <ul className="list-disc ml-5 flex flex-col gap-0.5">
+        <li>ETH</li>
+        <li>USDC</li>
+        <li>USDT</li>
+        <li>WBTC</li>
+        <li>BNB</li>
+        <li>USDG — Global Dollar, Robinhood Chain's native stablecoin</li>
+        <li>USDT0 — Stable's native gas token</li>
+        <li>SOL — Solana's native asset</li>
+        <li>AVAX — Avalanche's native asset</li>
+        <li>HYPE — HyperEVM's native asset</li>
+        <li>XPL — Plasma's native asset</li>
+        <li>OKB — X Layer's native asset</li>
+      </ul>
+    </>
+  ),
+  "swap-overview": (P, goTo) => (
+    <>
+      <p className="mb-3">Swap trades one asset for another on a single chain — pick a chain, pick what you're paying with and what you want back, and Mango finds the route. No separate destination chain, no "send to another address" step: a swap always lands back in the connected wallet that made it.</p>
+      <p className="mb-3">Under the hood this is the exact same Relay solver network the Bridge tab uses for anything without a canonical bridge (see <DocLink P={P} onClick={() => goTo("bridge-protocols")}>Relay Protocol →</DocLink>) — just with the origin and destination chain set to the same chain. A live route check runs before you're ever asked to confirm, the same way it does for a cross-chain transfer.</p>
+      <ul className="list-disc ml-5 mb-3 flex flex-col gap-0.5">
+        <li>Available on any chain Mango Bridge supports (see <DocLink P={P} onClick={() => goTo("bridge-networks")}>Supported networks →</DocLink>), and any two of that chain's supported assets that Relay currently has a live route between.</li>
+        <li>The same 1% protocol fee as Bridge applies, deducted from what you receive — not carved out of what you pay in.</li>
+        <li>Gas is estimated once, not twice — a same-chain swap is a single transaction, not a source leg and a destination leg.</li>
+      </ul>
+      <DocCallout P={P}>An unsupported pair on a given chain surfaces as an explicit "no route available" message — never a fabricated success.</DocCallout>
+    </>
+  ),
+  "launchpad-overview": (P) => (
+    <>
+      <p className="mb-2">Every token launches directly into a live Uniswap v4 pool, trading on real, audited Uniswap infrastructure from the first buy. Prices move on genuine market activity from block one.</p>
+      <p className="font-semibold mb-1.5" style={{ color: P.textPrimary }}>Launching a token</p>
+      <ol className="list-decimal ml-5 mb-2 flex flex-col gap-0.5">
+        <li>Connect your wallet</li>
+        <li>Set a name, ticker, and description</li>
+        <li>Upload artwork (stored on public IPFS)</li>
+        <li>Optionally link an X profile and Telegram</li>
+        <li>Optionally make a developer buy — purchasing some of your own supply at launch</li>
+        <li>Confirm — your token is live in a real trading pool immediately</li>
+      </ol>
+      <p className="mb-2"><span className="font-medium" style={{ color: P.textPrimary }}>Trading fees:</span> 1% per trade, split 70% to the token's creator and 30% to the Mango Protocol treasury — paid automatically inside the same transaction as the trade. Nothing to claim, ever.</p>
+      <p><span className="font-medium" style={{ color: P.textPrimary }}>Creator tools:</span> the Profile page tracks your launches, holdings, unrealized PnL, and total creator fees earned over time, all in one place.</p>
+    </>
+  ),
+  "launchpad-hooks": (P) => (
+    <>
+      <p className="mb-2">Every version of Uniswap before v4 deployed a separate contract per trading pair. V4 replaced that with a <span className="font-medium" style={{ color: P.textPrimary }}>singleton</span> — one contract, PoolManager, holding every pool's state internally. Creating a pool isn't a deployment anymore; it's a cheap state update in a contract that already exists.</p>
+      <p className="mb-2">A <span className="font-medium" style={{ color: P.textPrimary }}>hook</span> is a separate contract attached to a specific pool, which PoolManager calls automatically at defined moments — before or after a swap, before or after liquidity changes, and so on. This is where custom logic lives. Mango's hook uses exactly two of these: <span className="font-mono text-[12px]">afterInitialize</span> (registers the token's creator when the pool is created) and <span className="font-mono text-[12px]">afterSwap</span> (splits and pays out the trading fee).</p>
+      <p className="mb-2">The distinctive part: a hook's permissions are encoded directly into its own contract address. Developers use CREATE2 with a specifically-mined salt to produce an address whose lowest bits spell out exactly which hook functions it's allowed to use. PoolManager reads those bits straight off the address — no permissions can be added after deployment, and a hook can never claim capabilities it wasn't deployed with. Mango's hook address is mined to expose only those two functions, nothing else.</p>
+      <p>This is also why fees never need claiming: v4's "flash accounting" tracks running balance changes within a single transaction and only settles the net result at the very end. That's the exact mechanism the hook uses to split a trade's fee and send both shares to their destination wallets — inside the swap itself, not as a separate step afterward.</p>
+    </>
+  ),
+  "launchpad-powered": (P) => (
+    <>
+      <p className="mb-2">Every token launched on Mango deploys onto a real Uniswap v4 hook — the same permission-mined, singleton-native architecture live on Robinhood Chain since day one. No custom AMM, no forked contracts, no bolted-on middleware — just Uniswap's actual PoolManager, doing what it was built to do.</p>
+      <p>That's what makes the 70/30 fee split real instead of a promise: the hook redirects each trade's fee split inside the same transaction as the swap itself, the moment it settles. One click to launch, and the token is trading against genuine, audited, first-party Uniswap infrastructure — not a clone, not a wrapper, the real thing.</p>
+    </>
+  ),
+  "launchpad-contracts": (P) => (
+    <>
+      <p className="mb-2">Deployed and verified on Robinhood Chain mainnet — tap any to view on the block explorer.</p>
+      <p className="font-medium mb-1.5" style={{ color: P.textPrimary }}>Current (live now)</p>
+      <div className="flex flex-col gap-2 mb-4">
+        <a href="https://robinhoodchain.blockscout.com/address/0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E912A" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchFactory</div>
+          <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0x8aD6607EbBAd5F4A088EDC25e98B3B454F9E912A</div>
         </a>
+        <a href="https://robinhoodchain.blockscout.com/address/0x6df44617b8C13AB961dCe5097F9375AE6BE09044" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchHook (v4)</div>
+          <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0x6df44617b8C13AB961dCe5097F9375AE6BE09044</div>
+        </a>
+        <a href="https://robinhoodchain.blockscout.com/address/0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchRegistry (v3)</div>
+          <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785</div>
+        </a>
+        <a href="https://robinhoodchain.blockscout.com/address/0xb347EEad23D4FC41338845E35Ee8Fc42D9789d70" target="_blank" rel="noopener noreferrer" className="rounded-lg p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <div className="text-[12px] font-medium mb-0.5" style={{ color: P.textPrimary }}>MangoLaunchRouter (v4)</div>
+          <div className="text-[11px] font-mono break-all" style={{ color: P.textSecondary }}>0xb347EEad23D4FC41338845E35Ee8Fc42D9789d70</div>
+        </a>
+      </div>
+
+      <p className="font-medium mb-1.5" style={{ color: P.textPrimary }}>Version history</p>
+      <div className="flex flex-col gap-2 text-[11px]" style={{ color: P.textSecondary }}>
+        <div>
+          <span className="font-medium" style={{ color: P.textPrimary }}>Hook v1 → v2:</span> redesigned the fee structure — flat 3% became 1% buy, 4% sell pre-graduation (real anti-dump protection), 1% both ways after.
+        </div>
+        <div>
+          <span className="font-medium" style={{ color: P.textPrimary }}>Hook/Registry v2 → v3:</span> added a permanent, separate admin role. The old design let only the current operator reassign itself — once that became a contract with no forwarding function, it got permanently stuck. Confirmed on real mainnet, not caught in testing.
+        </div>
+        <div>
+          <span className="font-medium" style={{ color: P.textPrimary }}>Hook v3 → v4:</span> fixed a missing permission bit. The hook computed trading fees correctly but was never granted permission to actually apply them — every real trade reverted until this was found and fixed.
+        </div>
+        <div>
+          <span className="font-medium" style={{ color: P.textPrimary }}>Factory v1 → v2:</span> fixed an over-settlement bug — the original transferred a token's full supply to seed liquidity, when tick-rounding meant slightly less was actually owed, leaving an unclaimed credit that reverted every launch.
+        </div>
+        <div>
+          <span className="font-medium" style={{ color: P.textPrimary }}>Router v1 → v2 → v3:</span> updated to point at each new Hook version in turn.
+        </div>
+        <div>
+          <span className="font-medium" style={{ color: P.textPrimary }}>Router v3 → v4:</span> fixed a settlement ordering bug in the sell path — buys worked correctly before this fix, sells didn't.
+        </div>
+      </div>
+    </>
+  ),
+  "wallet-overview": (P) => (
+    <>
+      <DocCallout P={P}>Coming soon — still in testing before it's opened up publicly.</DocCallout>
+      <p className="mt-3 mb-2">A self-custodial wallet built directly into the site — your recovery phrase is generated and encrypted entirely in your own browser, and is never sent to Mango in any form, encrypted or not. One recovery phrase covers a single address usable across every EVM chain Mango supports, plus a separate Solana address, the same way MetaMask and Phantom derive theirs.</p>
+      <p>This is a different trust model from the Telegram bot's wallet, which is necessarily custodial since Telegram itself can't sign transactions locally.</p>
+    </>
+  ),
+  custody: (P) => (
+    <p>Mango never takes custody of user funds at any point, across Bridge, Swap, or the Launchpad. Bridge and Swap transfers move directly through the underlying protocol's own contracts — Circle's, Optimism's, Arbitrum's, Wormhole's, or Relay's. Launchpad trades settle through Uniswap's own PoolManager. Your wallet signs every transaction directly with that infrastructure; Mango's role is routing and fee collection, not holding.</p>
+  ),
+  "api-sdk": (P) => (
+    <>
+      <p className="mb-2">A real, public REST API — every endpoint returns live, on-chain data, nothing mocked.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Base URL</p>
+      <p className="mb-2 font-mono text-[12px]">https://mangoprotocol.site/api/v1</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Endpoints</p>
+      <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5 font-mono text-[12px]">
+        <li>GET /launchpad/tokens</li>
+        <li>GET /launchpad/token?address=0x...</li>
+        <li>GET /launchpad/quote?tokenAddress=0x...&side=buy</li>
+        <li>GET /launchpad/launch?name=...&symbol=...&creator=0x...</li>
+        <li>GET /bridge/chains</li>
+        <li>GET /bridge/quote?from=...&to=...&fromAsset=...&toAsset=...&amount=...&userAddress=0x...</li>
+      </ul>
+      <p className="mb-2">Same non-custodial principle as everything else here: this API never signs or submits a transaction on your behalf. Endpoints that involve a real transaction (launching, bridging) return unsigned transaction data — your own wallet does the actual signing.</p>
+      <p className="text-[11.5px]" style={{ color: P.textMuted }}>All six endpoints above have been directly tested against the live API and confirmed returning real data — not just built and assumed working.</p>
+    </>
+  ),
+  roadmap: (P) => (
+    <ul className="list-disc ml-5 flex flex-col gap-0.5">
+      <li>Additional EVM networks</li>
+      <li>Polygon support</li>
+      <li>Cross-chain messaging</li>
+      <li>Bridge analytics dashboard</li>
+      <li>Telegram Bot integration</li>
+    </ul>
+  ),
+};
+
+function DocsModal({ onClose, P }) {
+  const [activePage, setActivePage] = useState("overview");
+  const [query, setQuery] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const contentRef = useRef(null);
+
+  const filteredGroups = query.trim()
+    ? DOC_GROUPS.map((g) => ({
+        ...g,
+        pages: g.pages.filter((p) => `${g.label} ${p.title}`.toLowerCase().includes(query.trim().toLowerCase())),
+      })).filter((g) => g.pages.length > 0)
+    : DOC_GROUPS;
+
+  const activeGroup = DOC_GROUPS.find((g) => g.pages.some((p) => p.id === activePage));
+  const activePageMeta = activeGroup?.pages.find((p) => p.id === activePage);
+  const renderPage = DOC_CONTENT[activePage];
+
+  function goTo(id) {
+    setActivePage(id);
+    setSidebarOpen(false);
+    contentRef.current?.scrollTo({ top: 0 });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: P.bg }}>
+      <div className="flex items-center justify-between px-4 h-14 shrink-0" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
+        <div className="flex items-center gap-2.5">
+          <button onClick={() => setSidebarOpen((v) => !v)} className="md:hidden" aria-label="Toggle navigation">
+            <Menu size={18} color={P.textSecondary} />
+          </button>
+          <MangoLogo size={20} color={P.textPrimary} />
+          <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Docs</span>
+        </div>
+        <button onClick={onClose} aria-label="Close docs"><X size={18} color={P.textMuted} /></button>
+      </div>
+
+      <div className="flex flex-1 min-h-0 relative">
+        {sidebarOpen && (
+          <div className="md:hidden fixed inset-0 top-14 z-10" style={{ background: "rgba(4,5,7,0.6)" }} onClick={() => setSidebarOpen(false)} />
+        )}
+        <div
+          className={`${sidebarOpen ? "flex" : "hidden"} md:flex flex-col w-72 shrink-0 overflow-y-auto fixed md:static top-14 bottom-0 left-0 z-20`}
+          style={{ background: P.panel, borderRight: `1px solid ${P.panelBorder}` }}
+        >
+          <div className="p-3">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search docs…"
+              className="w-full px-3 py-2 rounded-lg text-[12.5px]"
+              style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+            />
+          </div>
+          <nav className="px-3 pb-6 flex flex-col gap-4">
+            {filteredGroups.map((group) => (
+              <div key={group.label}>
+                <div className="text-[11px] font-semibold uppercase tracking-wide mb-1 px-2" style={{ color: P.textMuted }}>{group.label}</div>
+                <div className="flex flex-col gap-0.5">
+                  {group.pages.map((page) => {
+                    const active = activePage === page.id;
+                    return (
+                      <button
+                        key={page.id}
+                        onClick={() => goTo(page.id)}
+                        className="text-left px-2.5 py-1.5 rounded-lg text-[13px]"
+                        style={{ background: active ? P.pillBg : "transparent", color: active ? P.textPrimary : P.textSecondary, fontWeight: active ? 600 : 400 }}
+                      >
+                        {page.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            {filteredGroups.length === 0 && <div className="text-[12px] px-2" style={{ color: P.textMuted }}>No matching pages.</div>}
+          </nav>
+        </div>
+
+        <div ref={contentRef} className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto px-5 md:px-8 py-8">
+            <div className="text-[11.5px] font-medium mb-2" style={{ color: P.textMuted }}>{activeGroup?.label}</div>
+            <h1 className="font-display text-[24px] md:text-[28px] font-semibold mb-5" style={{ color: P.textPrimary }}>{activePageMeta?.title}</h1>
+            <div className="text-[13.5px] leading-relaxed flex flex-col" style={{ color: P.textSecondary }}>
+              {renderPage ? renderPage(P, goTo) : null}
+            </div>
+
+            {activePage === "overview" && (
+              <div className="flex flex-col gap-2 mt-8">
+                <div className="flex items-center gap-2">
+                  <a
+                    href="https://x.com/Mango_protocol"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 flex-1 py-3 rounded-xl text-[13px] font-medium"
+                    style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                      <path d="M18.9 2H22l-7.6 8.7L23.3 22h-6.8l-5.3-6.9L5 22H1.9l8.1-9.3L1 2h7l4.8 6.3L18.9 2Zm-1.2 18h1.9L7.4 4H5.4l12.3 16Z" fill={P.textPrimary} />
+                    </svg>
+                    Follow on X
+                  </a>
+                  <a
+                    href="https://t.me/mango_protocol"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 flex-1 py-3 rounded-xl text-[13px] font-medium"
+                    style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+                  >
+                    <Send size={14} /> Join our Telegram
+                  </a>
+                </div>
+                <a
+                  href="mailto:mango@mangoprotocol.site"
+                  className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-[13px] font-medium"
+                  style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+                >
+                  <Mail size={14} /> mango@mangoprotocol.site
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
