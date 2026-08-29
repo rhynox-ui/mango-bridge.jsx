@@ -7,6 +7,15 @@ import {
   // reverted: NetworkStablechain genuinely doesn't exist, but this batch
   // was independently re-checked and every name below does).
   TokenWBTC, TokenAVAX, TokenHYPE, TokenXPL, TokenOKB,
+  // Native-asset icons for walletChains.js's wallet-only chains, added
+  // for the chain-parity work — the exact same Network* components
+  // already verified working for the chain badges themselves
+  // (chainBadges.jsx's own WALLET_ONLY_ICON), reused here for the
+  // matching native-asset symbol (Polygon's coin IS the same purple
+  // mark as its network badge, same for the rest) rather than a
+  // separate, unverified Token* import for each.
+  NetworkPolygon, NetworkGnosis, NetworkMonad, NetworkSonic, NetworkMantle, NetworkBerachain,
+  NetworkSeiNetwork, NetworkCelo, NetworkFantom, NetworkMoonbeam, NetworkCronos, NetworkMetisAndromeda, NetworkFraxtal,
 } from "@web3icons/react";
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ChainBadge } from "./chainBadges.jsx";
@@ -284,6 +293,17 @@ const ASSETS = [
   { symbol: "FRAX", name: "Fraxtal", decimals: 4, price: 1, color: "#000000" },
 ];
 
+// Real bug fix: these 13 symbols exist in ASSETS above purely so each
+// wallet-only chain HAS a native-asset entry to select as its own
+// default (see WALLET_ONLY_CHAINS_MAINNET/handleSwapChainChange) — they
+// were never meant to show up as generic, always-offered options the
+// way USDC/ETH/USDT (real multi-chain assets) already are. Left
+// unfiltered, the asset picker offered "POL"/"MON"/"BERA"/etc. while on
+// completely unrelated chains like Base, where they were never valid —
+// AssetDropdown's own built-in list below excludes each of these unless
+// the chain currently selected is that exact symbol's own native chain.
+const WALLET_ONLY_ONLY_NATIVE_SYMBOLS = new Set(["POL", "XDAI", "MON", "S", "MNT", "BERA", "SEI", "CELO", "FTM", "GLMR", "CRO", "METIS", "FRAX"]);
+
 const DEFAULT_BALANCES = {
   ethereum: { USDC: 1820.44, ETH: 1.284, USDT: 500, WBTC: 0.021 },
   base: { USDC: 640.1, ETH: 0.42, USDT: 120, WBTC: 0 },
@@ -413,18 +433,24 @@ function ChainDropdown({ value, exclude, onChange, P, chainOrder = CHAIN_ORDER }
         <ChevronDown size={13} color={P.textMuted} />
       </button>
       {open && (
-        // Real bug fix: this trigger button sits at the RIGHT side of its
-        // row (flex justify-between, label on the left) — anchoring the
-        // panel with left-0 positioned its left edge there too, pushing
-        // the whole w-44 panel off the right edge of the viewport instead
-        // of over the trigger. right-0 anchors the panel's own right edge
-        // to the trigger's right edge instead, so it opens leftward and
-        // stays on-screen. max-h + overflow-y-auto: this list used to be
-        // a fixed 14 items (always fit unscrolled) — now optionally
-        // extended with whichever of walletChains.js's 25 wallet-only
-        // chains Relay's live data currently supports, which can run well
-        // past what fits on screen without this.
-        <div className="absolute right-0 z-30 mt-2 w-44 max-h-80 overflow-y-auto rounded-xl shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        // Real bug fix, and a real fix to an EARLIER "fix": this trigger
+        // is the only child of its row (justify-between with nothing else
+        // in it — both Bridge's own from/to pickers and Swap's picker all
+        // live in exactly this shape now), so it renders at the row's
+        // LEFT edge, not the right. An earlier pass anchored the panel
+        // with right-0 based on a DIFFERENT layout — Swap's picker used
+        // to sit in its own separate "Swap on" row alongside a label,
+        // which right-aligned the trigger — but that row was removed when
+        // Swap's picker moved inline to match Bridge's own cards, and
+        // this was never revisited: right-0 on a left-aligned trigger
+        // pushed the panel off the LEFT edge of the viewport instead.
+        // left-0 matches the trigger's real position now. max-h +
+        // overflow-y-auto: this list used to be a fixed 14 items (always
+        // fit unscrolled) — now optionally extended with whichever of
+        // walletChains.js's 25 wallet-only chains Relay's live data
+        // currently supports, which can run well past what fits on
+        // screen without this.
+        <div className="absolute left-0 z-30 mt-2 w-44 max-h-80 overflow-y-auto rounded-xl shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           {chainOrder.filter((id) => id !== exclude).map((id) => {
             const cc = CHAINS[id];
             return (
@@ -699,6 +725,24 @@ function AssetIcon({ symbol, size = 18 }) {
     );
   }
 
+  // Wallet-only chains' own native-asset icons — same Network* imports
+  // as chainBadges.jsx's own WALLET_ONLY_ICON, just keyed by asset
+  // symbol here instead of chain key. Real, verified icons instead of
+  // the generic "?" glyph these previously fell through to.
+  const WALLET_ONLY_NATIVE_ICONS = {
+    POL: NetworkPolygon, XDAI: NetworkGnosis, MON: NetworkMonad, S: NetworkSonic, MNT: NetworkMantle,
+    BERA: NetworkBerachain, SEI: NetworkSeiNetwork, CELO: NetworkCelo, FTM: NetworkFantom,
+    GLMR: NetworkMoonbeam, CRO: NetworkCronos, METIS: NetworkMetisAndromeda, FRAX: NetworkFraxtal,
+  };
+  if (WALLET_ONLY_NATIVE_ICONS[symbol]) {
+    const Icon = WALLET_ONLY_NATIVE_ICONS[symbol];
+    return (
+      <span className="flex items-center justify-center rounded-full shrink-0 overflow-hidden" style={{ width: size, height: size }}>
+        <Icon variant="branded" size={size} />
+      </span>
+    );
+  }
+
   return <HandDrawnAssetGlyph symbol={symbol} size={size} color={color} />;
 }
 
@@ -833,6 +877,10 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
           <div className="overflow-y-auto">
             {!looksLikeAddress && ASSETS.map((a, i) => {
               if (upperQuery && !a.symbol.includes(upperQuery)) return null;
+              // Hide another chain's own native-asset symbol (POL, MON,
+              // BERA, etc.) — never a real option except on that exact
+              // chain. See WALLET_ONLY_ONLY_NATIVE_SYMBOLS's own comment.
+              if (WALLET_ONLY_ONLY_NATIVE_SYMBOLS.has(a.symbol) && a.symbol !== NATIVE_SYMBOL_BY_CHAIN[chainId]) return null;
               // Real balance for this specific asset, if we have a fetched
               // value for it — assets with no real address on the current
               // chain (and thus no entry in `balances`) show nothing
