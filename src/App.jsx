@@ -2295,6 +2295,7 @@ const DOC_GROUPS = [
   ] },
   { label: "Wallet", pages: [
     { id: "wallet-overview", title: "Mango Wallet" },
+    { id: "telegram-bot", title: "Telegram Bot" },
   ] },
   { label: "Trust & security", pages: [
     { id: "custody", title: "Custody" },
@@ -2546,6 +2547,7 @@ const DOC_CONTENT = {
         <li>Available on any chain Mango Bridge supports (see <DocLink P={P} onClick={() => goTo("bridge-networks")}>Supported networks →</DocLink>), and any two of that chain's supported assets that Relay currently has a live route between.</li>
         <li>The same 1% protocol fee as Bridge applies, deducted from what you receive — not carved out of what you pay in.</li>
         <li>Gas is estimated once, not twice — a same-chain swap is a single transaction, not a source leg and a destination leg.</li>
+        <li>Not on the built-in list? Paste a contract address (or, on Solana, a mint address) directly into the asset picker to add and trade any token, verified live on-chain before it's offered.</li>
       </ul>
       <DocCallout P={P}>An unsupported pair on a given chain surfaces as an explicit "no route available" message — never a fabricated success.</DocCallout>
     </>
@@ -2628,9 +2630,20 @@ const DOC_CONTENT = {
   ),
   "wallet-overview": (P) => (
     <>
-      <DocCallout P={P}>Coming soon — still in testing before it's opened up publicly.</DocCallout>
-      <p className="mt-3 mb-2">A self-custodial wallet built directly into the site — your recovery phrase is generated and encrypted entirely in your own browser, and is never sent to Mango in any form, encrypted or not. One recovery phrase covers a single address usable across every EVM chain Mango supports, plus a separate Solana address, the same way MetaMask and Phantom derive theirs.</p>
-      <p>This is a different trust model from the Telegram bot's wallet, which is necessarily custodial since Telegram itself can't sign transactions locally.</p>
+      <p className="mb-2">Mango Wallet is a real, self-custodial browser extension — your recovery phrase is generated and encrypted entirely on your own device, and is never sent to Mango in any form, encrypted or not. One recovery phrase covers a single address usable across every EVM chain Mango supports, plus a separate Solana address, the same way MetaMask and Phantom derive theirs.</p>
+      <p className="mb-3">
+        <a href="https://chromewebstore.google.com/detail/nphpjgifdodfhachompmknpdjnhomkcc" target="_blank" rel="noopener noreferrer" className="font-medium underline underline-offset-2" style={{ color: P.textPrimary }}>Install Mango Wallet from the Chrome Web Store →</a>
+      </p>
+      <p>The site itself doesn't run a second, separate wallet — only an installed extension can actually connect to other sites and dApps, so the site's own Wallet tab points you to install or open the extension rather than duplicating it.</p>
+    </>
+  ),
+  "telegram-bot": (P) => (
+    <>
+      <p className="mb-2">Mango is also available as a Telegram bot — trade and manage a wallet directly inside a chat, no separate app or extension install needed.</p>
+      <p className="mb-2">A Telegram bot can't sign transactions locally the way a browser extension can, so its wallet is custodial — a different trust model from Mango Wallet, described on the previous page.</p>
+      <p>
+        <a href="https://t.me/mango_protocol" target="_blank" rel="noopener noreferrer" className="font-medium underline underline-offset-2" style={{ color: P.textPrimary }}>Find it on Telegram →</a>
+      </p>
     </>
   ),
   custody: (P) => (
@@ -2668,10 +2681,8 @@ const DOC_CONTENT = {
   roadmap: (P) => (
     <ul className="list-disc ml-5 flex flex-col gap-0.5">
       <li>Additional EVM networks</li>
-      <li>Polygon support</li>
       <li>Cross-chain messaging</li>
       <li>Bridge analytics dashboard</li>
-      <li>Telegram Bot integration</li>
     </ul>
   ),
 };
