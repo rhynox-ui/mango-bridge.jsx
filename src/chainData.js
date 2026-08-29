@@ -53,6 +53,15 @@ export const TOKEN_ADDRESSES = {
     avalanche: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
     arbitrum: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
     unichain: "0x078D782b760474a361dDA0AF3839290b0EF57AD6",
+    // Real, verified USDC mint — cross-checked against two independent
+    // authoritative sources: Solana Labs' own token-list repo
+    // (solana-labs/token-list, fetched live) and Coinbase's official
+    // CDP SDK (@coinbase/cdp-sdk's own USDC_MAINNET_MINT_ADDRESS
+    // constant, already installed locally). Previously missing
+    // entirely, which is why a same-chain Solana swap into/out of USDC
+    // always failed with "not safe to guess one" — a real gap, not a
+    // deliberate omission.
+    solana: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
   },
   USDT: {
     ethereum: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
