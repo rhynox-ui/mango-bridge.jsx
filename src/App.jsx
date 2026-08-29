@@ -13,6 +13,8 @@ import { ChainBadge } from "./chainBadges.jsx";
 import { MangoLogo } from "./MangoLogo.jsx";
 import { parseUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
+import { fetchErc20TokenMetadata } from "./wallet/walletRpc.js";
+import { loadCustomTokens, addCustomToken } from "./wallet/customTokens.js";
 import { PublicKey } from "@solana/web3.js";
 import { useSolanaWallet } from "./SolanaWalletContext.jsx";
 import {
@@ -212,6 +214,30 @@ const NATIVE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000";
 function resolveCurrency(chainKey, assetSymbol) {
   if (isWalletOnlyChain(chainKey)) return NATIVE_TOKEN_ADDRESS;
   return currencyAddress(chainKey, assetSymbol);
+}
+
+// User-pasted "paste a contract address" tokens (AssetDropdown below,
+// customTokens.js) carry their own real, on-chain-verified address —
+// takes priority over both the hand-verified registry and the wallet-
+// only-chain fallback above, neither of which has (or could have) an
+// entry for a token nobody here independently vetted. assetObj is
+// whatever fromAsset/toAsset currently resolves to — either an ASSETS
+// entry or the synthetic {symbol, decimals, address, custom:true,
+// onchainDecimals} shape built where fromCustomToken/toCustomToken is
+// selected (see MangoBridge's own fromAsset/toAsset derivation).
+function resolveCurrencyForAsset(chainKey, assetObj) {
+  if (assetObj?.custom) return assetObj.address;
+  return resolveCurrency(chainKey, assetObj.symbol);
+}
+
+// Real on-chain decimals for amount math (parseUnits) — genuinely
+// different from ASSETS[].decimals, which is only a display/formatting
+// precision (see chainData.js's own ASSET_ONCHAIN_DECIMALS_BY_CHAIN
+// comment on why a symbol-only decimals lookup is never safe to reuse
+// for this). A custom token's real decimals were read live off its own
+// contract (fetchErc20TokenMetadata) when it was added, not guessed.
+function onchainDecimalsForAsset(assetObj) {
+  return assetObj?.custom ? assetObj.onchainDecimals : ASSET_ONCHAIN_DECIMALS[assetObj.symbol];
 }
 
 const ASSETS = [
@@ -676,17 +702,43 @@ function AssetIcon({ symbol, size = 18 }) {
   return <HandDrawnAssetGlyph symbol={symbol} size={size} color={color} />;
 }
 
-function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen }) {
+// Search box doubles as a "paste a contract address" field — a valid EVM
+// address triggers a real on-chain fetchErc20TokenMetadata() read
+// (symbol()/decimals() off the actual contract, never guessed) and offers
+// an "Add {symbol}" row; confirming stores it in customTokens.js (the
+// same registry MangoWallet.jsx's own wallet-dashboard "add custom
+// token" flow already uses) and selects it immediately. Deliberately
+// EVM-only for now: isAddress() only recognizes EVM addresses, so a
+// Solana mint pasted here just falls through to "no match" rather than
+// attempting a wrong-shaped fetch — Solana mints carry no on-chain
+// symbol anyway (a real, separate limitation mobile's own DexScreen.tsx
+// asks the user to type one for), a genuinely bigger UI to add later,
+// not silently done wrong now.
+function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
+  const [query, setQuery] = useState("");
+  const [customTokensForChain, setCustomTokensForChain] = useState([]);
+  const [fetching, setFetching] = useState(false);
+  const [fetchedToken, setFetchedToken] = useState(null);
+  const [fetchError, setFetchError] = useState("");
   const ref = useRef(null);
-  const asset = ASSETS[assetIdx];
+  const asset = customToken || ASSETS[assetIdx];
+  const supportsCustomTokens = chainId !== "solana";
 
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+
+  // Reloaded on every open/chain-change — same per-chain pattern
+  // mobile's own DexScreen.tsx uses for its equivalent list, so a token
+  // added from elsewhere in the app (or a moment ago, on the other side
+  // of this same swap) always shows up here too.
+  useEffect(() => {
+    if (open && supportsCustomTokens) setCustomTokensForChain(loadCustomTokens(chainId));
+  }, [open, chainId, supportsCustomTokens]);
 
   // Real fix for the dropdown getting hidden behind the fixed bottom nav:
   // measure actual available space below the trigger every time it opens,
@@ -704,9 +756,54 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
       // opens, not just on connect/network-change, so a value that
       // changed since the last fetch is never shown stale.
       onOpen?.();
+    } else {
+      setQuery("");
+      setFetchedToken(null);
+      setFetchError("");
     }
     setOpen((o) => !o);
   }
+
+  const trimmedQuery = query.trim();
+  const looksLikeAddress = supportsCustomTokens && isAddress(trimmedQuery);
+
+  useEffect(() => {
+    setFetchedToken(null);
+    setFetchError("");
+    if (!open || !looksLikeAddress) return;
+    // Already a known built-in or already-added custom token at this
+    // exact address — nothing new to verify or offer adding again.
+    const already =
+      customTokensForChain.some((t) => t.address.toLowerCase() === trimmedQuery.toLowerCase()) ||
+      ASSETS.some((a) => {
+        try { return currencyAddress(chainId, a.symbol).toLowerCase() === trimmedQuery.toLowerCase(); } catch { return false; }
+      });
+    if (already) return;
+    let cancelled = false;
+    setFetching(true);
+    fetchErc20TokenMetadata(chainId, trimmedQuery)
+      .then(({ symbol, decimals }) => { if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery }); })
+      .catch((err) => { if (!cancelled) setFetchError(err?.message || "Couldn't verify this token — check the address and network."); })
+      .finally(() => { if (!cancelled) setFetching(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, chainId, trimmedQuery, looksLikeAddress]);
+
+  function handleAddFetchedToken() {
+    if (!fetchedToken) return;
+    try {
+      addCustomToken(chainId, fetchedToken);
+      setCustomTokensForChain(loadCustomTokens(chainId));
+      onCustomTokenSelect(fetchedToken);
+      setOpen(false);
+      setQuery("");
+      setFetchedToken(null);
+    } catch (err) {
+      setFetchError(err?.message || "Could not add this token.");
+    }
+  }
+
+  const upperQuery = trimmedQuery.toUpperCase();
 
   return (
     <div className="relative shrink-0" ref={ref}>
@@ -717,30 +814,81 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
       </button>
       {open && (
         <div
-          className={`absolute right-0 z-30 w-52 rounded-xl overflow-hidden shadow-2xl ${openUpward ? "bottom-full mb-2" : "top-full mt-2"}`}
-          style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, maxHeight: "min(60vh, 320px)", overflowY: "auto" }}
+          className={`absolute right-0 z-30 w-64 rounded-xl shadow-2xl flex flex-col ${openUpward ? "bottom-full mb-2" : "top-full mt-2"}`}
+          style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, maxHeight: "min(60vh, 380px)" }}
         >
-          {ASSETS.map((a, i) => {
-            // Real balance for this specific asset, if we have a fetched
-            // value for it — assets with no real address on the current
-            // chain (and thus no entry in `balances`) show nothing
-            // rather than a misleading "0".
-            const realBalance = balances?.[a.symbol];
-            return (
-              <button key={a.symbol} onClick={() => { setAssetIdx(i); setOpen(false); }} className="w-full flex items-center justify-between gap-2.5 px-3 py-2.5 text-left">
-                <div className="flex items-center gap-2.5">
-                  <AssetIcon symbol={a.symbol} size={22} />
-                  <div className="flex flex-col">
-                    <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{a.symbol}</span>
-                    <span className="text-[11px]" style={{ color: P.textMuted }}>{a.name}</span>
+          {supportsCustomTokens && (
+            <div className="p-2 shrink-0" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search or paste a contract address"
+                autoCapitalize="none"
+                autoCorrect="off"
+                className="w-full px-2.5 py-2 rounded-lg text-[12.5px]"
+                style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+              />
+            </div>
+          )}
+          <div className="overflow-y-auto">
+            {!looksLikeAddress && ASSETS.map((a, i) => {
+              if (upperQuery && !a.symbol.includes(upperQuery)) return null;
+              // Real balance for this specific asset, if we have a fetched
+              // value for it — assets with no real address on the current
+              // chain (and thus no entry in `balances`) show nothing
+              // rather than a misleading "0".
+              const realBalance = balances?.[a.symbol];
+              return (
+                <button key={a.symbol} onClick={() => { setAssetIdx(i); setOpen(false); }} className="w-full flex items-center justify-between gap-2.5 px-3 py-2.5 text-left">
+                  <div className="flex items-center gap-2.5">
+                    <AssetIcon symbol={a.symbol} size={22} />
+                    <div className="flex flex-col">
+                      <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{a.symbol}</span>
+                      <span className="text-[11px]" style={{ color: P.textMuted }}>{a.name}</span>
+                    </div>
                   </div>
-                </div>
-                <span className="text-[11.5px] font-mono shrink-0" style={{ color: P.textSecondary }}>
-                  {balancesLoading ? "…" : realBalance !== undefined ? fmt(realBalance, realBalance < 1 ? 4 : 2) : ""}
-                </span>
-              </button>
-            );
-          })}
+                  <span className="text-[11.5px] font-mono shrink-0" style={{ color: P.textSecondary }}>
+                    {balancesLoading ? "…" : realBalance !== undefined ? fmt(realBalance, realBalance < 1 ? 4 : 2) : ""}
+                  </span>
+                </button>
+              );
+            })}
+            {!looksLikeAddress && customTokensForChain.map((t) => {
+              if (upperQuery && !t.symbol.toUpperCase().includes(upperQuery)) return null;
+              return (
+                <button key={t.address} onClick={() => { onCustomTokenSelect(t); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left">
+                  <AssetIcon symbol={t.symbol} size={22} />
+                  <div className="flex flex-col">
+                    <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{t.symbol}</span>
+                    <span className="text-[11px] font-mono" style={{ color: P.textMuted }}>{t.address.slice(0, 6)}…{t.address.slice(-4)}</span>
+                  </div>
+                </button>
+              );
+            })}
+            {looksLikeAddress && (
+              <div className="px-3 py-3">
+                {fetching ? (
+                  <div className="flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin" color={P.textMuted} />
+                    <span className="text-[12px]" style={{ color: P.textMuted }}>Checking this contract on {CHAINS[chainId]?.name}…</span>
+                  </div>
+                ) : fetchedToken ? (
+                  <button onClick={handleAddFetchedToken} className="w-full flex items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <AssetIcon symbol={fetchedToken.symbol} size={22} />
+                      <div className="flex flex-col text-left">
+                        <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Add {fetchedToken.symbol}</span>
+                        <span className="text-[11px] font-mono" style={{ color: P.textMuted }}>{trimmedQuery.slice(0, 6)}…{trimmedQuery.slice(-4)}</span>
+                      </div>
+                    </div>
+                    <span className="text-[16px] font-semibold" style={{ color: LIME_DEEP }}>+</span>
+                  </button>
+                ) : fetchError ? (
+                  <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{fetchError}</div>
+                ) : null}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -884,7 +1032,7 @@ function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
   return "relay";
 }
 
-function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received, devFeeAmount, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated }) {
+function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, devFeeAmount, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated }) {
   const kind = getTransferKind(from, to, asset, toAsset);
   const isReal = kind !== "simulated";
   // Which OP Stack chain this op-deposit/op-withdraw actually targets —
@@ -1000,7 +1148,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         // Real, separate execution path for Solana-sourced transfers —
         // see relaySdkSolanaExecution.js for why this can't share the
         // EVM path below (wagmi has no concept of Solana chains at all).
-        const decimals = ASSET_ONCHAIN_DECIMALS[asset];
+        const decimals = fromCustom ? fromCustom.decimals : ASSET_ONCHAIN_DECIMALS[asset];
         const totalBaseUnits = parseUnits(amount, decimals);
 
         // Real fix for a real bug: the fee used to be sent as a standalone
@@ -1011,12 +1159,19 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         // see relaySdkSolanaExecution.js's own header for the full
         // explanation — so the full amount goes in and the fee is only
         // ever deducted atomically as part of a successful settlement.
+        //
+        // Real bug fix: toChainId/toCurrency previously had no wallet-
+        // only-chain or custom-token override at all (unlike the EVM-
+        // sourced path below, which already had one) — a Solana-sourced
+        // transfer TO one of walletChains.js's broader chains would have
+        // sent MAINNET_CHAIN_IDS[to] as undefined and thrown out of
+        // currencyAddress(), which has no entry for them either.
         setStepIndex(0);
         const result = await executeSolanaSourcedTransfer({
           solanaAddress: account,
           solanaProvider: solanaWallet.solanaProvider.current,
-          toChainId: MAINNET_CHAIN_IDS[to],
-          toCurrency: currencyAddress(to, toAsset),
+          toChainId: isWalletOnlyChain(to) ? resolveChainId(to) : MAINNET_CHAIN_IDS[to],
+          toCurrency: toCustom ? toCustom.address : (isWalletOnlyChain(to) ? resolveCurrency(to, toAsset) : currencyAddress(to, toAsset)),
           amountBaseUnits: totalBaseUnits.toString(),
           // Real bug fix: previously defaulted to `account`, which for a
           // Solana-sourced transfer IS the Solana address — invalid as a
@@ -1034,7 +1189,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         setPhase("done");
         onComplete(result?.txHashes?.[0] || "");
       } else if (kind === "relay") {
-        const decimals = ASSET_ONCHAIN_DECIMALS[asset];
+        const decimals = fromCustom ? fromCustom.decimals : ASSET_ONCHAIN_DECIMALS[asset];
         const totalBaseUnits = parseUnits(amount, decimals);
 
         // Real fix, same as the Solana-sourced path above: getRelayQuote
@@ -1059,11 +1214,14 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
           // entry for them, so resolveChainId/resolveCurrency step in with
           // wagmi/chains' own chain id and the universal native
           // placeholder instead. undefined for every hand-verified chain,
-          // where getRelayQuote's own internal lookups already apply.
+          // where getRelayQuote's own internal lookups already apply. A
+          // selected custom token (fromCustom/toCustom) takes priority
+          // over the wallet-only-chain fallback — it has its own real,
+          // verified address regardless of which chain it's on.
           originChainId: isWalletOnlyChain(from) ? resolveChainId(from) : undefined,
-          originCurrency: isWalletOnlyChain(from) ? resolveCurrency(from, asset) : undefined,
+          originCurrency: fromCustom ? fromCustom.address : (isWalletOnlyChain(from) ? resolveCurrency(from, asset) : undefined),
           destinationChainId: isWalletOnlyChain(to) ? resolveChainId(to) : undefined,
-          destinationCurrency: isWalletOnlyChain(to) ? resolveCurrency(to, toAsset) : undefined,
+          destinationCurrency: toCustom ? toCustom.address : (isWalletOnlyChain(to) ? resolveCurrency(to, toAsset) : undefined),
           amountBaseUnits: totalBaseUnits.toString(), userAddress: account,
           recipientAddress: destination || defaultRecipient,
         });
@@ -2347,8 +2505,16 @@ export default function MangoBridge() {
   const [amount, setAmount] = useState("");
   const [fromAssetIdx, setFromAssetIdxRaw] = useState(0);
   const [toAssetIdx, setToAssetIdxRaw] = useState(0);
-  function handleFromAssetChange(idx) { setFromAssetIdxRaw(idx); setAmount(""); }
-  function handleToAssetChange(idx) { setToAssetIdxRaw(idx); } // don't clear amount — user is choosing what to receive, not resetting input
+  // A user-pasted "paste a contract address" token (AssetDropdown,
+  // customTokens.js) — null when the built-in ASSETS list (indexed by
+  // fromAssetIdx/toAssetIdx above) is what's actually selected instead.
+  // {symbol, decimals: <display>, address, onchainDecimals, custom:true}.
+  const [fromCustomToken, setFromCustomTokenRaw] = useState(null);
+  const [toCustomToken, setToCustomTokenRaw] = useState(null);
+  function handleFromAssetChange(idx) { setFromAssetIdxRaw(idx); setFromCustomTokenRaw(null); setAmount(""); }
+  function handleToAssetChange(idx) { setToAssetIdxRaw(idx); setToCustomTokenRaw(null); } // don't clear amount — user is choosing what to receive, not resetting input
+  function handleFromCustomTokenSelect(token) { setFromCustomTokenRaw(token); setAmount(""); }
+  function handleToCustomTokenSelect(token) { setToCustomTokenRaw(token); }
   // Real deep-link support for a shared token page: ?token=0x... on load
   // opens straight to Launchpad -> that token's detail view, instead of a
   // Share button copying a link that silently drops you on the homepage.
@@ -2475,8 +2641,25 @@ export default function MangoBridge() {
     query: { enabled: connected && !CHAINS[from]?.isSolana },
   });
 
-  const fromAsset = ASSETS[fromAssetIdx];
-  const toAsset = ASSETS[toAssetIdx];
+  // Real fix: fromAsset/toAsset now prefer a selected custom token over
+  // the built-in ASSETS index, in the exact same object shape ASSETS
+  // entries already have (symbol/name/decimals/price/color) plus
+  // custom:true/address/onchainDecimals — so every existing consumer
+  // below (fee math, balance display, CTA text, handleComplete, the
+  // quote/execution calls) keeps working unchanged; only currency/
+  // decimals resolution for an actual on-chain request needs to check
+  // .custom (resolveCurrencyForAsset/onchainDecimalsForAsset above).
+  // decimals:4/price:0 are the same kind of rough, cosmetic-only
+  // defaults the rest of this file already uses for a real asset with
+  // no hand-tuned display precision — never used for the actual
+  // on-chain amount (that's onchainDecimals, read live off the
+  // contract when the token was added).
+  const fromAsset = fromCustomToken
+    ? { symbol: fromCustomToken.symbol, name: fromCustomToken.symbol, decimals: 4, price: 0, color: "#8C9BAE", custom: true, address: fromCustomToken.address, onchainDecimals: fromCustomToken.decimals }
+    : ASSETS[fromAssetIdx];
+  const toAsset = toCustomToken
+    ? { symbol: toCustomToken.symbol, name: toCustomToken.symbol, decimals: 4, price: 0, color: "#8C9BAE", custom: true, address: toCustomToken.address, onchainDecimals: toCustomToken.decimals }
+    : ASSETS[toAssetIdx];
   const isNativeAsset = fromAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[from];
   const isRealUsdcPair = fromAsset.symbol === "USDC" && toAsset.symbol === "USDC" && isCctpSupportedPair(from, to);
   const usdcTokenAddress = isRealUsdcPair ? CCTP_CHAINS[from].usdc : undefined;
@@ -2534,7 +2717,7 @@ export default function MangoBridge() {
 
   const P = PALETTE[theme];
 
-  function swap() { setFrom(to); setTo(from); setFromAssetIdxRaw(toAssetIdx); setToAssetIdxRaw(fromAssetIdx); }
+  function swap() { setFrom(to); setTo(from); setFromAssetIdxRaw(toAssetIdx); setToAssetIdxRaw(fromAssetIdx); setFromCustomTokenRaw(toCustomToken); setToCustomTokenRaw(fromCustomToken); }
   // Real bug fix: switching chains never reset the selected asset, so a
   // stale asset from the previous chain (e.g. BNB) could stay selected
   // even after switching to a chain that doesn't support it at all (e.g.
@@ -2545,8 +2728,13 @@ export default function MangoBridge() {
     const idx = ASSETS.findIndex((a) => a.symbol === native);
     return idx >= 0 ? idx : 0;
   }
-  function handleFromChange(id) { setFrom(id); if (id === to) setTo(CHAIN_ORDER.find((c) => c !== id)); setFromAssetIdxRaw(defaultAssetIdxFor(id)); setAmount(""); }
-  function handleToChange(id) { setTo(id); if (id === from) setFrom(CHAIN_ORDER.find((c) => c !== id)); setToAssetIdxRaw(defaultAssetIdxFor(id)); setAmount(""); }
+  // Real fix: a custom token is chain-specific (its address means
+  // nothing, or means something else entirely, on a different chain) —
+  // switching chains must drop any selected custom token, same as it
+  // already resets the built-in asset index to that chain's native
+  // asset below.
+  function handleFromChange(id) { setFrom(id); if (id === to) setTo(CHAIN_ORDER.find((c) => c !== id)); setFromAssetIdxRaw(defaultAssetIdxFor(id)); setFromCustomTokenRaw(null); setAmount(""); }
+  function handleToChange(id) { setTo(id); if (id === from) setFrom(CHAIN_ORDER.find((c) => c !== id)); setToAssetIdxRaw(defaultAssetIdxFor(id)); setToCustomTokenRaw(null); setAmount(""); }
   // Swap tab's own single chain picker — sets from AND to together
   // (same chain on both sides, since a swap trades one asset for
   // another on ONE chain, unlike Bridge which moves one asset across
@@ -2560,6 +2748,8 @@ export default function MangoBridge() {
     setFromAssetIdxRaw(nativeIdx);
     const otherIdx = ASSETS.findIndex((a, i) => i !== nativeIdx);
     setToAssetIdxRaw(otherIdx >= 0 ? otherIdx : nativeIdx);
+    setFromCustomTokenRaw(null);
+    setToCustomTokenRaw(null);
     setAmount("");
   }
   function handleConnect() {
@@ -2602,6 +2792,8 @@ export default function MangoBridge() {
       setFromAssetIdxRaw(nativeIdx);
       const otherIdx = ASSETS.findIndex((a, i) => i !== nativeIdx);
       setToAssetIdxRaw(otherIdx >= 0 ? otherIdx : nativeIdx);
+      setFromCustomTokenRaw(null);
+      setToCustomTokenRaw(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSwapTab]);
@@ -2621,18 +2813,21 @@ export default function MangoBridge() {
     setRouteCheck({ status: "checking" });
     const timer = setTimeout(async () => {
       try {
-        const decimals = ASSET_ONCHAIN_DECIMALS[fromAsset.symbol];
+        const decimals = onchainDecimalsForAsset(fromAsset);
         if (!decimals) throw new Error(`No decimals known for ${fromAsset.symbol} — can't safely build an amount.`);
         const amountBaseUnits = parseUnits(amount, decimals).toString();
         await getRelayQuote({
           fromChainKey: from, toChainKey: to,
           fromAsset: fromAsset.symbol, toAsset: toAsset.symbol,
           // Same override reasoning as the execution path in BridgeModal
-          // above — see that call site's own comment.
+          // above — see that call site's own comment. A selected custom
+          // token (fromAsset.custom/toAsset.custom) takes priority over
+          // the wallet-only-chain fallback, same as
+          // resolveCurrencyForAsset's own precedence.
           originChainId: isWalletOnlyChain(from) ? resolveChainId(from) : undefined,
-          originCurrency: isWalletOnlyChain(from) ? resolveCurrency(from, fromAsset.symbol) : undefined,
+          originCurrency: (fromAsset.custom || isWalletOnlyChain(from)) ? resolveCurrencyForAsset(from, fromAsset) : undefined,
           destinationChainId: isWalletOnlyChain(to) ? resolveChainId(to) : undefined,
-          destinationCurrency: isWalletOnlyChain(to) ? resolveCurrency(to, toAsset.symbol) : undefined,
+          destinationCurrency: (toAsset.custom || isWalletOnlyChain(to)) ? resolveCurrencyForAsset(to, toAsset) : undefined,
           amountBaseUnits, userAddress: activeAccount,
           // Same real fix as the execution path — a Solana source needs
           // the connected EVM address as the recipient on an EVM
@@ -2872,7 +3067,7 @@ export default function MangoBridge() {
                     style={{ color: P.textPrimary }}
                   />
                   <button onClick={setMax} disabled={availableBalance === null} className="text-[10.5px] font-bold px-2 py-1 rounded-md mr-2 shrink-0" style={{ background: availableBalance === null ? P.pillBg : `${LIME}1A`, color: availableBalance === null ? P.textMuted : LIME_DEEP, opacity: availableBalance === null ? 0.6 : 1 }}>MAX</button>
-                  <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} />
+                  <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} />
                 </div>
                 {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>Insufficient balance on {CHAINS[from].name}</div>}
               </div>
@@ -2901,7 +3096,7 @@ export default function MangoBridge() {
                 </div>
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
                   <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 ? P.textPrimary : P.textMuted }}>{amtNum > 0 ? fmt(received, 4) : "0"}</span>
-                  <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} />
+                  <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} />
                 </div>
               </div>
 
@@ -3071,7 +3266,7 @@ export default function MangoBridge() {
 
       {showModal && (
         <BridgeModal
-          from={from} to={to} amount={amount} asset={fromAsset.symbol} toAsset={toAsset.symbol} fee={fee} etaLabel={etaLabel} received={received}
+          from={from} to={to} amount={amount} asset={fromAsset.symbol} toAsset={toAsset.symbol} fromCustom={fromCustomToken} toCustom={toCustomToken} fee={fee} etaLabel={etaLabel} received={received}
           devFeeAmount={devFeeAmount}
           // isSwapTab-gated even though the "Send to another address"
           // section itself is already hidden on the swap tab: sendToOther/
