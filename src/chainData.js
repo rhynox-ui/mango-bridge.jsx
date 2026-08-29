@@ -119,3 +119,23 @@ export const ASSET_ONCHAIN_DECIMALS = {
   XPL: 18,
   OKB: 18,
 };
+
+// Real, verified exception to the global-by-symbol map above: BNB
+// Chain's own USDT deployment (0x55d398326f99059fF775485246999027B3197955,
+// the same address TOKEN_ADDRESSES.USDT.bnb already points at) uses 18
+// decimals, not the 6 every other verified USDT deployment here uses —
+// confirmed independently against BscScan, QuickNode, Uniswap, and
+// Binplorer's own token pages for that exact contract. A symbol-only
+// decimals lookup would silently apply the wrong precision to any
+// BNB-USDT amount (balance display, a quote's amount math, a swap's
+// actual on-chain value) — every call site that resolves decimals for
+// a *token* symbol (not a chain's own native asset) must go through
+// assetDecimalsForChain(chainKey, symbol) below, never index
+// ASSET_ONCHAIN_DECIMALS directly by symbol alone.
+const ASSET_ONCHAIN_DECIMALS_BY_CHAIN = {
+  bnb: { USDT: 18 },
+};
+
+export function assetDecimalsForChain(chainKey, assetSymbol) {
+  return ASSET_ONCHAIN_DECIMALS_BY_CHAIN[chainKey]?.[assetSymbol] ?? ASSET_ONCHAIN_DECIMALS[assetSymbol];
+}
