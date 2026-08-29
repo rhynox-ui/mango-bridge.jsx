@@ -1,0 +1,109 @@
+---
+// src/pages/index.astro
+//
+// Post listing — import.meta.glob (native Vite, stable across Astro
+// versions) rather than the content-collections API, so adding a new
+// post is just "drop a .md file in src/pages/blog/", no schema/config
+// file to also update. eager: true resolves frontmatter synchronously
+// at build time, which is all a static list needs.
+const posts = Object.values(import.meta.glob("./blog/*.md", { eager: true })) as {
+  url: string;
+  frontmatter: { title: string; description: string; date: string };
+}[];
+posts.sort((a, b) => new Date(b.frontmatter.date).getTime() - new Date(a.frontmatter.date).getTime());
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mango Protocol Blog</title>
+    <meta name="description" content="Updates from Mango Protocol — the non-custodial cross-chain bridge and launchpad." />
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="alternate" type="application/rss+xml" title="Mango Protocol Blog" href="/rss.xml" />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --panel-border: #e6e6e8;
+        --text-primary: #0a0a0b;
+        --text-secondary: #6b6b70;
+        --text-muted: #a6a6ac;
+        --lime-deep: #e8801a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text-primary);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      header {
+        border-bottom: 1px solid var(--panel-border);
+        padding: 20px 24px;
+        font-weight: 700;
+        font-size: 15px;
+      }
+      main {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 48px 24px 80px;
+      }
+      .post-link {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        padding: 20px 0;
+        border-bottom: 1px solid var(--panel-border);
+      }
+      .post-link:first-child {
+        padding-top: 0;
+      }
+      .post-title {
+        font-size: 18px;
+        font-weight: 700;
+        margin: 0 0 6px;
+      }
+      .post-desc {
+        color: var(--text-secondary);
+        font-size: 14px;
+        margin: 0 0 6px;
+      }
+      .post-date {
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      footer {
+        border-top: 1px solid var(--panel-border);
+        padding: 24px;
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      footer a {
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>🥭 Mango Protocol Blog</header>
+    <main>
+      {
+        posts.map((post) => (
+          <a class="post-link" href={post.url}>
+            <p class="post-title">{post.frontmatter.title}</p>
+            <p class="post-desc">{post.frontmatter.description}</p>
+            <p class="post-date">
+              {new Date(post.frontmatter.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+            </p>
+          </a>
+        ))
+      }
+    </main>
+    <footer>
+      <a href="https://mangoprotocol.site">mangoprotocol.site</a> · <a href="/rss.xml">RSS</a>
+    </footer>
+  </body>
+</html>
