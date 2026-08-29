@@ -92,7 +92,7 @@ import { encryptSecret, decryptSecret, saveVault, loadVault, clearVault, deriveF
 import { parseImportedPrivateKey, KeyImportError } from "./wallet/walletKeyImport.js";
 import {
   fetchWalletNativeBalance, fetchWalletSolanaBalance, fetchWalletTokenBalance, fetchWalletSplTokenBalance,
-  getWalletChain, fetchErc20TokenMetadata, fetchSplMintDecimals,
+  getWalletChain, fetchErc20TokenMetadata, fetchSplMintDecimals, fetchSplTokenSymbol,
 } from "./wallet/walletRpc.js";
 import {
   estimateEvmSendFee, sendEvmNative, estimateSolanaSendFee, sendSolanaNative,
@@ -1085,14 +1085,15 @@ function ChangePasswordModal({ onClose, P }) {
 }
 
 // "Add custom token" — OKX's own paste-a-contract-address flow. EVM
-// tokens verify themselves on-chain (symbol()/decimals() are a real part
-// of the ERC-20 standard); an SPL mint only has decimals on-chain, so the
-// user types the symbol themselves — asking for a name we can't actually
-// read would just be a fake verification.
+// tokens verify themselves entirely on-chain (symbol()/decimals() are a
+// real part of the ERC-20 standard); an SPL mint only has decimals
+// on-chain, so its symbol/name comes from fetchSplTokenSymbol
+// (walletRpc.js — DexScreener's public tokens API, the same source this
+// app already trusts for custom-token icons). Either way this is a real,
+// fetched value, never something the user types in themselves.
 function AddCustomTokenScreen({ chains, onBack, onAdded, onClose, P }) {
   const [chainKey, setChainKey] = useState(chains[0]);
   const [address, setAddress] = useState("");
-  const [manualSymbol, setManualSymbol] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const isSolana = chainKey === "solana";
@@ -1106,9 +1107,8 @@ function AddCustomTokenScreen({ chains, onBack, onAdded, onClose, P }) {
         throw new Error(isSolana ? "Enter a valid mint address." : "Enter a valid contract address.");
       }
       if (isSolana) {
-        if (!manualSymbol.trim()) throw new Error("Enter a symbol/ticker for this token.");
-        const decimals = await fetchSplMintDecimals(trimmed);
-        addCustomToken("solana", { symbol: manualSymbol.trim().toUpperCase(), mint: trimmed, decimals });
+        const [decimals, { symbol }] = await Promise.all([fetchSplMintDecimals(trimmed), fetchSplTokenSymbol(trimmed)]);
+        addCustomToken("solana", { symbol, mint: trimmed, decimals });
       } else {
         const { symbol, decimals } = await fetchErc20TokenMetadata(chainKey, trimmed);
         addCustomToken(chainKey, { symbol, address: trimmed, decimals });
@@ -1142,17 +1142,8 @@ function AddCustomTokenScreen({ chains, onBack, onAdded, onClose, P }) {
           className="w-full px-3.5 py-3 rounded-xl text-[13px] font-mono mb-2.5"
           style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
         />
-        {isSolana && (
-          <input
-            value={manualSymbol}
-            onChange={(e) => setManualSymbol(e.target.value)}
-            placeholder="Symbol, e.g. BONK — SPL tokens have no on-chain symbol"
-            className="w-full px-3.5 py-3 rounded-xl text-[13px] mb-2.5"
-            style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
-          />
-        )}
         {error && <div className="text-[11.5px] mb-2.5" style={{ color: "#D92D20" }}>{error}</div>}
-        <PrimaryButton onClick={handleSubmit} disabled={!address.trim() || busy || (isSolana && !manualSymbol.trim())} P={P}>
+        <PrimaryButton onClick={handleSubmit} disabled={!address.trim() || busy} P={P}>
           {busy ? "Verifying…" : "Add token"}
         </PrimaryButton>
       </div>

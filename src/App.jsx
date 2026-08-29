@@ -29,7 +29,7 @@ import { ChainBadge } from "./chainBadges.jsx";
 import { MangoLogo } from "./MangoLogo.jsx";
 import { parseUnits, formatUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
-import { fetchErc20TokenMetadata, fetchSplMintDecimals } from "./wallet/walletRpc.js";
+import { fetchErc20TokenMetadata, fetchSplMintDecimals, fetchSplTokenSymbol } from "./wallet/walletRpc.js";
 import { loadCustomTokens, addCustomToken } from "./wallet/customTokens.js";
 import { PublicKey } from "@solana/web3.js";
 import { useSolanaWallet } from "./SolanaWalletContext.jsx";
@@ -977,18 +977,16 @@ function AssetIcon({ symbol, size = 18, chainId, address, logoUrl }) {
   return <HandDrawnAssetGlyph symbol={symbol} size={size} color={color} />;
 }
 
-// Search box doubles as a "paste a contract address" field — a valid EVM
+// Search box doubles as a "paste a contract address" field. A valid EVM
 // address triggers a real on-chain fetchErc20TokenMetadata() read
-// (symbol()/decimals() off the actual contract, never guessed) and offers
-// an "Add {symbol}" row; confirming stores it in customTokens.js (the
-// same registry MangoWallet.jsx's own wallet-dashboard "add custom
-// token" flow already uses) and selects it immediately. Deliberately
-// EVM-only for now: isAddress() only recognizes EVM addresses, so a
-// Solana mint pasted here just falls through to "no match" rather than
-// attempting a wrong-shaped fetch — Solana mints carry no on-chain
-// symbol anyway (a real, separate limitation mobile's own DexScreen.tsx
-// asks the user to type one for), a genuinely bigger UI to add later,
-// not silently done wrong now.
+// (symbol()/decimals() off the actual contract, never guessed); a valid
+// Solana mint triggers a real on-chain decimals read (fetchSplMintDecimals)
+// plus a real symbol/name lookup (fetchSplTokenSymbol, DexScreener — see
+// that function's own comment on why an SPL mint needs an off-chain
+// source at all). Either way this offers an "Add {symbol}" row; confirming
+// stores it in customTokens.js (the same registry MangoWallet.jsx's own
+// wallet-dashboard "add custom token" flow already uses) and selects it
+// immediately — nothing here is ever typed in by the user.
 function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true, discoveredLogos }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
@@ -996,15 +994,6 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   const [customTokensForChain, setCustomTokensForChain] = useState([]);
   const [fetching, setFetching] = useState(false);
   const [fetchedToken, setFetchedToken] = useState(null);
-  // Real gap fix: an SPL mint carries no on-chain symbol (that lives in
-  // an optional, separate Metaplex metadata account this app doesn't
-  // parse — same honest limitation mango-mobile's own DexScreen.tsx
-  // documents and asks the user to work around the same way). splDecimals
-  // !== null just means "this is a real mint" — the user still has to
-  // type a symbol before it can be added, unlike the EVM path above
-  // where fetchErc20TokenMetadata reads the real symbol off the contract.
-  const [splDecimals, setSplDecimals] = useState(null);
-  const [splSymbolInput, setSplSymbolInput] = useState("");
   const [fetchError, setFetchError] = useState("");
   const ref = useRef(null);
   const asset = customToken || ASSETS[assetIdx];
@@ -1059,8 +1048,6 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     } else {
       setQuery("");
       setFetchedToken(null);
-      setSplDecimals(null);
-      setSplSymbolInput("");
       setFetchError("");
     }
     setOpen((o) => !o);
@@ -1071,8 +1058,6 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
 
   useEffect(() => {
     setFetchedToken(null);
-    setSplDecimals(null);
-    setSplSymbolInput("");
     setFetchError("");
     if (!open || !looksLikeAddress) return;
     // Already a known built-in or already-added custom token at this
@@ -1090,8 +1075,10 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     let cancelled = false;
     setFetching(true);
     if (isSolanaChain) {
-      fetchSplMintDecimals(trimmedQuery)
-        .then((decimals) => { if (!cancelled) setSplDecimals(decimals); })
+      Promise.all([fetchSplMintDecimals(trimmedQuery), fetchSplTokenSymbol(trimmedQuery)])
+        .then(([decimals, { symbol }]) => {
+          if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery, mint: trimmedQuery });
+        })
         .catch((err) => { if (!cancelled) setFetchError(err?.message || "Couldn't verify this mint — check the address and network."); })
         .finally(() => { if (!cancelled) setFetching(false); });
     } else {
@@ -1108,27 +1095,12 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     if (!fetchedToken) return;
     try {
       addCustomToken(chainId, fetchedToken);
-      setCustomTokensForChain(loadCustomTokens(chainId));
+      const loaded = loadCustomTokens(chainId);
+      setCustomTokensForChain(isSolanaChain ? loaded.map((t) => ({ ...t, address: t.mint })) : loaded);
       onCustomTokenSelect(fetchedToken);
       setOpen(false);
       setQuery("");
       setFetchedToken(null);
-    } catch (err) {
-      setFetchError(err?.message || "Could not add this token.");
-    }
-  }
-
-  function handleAddSplToken() {
-    const symbol = splSymbolInput.trim().toUpperCase();
-    if (splDecimals === null || !symbol) return;
-    try {
-      addCustomToken("solana", { symbol, decimals: splDecimals, mint: trimmedQuery });
-      setCustomTokensForChain(loadCustomTokens("solana").map((t) => ({ ...t, address: t.mint })));
-      onCustomTokenSelect({ symbol, decimals: splDecimals, address: trimmedQuery });
-      setOpen(false);
-      setQuery("");
-      setSplDecimals(null);
-      setSplSymbolInput("");
     } catch (err) {
       setFetchError(err?.message || "Could not add this token.");
     }
@@ -1202,27 +1174,6 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                   <div className="flex items-center gap-2">
                     <Loader2 size={14} className="animate-spin" color={P.textMuted} />
                     <span className="text-[12px]" style={{ color: P.textMuted }}>Checking this {isSolanaChain ? "mint" : "contract"} on {CHAINS[chainId]?.name}…</span>
-                  </div>
-                ) : isSolanaChain && splDecimals !== null ? (
-                  <div className="flex flex-col gap-2">
-                    <input
-                      value={splSymbolInput}
-                      onChange={(e) => setSplSymbolInput(e.target.value.toUpperCase())}
-                      placeholder="Symbol (e.g. BONK)"
-                      autoCapitalize="characters"
-                      autoCorrect="off"
-                      className="w-full px-2.5 py-2 rounded-lg text-[12.5px]"
-                      style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
-                    />
-                    <span className="text-[10.5px]" style={{ color: P.textMuted }}>SPL mints don't carry an on-chain symbol — enter it yourself.</span>
-                    <button
-                      onClick={handleAddSplToken}
-                      disabled={!splSymbolInput.trim()}
-                      className="w-full py-2 rounded-lg text-[12.5px] font-semibold"
-                      style={{ background: splSymbolInput.trim() ? `${LIME}1A` : P.pillBg, color: splSymbolInput.trim() ? LIME_DEEP : P.textMuted }}
-                    >
-                      Add token
-                    </button>
                   </div>
                 ) : fetchedToken ? (
                   <button onClick={handleAddFetchedToken} className="w-full flex items-center justify-between gap-2.5">
