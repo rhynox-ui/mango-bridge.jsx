@@ -1994,6 +1994,7 @@ const DOC_GROUPS = [
   ] },
   { label: "Trust & security", pages: [
     { id: "custody", title: "Custody" },
+    { id: "privacy", title: "Privacy policy" },
   ] },
   { label: "Builders", pages: [
     { id: "api-sdk", title: "REST API" },
@@ -2330,6 +2331,17 @@ const DOC_CONTENT = {
   ),
   custody: (P) => (
     <p>Mango never takes custody of user funds at any point, across Bridge, Swap, or the Launchpad. Bridge and Swap transfers move directly through the underlying protocol's own contracts — Circle's, Optimism's, Arbitrum's, Wormhole's, or Relay's. Launchpad trades settle through Uniswap's own PoolManager. Your wallet signs every transaction directly with that infrastructure; Mango's role is routing and fee collection, not holding.</p>
+  ),
+  privacy: (P) => (
+    <>
+      <p className="mb-3">Mango is self-custodial everywhere — the site, the Android app, and the browser extension all generate and encrypt your recovery phrase and private keys locally, and none of them ever send that data to Mango. Each product publishes its own full privacy policy, since exactly what gets talked to (RPC endpoints, Relay's API, Mango's own backend for optional features like Referral) differs slightly by product.</p>
+      <div className="flex flex-col gap-2 mb-3">
+        <a href="/app-privacy.html" target="_blank" rel="noopener noreferrer" className="font-medium underline underline-offset-2" style={{ color: P.textPrimary }}>Android app privacy policy →</a>
+        <a href="/wallet-privacy.html" target="_blank" rel="noopener noreferrer" className="font-medium underline underline-offset-2" style={{ color: P.textPrimary }}>Browser extension privacy policy →</a>
+      </div>
+      <DocCallout P={P}>The website itself (Bridge, Swap, Launchpad) works the same way: it talks directly to public RPC endpoints and Relay's API from your own browser, and never has access to your keys. A dedicated website policy page is on the roadmap — until then, the principles on this page and the two linked above apply equally to it.</DocCallout>
+      <p className="mt-3">Questions about any of these can be sent to <a href="mailto:mango@mangoprotocol.site" className="font-medium underline underline-offset-2" style={{ color: P.textPrimary }}>mango@mangoprotocol.site</a>.</p>
+    </>
   ),
   "api-sdk": (P) => (
     <>
