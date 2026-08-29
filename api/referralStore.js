@@ -170,4 +170,44 @@ export async function deleteReferralRecord(address) {
   return { deleted: true };
 }
 
+/**
+ * Every referral record ever created, for reward distribution — nothing
+ * in this store previously listed them; getReferralStats/claimReferral
+ * only ever operate on one already-known address at a time. Real gap,
+ * not a design choice: no set of "every address that's claimed" was
+ * ever maintained, so this uses Redis's own SCAN (cursor-paginated key
+ * iteration, never blocks the server the way a bare KEYS call would on
+ * a large keyspace) to walk every `referral:*` key directly, then reads
+ * each hash. Works retroactively on every record that already exists —
+ * no backfill needed, since it doesn't depend on anything being written
+ * at claim time.
+ *
+ * Not paginated at the API layer (see admin-export.js) — this is an
+ * operator export, not a user-facing list, and even thousands of
+ * records is a small response by that standard.
+ */
+export async function listAllReferralRecords() {
+  const client = getRedis();
+  const records = [];
+  let cursor = "0";
+  do {
+    const [nextCursor, keys] = await client.scan(cursor, { match: "referral:*", count: 100 });
+    cursor = nextCursor;
+    if (keys.length === 0) continue;
+    const hashes = await Promise.all(keys.map((key) => client.hgetall(key)));
+    keys.forEach((key, i) => {
+      const record = hashes[i];
+      if (!record) return;
+      records.push({
+        address: key.slice("referral:".length),
+        points: Number(record.points || 0),
+        referralCount: Number(record.referralCount || 0),
+        referredBy: record.referredBy || null,
+        createdAt: record.createdAt ? Number(record.createdAt) : null,
+      });
+    });
+  } while (cursor !== "0");
+  return records;
+}
+
 export { REFERRAL_SIGNUP_BONUS, REFERRAL_REWARD, MAX_REFERRALS_PER_DAY, DAILY_CHECKIN_POINTS, DAILY_CHECKIN_COOLDOWN_SECONDS };
