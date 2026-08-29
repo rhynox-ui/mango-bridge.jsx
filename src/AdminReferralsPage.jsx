@@ -64,7 +64,11 @@ const COLUMNS = [
 ];
 
 export function AdminReferralsPage({ onClose }) {
-  const P = PALETTE.dark;
+  // Light, matching the rest of the site's own default — MangoBridge's
+  // own theme state (App.jsx) starts as useState("light") with no
+  // persisted preference, so light is the real default a visitor
+  // actually sees, not an assumption.
+  const P = PALETTE.light;
   const [secret, setSecret] = useState(() => {
     try {
       return sessionStorage.getItem(SECRET_STORAGE_KEY) || "";
