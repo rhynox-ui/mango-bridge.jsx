@@ -1908,7 +1908,7 @@ function DocsModal({ onClose, P }) {
         </DocSection>
 
         <DocSection title="API & SDK" P={P}>
-          <p className="mb-2">A real, public REST API and JavaScript SDK — every endpoint returns live, on-chain data, nothing mocked. Full documentation, including request/response examples: <a href="https://github.com/rhynox-ui/mango-bridge.jsx/blob/main/API.md" target="_blank" rel="noopener noreferrer" className="underline" style={{ color: P.textPrimary }}>API.md on GitHub</a>.</p>
+          <p className="mb-2">A real, public REST API and JavaScript SDK — every endpoint returns live, on-chain data, nothing mocked.</p>
           <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Base URL</p>
           <p className="mb-2 font-mono text-[12px]">https://mangoprotocol.site/api/v1</p>
           <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Endpoints</p>
