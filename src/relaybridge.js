@@ -56,9 +56,21 @@ function feeRecipientForChainId(chainId) {
 // independent sources agreeing on the exact same shape), but "correctly
 // built" and "proven in production" are different things until it's
 // actually run. Test with the smallest possible real amount first.
-
-const RELAY_QUOTE_URL = "https://api.relay.link/quote/v2";
-const RELAY_STATUS_URL = "https://api.relay.link/intents/status/v3";
+//
+// Real bug fix: both URLs below used to point straight at api.relay.link
+// and were called with a plain browser fetch() — Relay's API does not
+// appear to send a permissive Access-Control-Allow-Origin on either
+// response, so both calls were silently failing at the browser level
+// from this site's own origin (this is very likely what "not proven
+// live yet" above was actually hitting). mango-mobile's own equivalent
+// code calls Relay directly too, and that's fine there — React Native
+// has no browser CORS sandboxing. Routed through this app's own backend
+// instead (api/v1/bridge/relay-quote.js / relay-status.js — thin
+// passthrough proxies, same fix already shipped for relayChains.js's
+// /chains call), which sidesteps it: server-to-server has no CORS
+// concept.
+const RELAY_QUOTE_URL = "/api/v1/bridge/relay-quote";
+const RELAY_STATUS_URL = "/api/v1/bridge/relay-status";
 
 /**
  * Fetches a Relay quote for moving `amountBaseUnits` of `fromAsset` on
