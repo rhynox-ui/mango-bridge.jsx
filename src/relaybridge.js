@@ -72,6 +72,44 @@ function feeRecipientForChainId(chainId) {
 const RELAY_QUOTE_URL = "/api/v1/bridge/relay-quote";
 const RELAY_STATUS_URL = "/api/v1/bridge/relay-status";
 
+// Real resilience gap this file didn't have: mango-mobile's own
+// getRelayQuote already retries a quote request with backoff — this
+// didn't. Retried status codes are exactly the ones that mean "try
+// again later, this wasn't a request-shape problem" (rate limiting,
+// transient server-side failures); anything else (400 bad request,
+// etc.) is a real rejection and surfaces immediately, same distinction
+// that file's own comment makes.
+const RELAY_QUOTE_RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const RELAY_QUOTE_MAX_ATTEMPTS = 4;
+const RELAY_QUOTE_BACKOFF_MS = 500;
+
+async function postRelayQuote(body) {
+  let lastNetworkError = null;
+  for (let attempt = 0; attempt < RELAY_QUOTE_MAX_ATTEMPTS; attempt++) {
+    let res;
+    try {
+      res = await fetch(RELAY_QUOTE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      lastNetworkError = err;
+      if (attempt === RELAY_QUOTE_MAX_ATTEMPTS - 1) throw err;
+      await new Promise((r) => setTimeout(r, RELAY_QUOTE_BACKOFF_MS * 2 ** attempt));
+      continue;
+    }
+    if (res.ok || !RELAY_QUOTE_RETRYABLE_STATUS.has(res.status) || attempt === RELAY_QUOTE_MAX_ATTEMPTS - 1) {
+      return res;
+    }
+    await new Promise((r) => setTimeout(r, RELAY_QUOTE_BACKOFF_MS * 2 ** attempt));
+  }
+  // Unreachable in practice (the loop always returns or throws), but
+  // keeps this function's return type honest if RELAY_QUOTE_MAX_ATTEMPTS
+  // is ever set to 0.
+  throw lastNetworkError ?? new Error("Relay quote request failed without a response.");
+}
+
 /**
  * Fetches a Relay quote for moving `amountBaseUnits` of `fromAsset` on
  * `fromChainKey` into `toAsset` on `toChainKey`. Amount must already be in
@@ -112,11 +150,7 @@ export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAss
     tradeType: "EXACT_INPUT",
     appFees: [{ recipient: feeRecipientForChainId(resolvedDestinationChainId), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
   };
-  const res = await fetch(RELAY_QUOTE_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await postRelayQuote(body);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Relay quote failed (${res.status}): ${text || res.statusText}`);
