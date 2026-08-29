@@ -387,12 +387,18 @@ function ChainDropdown({ value, exclude, onChange, P, chainOrder = CHAIN_ORDER }
         <ChevronDown size={13} color={P.textMuted} />
       </button>
       {open && (
-        // max-h + overflow-y-auto: this list used to be a fixed 14 items
-        // (always fit unscrolled) — now optionally extended with
-        // whichever of walletChains.js's 25 wallet-only chains Relay's
-        // live data currently supports, which can run well past what
-        // fits on screen without this.
-        <div className="absolute left-0 z-30 mt-2 w-44 max-h-80 overflow-y-auto rounded-xl shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        // Real bug fix: this trigger button sits at the RIGHT side of its
+        // row (flex justify-between, label on the left) — anchoring the
+        // panel with left-0 positioned its left edge there too, pushing
+        // the whole w-44 panel off the right edge of the viewport instead
+        // of over the trigger. right-0 anchors the panel's own right edge
+        // to the trigger's right edge instead, so it opens leftward and
+        // stays on-screen. max-h + overflow-y-auto: this list used to be
+        // a fixed 14 items (always fit unscrolled) — now optionally
+        // extended with whichever of walletChains.js's 25 wallet-only
+        // chains Relay's live data currently supports, which can run well
+        // past what fits on screen without this.
+        <div className="absolute right-0 z-30 mt-2 w-44 max-h-80 overflow-y-auto rounded-xl shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           {chainOrder.filter((id) => id !== exclude).map((id) => {
             const cc = CHAINS[id];
             return (
@@ -2313,7 +2319,12 @@ export default function MangoBridge() {
         setLiveBridgeOrigins(origins);
         setLiveBridgeDestinations(destinations);
       })
-      .catch(() => {}); // fails closed — see comment above
+      // Fails closed to the base 14-chain list (see comment above) —
+      // but no longer silently: logged so a real failure (network,
+      // CORS, an API shape change) is visible in devtools instead of
+      // just looking like "the wallet-only chains never showed up,"
+      // with nothing to go on to tell those two cases apart.
+      .catch((err) => console.error("[relayChains] live chain-support fetch failed — falling back to the base chain list:", err));
     return () => { cancelled = true; };
   }, []);
   const bridgeFromChainOrder = useMemo(
@@ -2575,6 +2586,26 @@ export default function MangoBridge() {
   // between the two tabs — everything else below is shared.
   const isSwapTab = tab === "swap";
 
+  // Real bug fix: from/to default independently ("base"/"ethereum") and
+  // only get forced equal when the user actually touches the chain
+  // picker (handleSwapChainChange) — landing directly on the Swap tab
+  // (nav click, or a ?tab=swap deep link) before that happens showed two
+  // different chains on what's supposed to be a same-chain screen. Syncs
+  // "to" to "from" the moment the tab becomes Swap with them mismatched,
+  // resetting the asset pair the same way handleSwapChainChange itself
+  // does, rather than leaving a stale asset selection from whichever
+  // chain "to" used to point at.
+  useEffect(() => {
+    if (isSwapTab && to !== from) {
+      setTo(from);
+      const nativeIdx = defaultAssetIdxFor(from);
+      setFromAssetIdxRaw(nativeIdx);
+      const otherIdx = ASSETS.findIndex((a, i) => i !== nativeIdx);
+      setToAssetIdxRaw(otherIdx >= 0 ? otherIdx : nativeIdx);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSwapTab]);
+
   // Proactive route check: for anything going through Relay, fetch a real
   // quote in the background as soon as there's a valid amount, rather than
   // waiting until the user taps confirm to find out a route doesn't exist.
@@ -2809,18 +2840,6 @@ export default function MangoBridge() {
             <MangoWalletTab P={P} />
           ) : (
             <>
-              {/* Swap tab: one chain for both legs, picked here — Bridge
-                  keeps its own two independent chain pickers below,
-                  inside each card, same as before this tab existed. */}
-              {isSwapTab && (
-                <div className="rounded-2xl p-4 shadow-sm mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>Swap on</span>
-                    <ChainDropdown value={from} onChange={handleSwapChainChange} P={P} chainOrder={swapChainOrder} />
-                  </div>
-                </div>
-              )}
-
               {/* You send */}
               <div className="rounded-2xl p-4 shadow-sm" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                 <div className="flex items-center justify-between mb-2.5">
@@ -2829,11 +2848,18 @@ export default function MangoBridge() {
                     {usingLiveBalance && (liveBalanceLoading ? "Loading balance…" : `Balance: ${fmt(availableBalance, fromAsset.decimals)} ${fromAsset.symbol}`)}
                   </span>
                 </div>
-                {!isSwapTab && (
-                  <div className="flex items-center justify-between mb-3">
+                {/* Swap tab's chain picker lives right here, in the exact
+                    same slot Bridge's own "from" picker already uses —
+                    one chain for both legs (handleSwapChainChange sets
+                    from/to together), rather than a separate "Swap on"
+                    panel above the form. */}
+                <div className="flex items-center justify-between mb-3">
+                  {isSwapTab ? (
+                    <ChainDropdown value={from} onChange={handleSwapChainChange} P={P} chainOrder={swapChainOrder} />
+                  ) : (
                     <ChainDropdown value={from} exclude={to} onChange={handleFromChange} P={P} chainOrder={bridgeFromChainOrder} />
-                  </div>
-                )}
+                  )}
+                </div>
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${insufficient ? "#D92D20" : P.panelBorder}` }}>
                   <input
                     type="number"
@@ -2866,11 +2892,13 @@ export default function MangoBridge() {
                     {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}
                   </span>
                 </div>
-                {!isSwapTab && (
-                  <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3">
+                  {isSwapTab ? (
+                    <ChainDropdown value={to} onChange={handleSwapChainChange} P={P} chainOrder={swapChainOrder} />
+                  ) : (
                     <ChainDropdown value={to} exclude={from} onChange={handleToChange} P={P} chainOrder={bridgeToChainOrder} />
-                  </div>
-                )}
+                  )}
+                </div>
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
                   <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 ? P.textPrimary : P.textMuted }}>{amtNum > 0 ? fmt(received, 4) : "0"}</span>
                   <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} />
