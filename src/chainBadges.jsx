@@ -31,6 +31,17 @@ import {
   NetworkMonad, NetworkSonic, NetworkMantle, NetworkBlast, NetworkBerachain, NetworkWorld, NetworkSeiNetwork,
   NetworkCelo, NetworkFantom, NetworkMoonbeam, NetworkCronos, NetworkMetisAndromeda, NetworkMode,
   NetworkZora, NetworkMantaPacific, NetworkTaiko, NetworkPolygonZkevm, NetworkFraxtal,
+  // Real-usage EVM expansion batch — same verified-export-name standard
+  // as the block above, cross-checked directly against this installed
+  // package (Object.keys(...)), not guessed.
+  NetworkArbitrumNova, NetworkAurora, NetworkBeam, NetworkBitkubChain, NetworkBob, NetworkBoba,
+  NetworkBotanix, NetworkBouncebit, NetworkChiliz, NetworkCitrea, NetworkConflux, NetworkCronosZkevm,
+  NetworkEtherlink, NetworkFlare, NetworkFuse, NetworkGravity, NetworkGunz, NetworkHarmony,
+  NetworkHashkey, NetworkHemi, NetworkImmutable, NetworkIotex, NetworkKaia, NetworkKatana,
+  NetworkKava, NetworkKroma, NetworkLens, NetworkLightlink, NetworkLisk, NetworkLukso,
+  NetworkMint, NetworkRonin, NetworkRootstock, NetworkSoneium, NetworkSuperSeed, NetworkSwell,
+  NetworkTelos, NetworkTreasure, NetworkVana, NetworkWemix, NetworkXdcNetwork, NetworkZetaChain,
+  NetworkZilliqa, NetworkZircuit,
 } from "@web3icons/react";
 import { useState } from "react";
 
@@ -49,6 +60,15 @@ const CHAIN_COLOR = {
   berachain: "#814625", worldchain: "#191919", sei: "#9E1F19", celo: "#FCFF52", fantom: "#1969FF",
   moonbeam: "#53CBC9", cronos: "#002D74", metis: "#00DACC", mode: "#DFFE00", zora: "#000000",
   manta: "#8358FF", opbnb: "#F0B90B", taiko: "#E81899", polygonzkevm: "#8247E5", fraxtal: "#000000",
+  arbitrumNova: "#EF8220", aurora: "#95E141", beam: "#8054EE", bitkub: "#02D767", bob: "#F25D00",
+  boba: "#AEDB01", botanix: "#FCCD0C", bounceBit: "#F4BB44", chiliz: "#F60250", citrea: "#FF7F0E",
+  confluxESpace: "#00D2B4", cronoszkEVM: "#051221", etherlink: "#38FF9C", flare: "#E62058", fuse: "#B4F9B9",
+  gravity: "#FFAC43", gunz: "#C2FCCD", harmonyOne: "#00AEE9", hashkey: "#1B2126", hemi: "#FF6C15",
+  immutableZkEvm: "#17B5CB", iotex: "#00D4D5", kaia: "#BFF009", katana: "#F6FF0D", kava: "#FF564F",
+  kroma: "#7AE03A", lens: "#ABFE2C", lightlinkPhoenix: "#6978FF", lisk: "#0025FF", lukso: "#FE005B",
+  mint: "#30BF54", ronin: "#1273EA", rootstock: "#FF9103", soneium: "#000000",
+  superseed: "#B0FF3B", swellchain: "#3068EF", telos: "#42A0B9", treasure: "#DC2626", vana: "#00A2FF",
+  wemix: "#27EA84", xdc: "#B8B5B1", zetachain: "#005741", zilliqa: "#60AAAC", zircuit: "#169E00",
 };
 
 const SELF_CONTAINED_BADGE_CHAINS = [
@@ -57,6 +77,11 @@ const SELF_CONTAINED_BADGE_CHAINS = [
   "polygon", "optimism", "zksync", "linea", "scroll", "gnosis",
   "monad", "sonic", "mantle", "blast", "berachain", "worldchain", "sei",
   "celo", "fantom", "moonbeam", "cronos", "metis", "mode", "zora", "manta", "taiko", "polygonzkevm", "fraxtal",
+  "arbitrumNova", "aurora", "beam", "bitkub", "bob", "boba", "botanix", "bounceBit", "chiliz", "citrea",
+  "confluxESpace", "cronoszkEVM", "etherlink", "flare", "fuse", "gravity", "gunz", "harmonyOne", "hashkey", "hemi",
+  "immutableZkEvm", "iotex", "kaia", "katana", "kava", "kroma", "lens", "lightlinkPhoenix", "lisk", "lukso",
+  "mint", "ronin", "rootstock", "soneium", "superseed", "swellchain", "telos", "treasure", "vana",
+  "wemix", "xdc", "zetachain", "zilliqa", "zircuit",
 ];
 
 // opBNB icon gap — see the import comment above. A plain tinted circle in
@@ -71,6 +96,17 @@ const WALLET_ONLY_ICON = {
   celo: NetworkCelo, fantom: NetworkFantom, moonbeam: NetworkMoonbeam, cronos: NetworkCronos,
   metis: NetworkMetisAndromeda, mode: NetworkMode, zora: NetworkZora, manta: NetworkMantaPacific,
   taiko: NetworkTaiko, polygonzkevm: NetworkPolygonZkevm, fraxtal: NetworkFraxtal,
+  arbitrumNova: NetworkArbitrumNova, aurora: NetworkAurora, beam: NetworkBeam, bitkub: NetworkBitkubChain,
+  bob: NetworkBob, boba: NetworkBoba, botanix: NetworkBotanix, bounceBit: NetworkBouncebit,
+  chiliz: NetworkChiliz, citrea: NetworkCitrea, confluxESpace: NetworkConflux, cronoszkEVM: NetworkCronosZkevm,
+  etherlink: NetworkEtherlink, flare: NetworkFlare, fuse: NetworkFuse, gravity: NetworkGravity,
+  gunz: NetworkGunz, harmonyOne: NetworkHarmony, hashkey: NetworkHashkey, hemi: NetworkHemi,
+  immutableZkEvm: NetworkImmutable, iotex: NetworkIotex, kaia: NetworkKaia, katana: NetworkKatana,
+  kava: NetworkKava, kroma: NetworkKroma, lens: NetworkLens, lightlinkPhoenix: NetworkLightlink,
+  lisk: NetworkLisk, lukso: NetworkLukso, mint: NetworkMint, ronin: NetworkRonin,
+  rootstock: NetworkRootstock, soneium: NetworkSoneium, superseed: NetworkSuperSeed, swellchain: NetworkSwell,
+  telos: NetworkTelos, treasure: NetworkTreasure, vana: NetworkVana, wemix: NetworkWemix,
+  xdc: NetworkXdcNetwork, zetachain: NetworkZetaChain, zilliqa: NetworkZilliqa, zircuit: NetworkZircuit,
 };
 
 function SolanaLogoIcon({ size, fallback }) {

@@ -42,17 +42,42 @@ import {
   monad, sonic, mantle, blast, berachain, worldchain, sei,
   celo, fantom, moonbeam, cronos, metis, mode, zora, manta, opBNB, taiko, polygonZkEvm, fraxtal,
 } from "wagmi/chains";
+// Real-usage EVM expansion batch — id/nativeCurrency/name for every one
+// of these pulled directly from this installed wagmi/chains package (not
+// guessed), same verification standard as the batch above. Mirrors
+// mango-mobile's own src/wallet/chainRegistry.js/evmChainsExtra.js
+// additions chain-for-chain. Picked for real usage/relevance (top L1s/
+// L2s and notable app-chains by real ecosystem activity), not padding
+// to hit a number — same discipline this file's own header already
+// states for the batch above.
+import {
+  arbitrumNova, aurora, beam, bitkub, bob, boba, botanix, bounceBit, chiliz, citrea,
+  confluxESpace, cronoszkEVM, etherlink, flare, fuse, gravity, gunz, harmonyOne, hashkey, hemi,
+  immutableZkEvm, iotex, kaia, katana, kava, kroma, lens, lightlinkPhoenix, lisk, lukso,
+  mint, ronin, rootstock, soneium, superseed, swellchain, telos, treasure, vana,
+  wemix, xdc, zetachain, zilliqa, zircuit,
+} from "wagmi/chains";
 
 export const WALLET_ONLY_EVM_CHAINS = {
   polygon, optimism, zksync, linea, scroll, gnosis,
   monad, sonic, mantle, blast, berachain, worldchain, sei,
   celo, fantom, moonbeam, cronos, metis, mode, zora, manta, opbnb: opBNB, taiko, polygonzkevm: polygonZkEvm, fraxtal,
+  arbitrumNova, aurora, beam, bitkub, bob, boba, botanix, bounceBit, chiliz, citrea,
+  confluxESpace, cronoszkEVM, etherlink, flare, fuse, gravity, gunz, harmonyOne, hashkey, hemi,
+  immutableZkEvm, iotex, kaia, katana, kava, kroma, lens, lightlinkPhoenix, lisk, lukso,
+  mint, ronin, rootstock, soneium, superseed, swellchain, telos, treasure, vana,
+  wemix, xdc, zetachain, zilliqa, zircuit,
 };
 
 export const WALLET_ONLY_CHAIN_ORDER = [
   "polygon", "optimism", "zksync", "linea", "scroll", "gnosis",
   "monad", "sonic", "mantle", "blast", "berachain", "worldchain", "sei",
   "celo", "fantom", "moonbeam", "cronos", "metis", "mode", "zora", "manta", "opbnb", "taiko", "polygonzkevm", "fraxtal",
+  "arbitrumNova", "aurora", "beam", "bitkub", "bob", "boba", "botanix", "bounceBit", "chiliz", "citrea",
+  "confluxESpace", "cronoszkEVM", "etherlink", "flare", "fuse", "gravity", "gunz", "harmonyOne", "hashkey", "hemi",
+  "immutableZkEvm", "iotex", "kaia", "katana", "kava", "kroma", "lens", "lightlinkPhoenix", "lisk", "lukso",
+  "mint", "ronin", "rootstock", "soneium", "superseed", "swellchain", "telos", "treasure", "vana",
+  "wemix", "xdc", "zetachain", "zilliqa", "zircuit",
 ];
 
 export const WALLET_ONLY_CHAIN_LABEL = {
@@ -62,6 +87,15 @@ export const WALLET_ONLY_CHAIN_LABEL = {
   celo: "Celo", fantom: "Fantom", moonbeam: "Moonbeam", cronos: "Cronos", metis: "Metis",
   mode: "Mode", zora: "Zora", manta: "Manta Pacific", opbnb: "opBNB", taiko: "Taiko",
   polygonzkevm: "Polygon zkEVM", fraxtal: "Fraxtal",
+  arbitrumNova: "Arbitrum Nova", aurora: "Aurora", beam: "Beam", bitkub: "Bitkub Chain", bob: "BOB",
+  boba: "Boba Network", botanix: "Botanix", bounceBit: "BounceBit", chiliz: "Chiliz Chain", citrea: "Citrea",
+  confluxESpace: "Conflux eSpace", cronoszkEVM: "Cronos zkEVM", etherlink: "Etherlink", flare: "Flare", fuse: "Fuse",
+  gravity: "Gravity", gunz: "GUNZ", harmonyOne: "Harmony", hashkey: "HashKey Chain", hemi: "Hemi",
+  immutableZkEvm: "Immutable zkEVM", iotex: "IoTeX", kaia: "Kaia", katana: "Katana", kava: "Kava EVM",
+  kroma: "Kroma", lens: "Lens", lightlinkPhoenix: "LightLink", lisk: "Lisk", lukso: "LUKSO",
+  mint: "Mint", ronin: "Ronin", rootstock: "Rootstock", soneium: "Soneium",
+  superseed: "Superseed", swellchain: "Swellchain", telos: "Telos", treasure: "Treasure", vana: "Vana",
+  wemix: "WEMIX", xdc: "XDC Network", zetachain: "ZetaChain", zilliqa: "Zilliqa", zircuit: "Zircuit",
 };
 
 export const WALLET_ONLY_NATIVE_SYMBOL = {
@@ -71,6 +105,15 @@ export const WALLET_ONLY_NATIVE_SYMBOL = {
   celo: "CELO", fantom: "FTM", moonbeam: "GLMR", cronos: "CRO", metis: "METIS",
   mode: "ETH", zora: "ETH", manta: "ETH", opbnb: "BNB", taiko: "ETH",
   polygonzkevm: "ETH", fraxtal: "FRAX",
+  arbitrumNova: "ETH", aurora: "ETH", beam: "BEAM", bitkub: "KUB", bob: "ETH",
+  boba: "ETH", botanix: "BTC", bounceBit: "BB", chiliz: "CHZ", citrea: "cBTC",
+  confluxESpace: "CFX", cronoszkEVM: "zkCRO", etherlink: "XTZ", flare: "FLR", fuse: "FUSE",
+  gravity: "G", gunz: "GUN", harmonyOne: "ONE", hashkey: "HSK", hemi: "ETH",
+  immutableZkEvm: "IMX", iotex: "IOTX", kaia: "KAIA", katana: "ETH", kava: "KAVA",
+  kroma: "ETH", lens: "GHO", lightlinkPhoenix: "ETH", lisk: "ETH", lukso: "LYX",
+  mint: "ETH", ronin: "RON", rootstock: "RBTC", soneium: "ETH",
+  superseed: "ETH", swellchain: "ETH", telos: "TLOS", treasure: "MAGIC", vana: "VANA",
+  wemix: "WEMIX", xdc: "XDC", zetachain: "ZETA", zilliqa: "ZIL", zircuit: "ETH",
 };
 
 // A second, real RPC endpoint per chain, keyed by chain id (matching
@@ -92,6 +135,15 @@ export const WALLET_ONLY_RPC_FALLBACK = {
   [blast.id]: "https://rpc.ankr.com/blast",
   [berachain.id]: "https://berachain-rpc.publicnode.com",
   [worldchain.id]: "https://worldchain-mainnet.gateway.tenderly.co",
+  // Real-usage EVM expansion batch's ONE required override: Harmony's
+  // wagmi/chains default (rpcUrls.default.http[0]) is a Thirdweb-operated
+  // URL, disallowed unreplaced by this project's own "no Thirdweb
+  // defaults" policy — api.harmony.one is Harmony's own real,
+  // long-documented public endpoint (their own docs, chainlist.org), not
+  // guessed. Every other chain in that batch keeps wagmi's own single
+  // bundled default, same accepted limitation Monad/Sei already carry
+  // above.
+  [harmonyOne.id]: "https://api.harmony.one",
 };
 
 // The @web3icons/react "Network*" icon for each chain is imported and
