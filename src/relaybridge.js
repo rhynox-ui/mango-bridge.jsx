@@ -65,9 +65,21 @@ const RELAY_STATUS_URL = "https://api.relay.link/intents/status/v3";
  * `fromChainKey` into `toAsset` on `toChainKey`. Amount must already be in
  * base units (wei/smallest denomination) as a string, matching the asset's
  * actual decimals — this function does not do decimal conversion itself.
+ *
+ * originChainId/originCurrency/destinationChainId/destinationCurrency are
+ * optional and additive — same pattern mango-mobile's own relayBridge.js
+ * already uses: every existing call site that only passes
+ * fromChainKey/toChainKey/fromAsset/toAsset resolves through
+ * MAINNET_CHAIN_IDS/currencyAddress() exactly as before. They exist so a
+ * chain chainData.js doesn't have verified data for (walletChains.js's
+ * broader wallet-only chain list, wired into App.jsx's Bridge tab) can
+ * still get a real quote: App.jsx resolves the chain id from
+ * wagmi/chains' own chain objects and passes the universal native
+ * placeholder address directly, rather than asking currencyAddress() to
+ * resolve a chainKey it has no verified data for.
  */
-export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress }) {
-  const destinationChainId = MAINNET_CHAIN_IDS[toChainKey];
+export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress, originChainId, originCurrency, destinationChainId, destinationCurrency }) {
+  const resolvedDestinationChainId = destinationChainId ?? MAINNET_CHAIN_IDS[toChainKey];
   const body = {
     user: userAddress,
     // Real fix for a real gap: previously this always used userAddress as
@@ -80,13 +92,13 @@ export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAss
     // EVM-to-Solana). Falls back to userAddress when no override is
     // given, preserving the original behavior exactly for the common case.
     recipient: recipientAddress || userAddress,
-    originChainId: MAINNET_CHAIN_IDS[fromChainKey],
-    destinationChainId,
-    originCurrency: currencyAddress(fromChainKey, fromAsset),
-    destinationCurrency: currencyAddress(toChainKey, toAsset),
+    originChainId: originChainId ?? MAINNET_CHAIN_IDS[fromChainKey],
+    destinationChainId: resolvedDestinationChainId,
+    originCurrency: originCurrency ?? currencyAddress(fromChainKey, fromAsset),
+    destinationCurrency: destinationCurrency ?? currencyAddress(toChainKey, toAsset),
     amount: amountBaseUnits,
     tradeType: "EXACT_INPUT",
-    appFees: [{ recipient: feeRecipientForChainId(destinationChainId), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
+    appFees: [{ recipient: feeRecipientForChainId(resolvedDestinationChainId), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
   };
   const res = await fetch(RELAY_QUOTE_URL, {
     method: "POST",

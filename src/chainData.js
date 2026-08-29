@@ -118,6 +118,25 @@ export const ASSET_ONCHAIN_DECIMALS = {
   HYPE: 18,
   XPL: 18,
   OKB: 18,
+  // Native assets for App.jsx's wallet-only Bridge chains (walletChains.js)
+  // — 18 decimals for every one is an EVM protocol invariant (msg.value is
+  // always denominated in wei on every EVM-compatible chain without
+  // exception), not a per-chain fact needing independent verification the
+  // way an ERC-20's decimals do. Same reasoning evmChainsExtra.js's own
+  // header already documents on mango-mobile for the identical case.
+  POL: 18,
+  XDAI: 18,
+  MON: 18,
+  S: 18,
+  MNT: 18,
+  BERA: 18,
+  SEI: 18,
+  CELO: 18,
+  FTM: 18,
+  GLMR: 18,
+  CRO: 18,
+  METIS: 18,
+  FRAX: 18,
 };
 
 // Real, verified exception to the global-by-symbol map above: BNB

@@ -10,6 +10,7 @@ import {
 } from "wagmi/chains";
 import { defineChain } from "viem";
 import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
+import { WALLET_ONLY_EVM_CHAINS, WALLET_ONLY_RPC_FALLBACK } from "./wallet/walletChains.js";
 
 // ---------------------------------------------------------------------------
 // Real fallback RPC endpoints, per chain — this app previously had NO
@@ -68,6 +69,14 @@ export const RPC_FALLBACKS = {
   // long-documented public endpoints, but worth a real spot-check before
   // depending on them for anything high-value.
   250: ["https://rpcapi.fantom.network", "https://fantom-rpc.publicnode.com"],
+  // Every other wallet-only chain's own second, real endpoint —
+  // walletChains.js's own already-verified WALLET_ONLY_RPC_FALLBACK map
+  // (ethereum-lists/chains, cross-checked against that file's "no
+  // Thirdweb" policy). Spread in rather than duplicated so there's one
+  // place each of these URLs is defined; a chain with no second
+  // documented endpoint there (Monad, Sei) just runs on its wagmi/chains
+  // default only, same as any chain not in this list at all.
+  ...WALLET_ONLY_RPC_FALLBACK,
 };
 
 function transportFor(chainId) {
@@ -168,10 +177,18 @@ export const CHAIN_KEY_TO_WAGMI_MAINNET = {
   xlayer: xLayer,
 };
 
+// Wallet-only chains (walletChains.js — the same 25 chains Mango Wallet's
+// own dashboard already supports) registered here too, so wagmi/Reown
+// AppKit actually knows about them: useBalance and switchChain both need
+// a chain to be present in this Config to work at all, and the Bridge tab
+// now offers these as bridge routes (App.jsx's own live-Relay-support
+// check gates whether each one is actually OFFERED — this list only
+// controls whether the underlying wallet connection CAN reach it).
 export const ALL_CHAINS = [
   sepolia, baseSepolia, bscTestnet, robinhoodTestnet,
   mainnet, base, bsc, robinhoodMainnet, stableMainnet,
   arbitrum, avalanche, abstract, hyperEvm, ink, plasma, unichain, xLayer,
+  ...Object.values(WALLET_ONLY_EVM_CHAINS),
 ];
 
 // Real Reown AppKit wiring, layered on top of this exact chain list and
