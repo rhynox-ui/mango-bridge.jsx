@@ -16,6 +16,13 @@ import {
   // separate, unverified Token* import for each.
   NetworkPolygon, NetworkGnosis, NetworkMonad, NetworkSonic, NetworkMantle, NetworkBerachain,
   NetworkSeiNetwork, NetworkCelo, NetworkFantom, NetworkMoonbeam, NetworkCronos, NetworkMetisAndromeda, NetworkFraxtal,
+  // Native-asset icons for the real-usage EVM expansion batch — same
+  // reuse-the-chain-badge-icon reasoning as the block above.
+  NetworkBeam, NetworkBitkubChain, NetworkBotanix, NetworkBouncebit, NetworkChiliz, NetworkCitrea,
+  NetworkConflux, NetworkCronosZkevm, NetworkEtherlink, NetworkFlare, NetworkFuse, NetworkGravity,
+  NetworkGunz, NetworkHarmony, NetworkHashkey, NetworkImmutable, NetworkIotex, NetworkKaia,
+  NetworkKava, NetworkLens, NetworkLukso, NetworkRonin, NetworkRootstock, NetworkTelos,
+  NetworkTreasure, NetworkVana, NetworkWemix, NetworkXdcNetwork, NetworkZetaChain, NetworkZilliqa,
 } from "@web3icons/react";
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ChainBadge } from "./chainBadges.jsx";
@@ -291,6 +298,43 @@ const ASSETS = [
   { symbol: "CRO", name: "Cronos", decimals: 4, price: 0.1, color: "#002D74" },
   { symbol: "METIS", name: "Metis", decimals: 4, price: 30, color: "#00DACC" },
   { symbol: "FRAX", name: "Fraxtal", decimals: 4, price: 1, color: "#000000" },
+  // Native assets for the real-usage EVM expansion batch (see
+  // walletChains.js's own header) — same "ETH already covers chains
+  // that share it" logic as above; only genuinely new native symbols
+  // get their own entry here. price is the same rough, cosmetic-only
+  // UI-preview estimate every other entry above already uses, never
+  // fund-critical — never used to compute an actual transfer amount,
+  // which always comes from a real Relay quote.
+  { symbol: "BEAM", name: "Beam", decimals: 4, price: 0.01, color: "#8054EE" },
+  { symbol: "KUB", name: "Bitkub Coin", decimals: 4, price: 0.5, color: "#02D767" },
+  { symbol: "BTC", name: "Bitcoin (Botanix)", decimals: 6, price: 65000, color: "#FCCD0C" },
+  { symbol: "BB", name: "BounceBit", decimals: 4, price: 0.1, color: "#F4BB44" },
+  { symbol: "CHZ", name: "Chiliz", decimals: 4, price: 0.05, color: "#F60250" },
+  { symbol: "cBTC", name: "Bitcoin (Citrea)", decimals: 6, price: 65000, color: "#FF7F0E" },
+  { symbol: "CFX", name: "Conflux", decimals: 4, price: 0.15, color: "#00D2B4" },
+  { symbol: "zkCRO", name: "Cronos zkEVM", decimals: 4, price: 5, color: "#051221" },
+  { symbol: "XTZ", name: "Tezos (Etherlink)", decimals: 4, price: 0.7, color: "#38FF9C" },
+  { symbol: "FLR", name: "Flare", decimals: 4, price: 0.02, color: "#E62058" },
+  { symbol: "FUSE", name: "Fuse", decimals: 4, price: 0.02, color: "#B4F9B9" },
+  { symbol: "G", name: "Gravity", decimals: 4, price: 0.05, color: "#FFAC43" },
+  { symbol: "GUN", name: "GUNZ", decimals: 4, price: 0.02, color: "#C2FCCD" },
+  { symbol: "ONE", name: "Harmony", decimals: 4, price: 0.01, color: "#00AEE9" },
+  { symbol: "HSK", name: "HashKey", decimals: 4, price: 0.1, color: "#1B2126" },
+  { symbol: "IMX", name: "Immutable", decimals: 4, price: 0.6, color: "#17B5CB" },
+  { symbol: "IOTX", name: "IoTeX", decimals: 4, price: 0.03, color: "#00D4D5" },
+  { symbol: "KAIA", name: "Kaia", decimals: 4, price: 0.15, color: "#BFF009" },
+  { symbol: "KAVA", name: "Kava", decimals: 4, price: 0.4, color: "#FF564F" },
+  { symbol: "GHO", name: "GHO (Lens)", decimals: 2, price: 1, color: "#ABFE2C" },
+  { symbol: "LYX", name: "LUKSO", decimals: 4, price: 10, color: "#FE005B" },
+  { symbol: "RON", name: "Ronin", decimals: 4, price: 0.5, color: "#1273EA" },
+  { symbol: "RBTC", name: "Rootstock BTC", decimals: 6, price: 65000, color: "#FF9103" },
+  { symbol: "TLOS", name: "Telos", decimals: 4, price: 0.05, color: "#42A0B9" },
+  { symbol: "MAGIC", name: "Treasure", decimals: 4, price: 0.3, color: "#DC2626" },
+  { symbol: "VANA", name: "Vana", decimals: 4, price: 4, color: "#00A2FF" },
+  { symbol: "WEMIX", name: "WEMIX", decimals: 4, price: 0.8, color: "#27EA84" },
+  { symbol: "XDC", name: "XDC Network", decimals: 4, price: 0.05, color: "#B8B5B1" },
+  { symbol: "ZETA", name: "ZetaChain", decimals: 4, price: 0.3, color: "#005741" },
+  { symbol: "ZIL", name: "Zilliqa", decimals: 4, price: 0.01, color: "#60AAAC" },
 ];
 
 // These symbols exist in ASSETS above purely so each chain that doesn't
@@ -306,6 +350,14 @@ const CHAIN_FOR_EXCLUSIVE_NATIVE_SYMBOL = {
   SOL: "solana", AVAX: "avalanche", HYPE: "hyperevm", XPL: "plasma", OKB: "xlayer",
   POL: "polygon", XDAI: "gnosis", MON: "monad", S: "sonic", MNT: "mantle", BERA: "berachain",
   SEI: "sei", CELO: "celo", FTM: "fantom", GLMR: "moonbeam", CRO: "cronos", METIS: "metis", FRAX: "fraxtal",
+  // Real-usage EVM expansion batch — same reasoning as above, one entry
+  // per genuinely new native symbol added to ASSETS for that batch.
+  BEAM: "beam", KUB: "bitkub", BTC: "botanix", BB: "bounceBit", CHZ: "chiliz",
+  cBTC: "citrea", CFX: "confluxESpace", zkCRO: "cronoszkEVM", XTZ: "etherlink", FLR: "flare",
+  FUSE: "fuse", G: "gravity", GUN: "gunz", ONE: "harmonyOne", HSK: "hashkey",
+  IMX: "immutableZkEvm", IOTX: "iotex", KAIA: "kaia", KAVA: "kava", GHO: "lens",
+  LYX: "lukso", RON: "ronin", RBTC: "rootstock", TLOS: "telos", MAGIC: "treasure",
+  VANA: "vana", WEMIX: "wemix", XDC: "xdc", ZETA: "zetachain", ZIL: "zilliqa",
 };
 
 const DEFAULT_BALANCES = {
@@ -737,6 +789,12 @@ function AssetIcon({ symbol, size = 18 }) {
     POL: NetworkPolygon, XDAI: NetworkGnosis, MON: NetworkMonad, S: NetworkSonic, MNT: NetworkMantle,
     BERA: NetworkBerachain, SEI: NetworkSeiNetwork, CELO: NetworkCelo, FTM: NetworkFantom,
     GLMR: NetworkMoonbeam, CRO: NetworkCronos, METIS: NetworkMetisAndromeda, FRAX: NetworkFraxtal,
+    BEAM: NetworkBeam, KUB: NetworkBitkubChain, BTC: NetworkBotanix, BB: NetworkBouncebit, CHZ: NetworkChiliz,
+    cBTC: NetworkCitrea, CFX: NetworkConflux, zkCRO: NetworkCronosZkevm, XTZ: NetworkEtherlink, FLR: NetworkFlare,
+    FUSE: NetworkFuse, G: NetworkGravity, GUN: NetworkGunz, ONE: NetworkHarmony, HSK: NetworkHashkey,
+    IMX: NetworkImmutable, IOTX: NetworkIotex, KAIA: NetworkKaia, KAVA: NetworkKava, GHO: NetworkLens,
+    LYX: NetworkLukso, RON: NetworkRonin, RBTC: NetworkRootstock, TLOS: NetworkTelos, MAGIC: NetworkTreasure,
+    VANA: NetworkVana, WEMIX: NetworkWemix, XDC: NetworkXdcNetwork, ZETA: NetworkZetaChain, ZIL: NetworkZilliqa,
   };
   if (WALLET_ONLY_NATIVE_ICONS[symbol]) {
     const Icon = WALLET_ONLY_NATIVE_ICONS[symbol];
