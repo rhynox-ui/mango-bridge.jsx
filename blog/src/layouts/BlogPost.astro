@@ -1,0 +1,125 @@
+---
+// src/layouts/BlogPost.astro
+//
+// Shared chrome for every post — same brand tokens as the main site's
+// own src/theme.js (mango-bridge.jsx): LIME/LIME_DEEP accent, the
+// exact light-palette hex values, so this reads as the same product
+// rather than a visually disconnected blog bolted on.
+// A markdown page's `layout:` frontmatter field passes props nested
+// under `frontmatter` (plus a separate top-level `url`), not spread
+// flat onto Astro.props — confirmed against this project's own build
+// output (an earlier flat-props version rendered an empty <h1> and
+// "Invalid Date", not a caught type error, so this was worth actually
+// checking rather than assuming).
+export interface Props {
+  frontmatter: {
+    title: string;
+    description: string;
+    date: string;
+  };
+}
+const { title, description, date } = Astro.props.frontmatter;
+const formattedDate = new Date(date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} — Mango Protocol Blog</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="alternate" type="application/rss+xml" title="Mango Protocol Blog" href="/rss.xml" />
+    <style>
+      :root {
+        --bg: #ffffff;
+        --panel: #f6f6f7;
+        --panel-border: #e6e6e8;
+        --text-primary: #0a0a0b;
+        --text-secondary: #6b6b70;
+        --text-muted: #a6a6ac;
+        --lime: #ff9a2e;
+        --lime-deep: #e8801a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text-primary);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      header {
+        border-bottom: 1px solid var(--panel-border);
+        padding: 20px 24px;
+      }
+      header a {
+        color: var(--text-primary);
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 15px;
+      }
+      main {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 48px 24px 80px;
+      }
+      .post-date {
+        color: var(--text-muted);
+        font-size: 12.5px;
+        margin-bottom: 8px;
+      }
+      h1 {
+        font-size: 30px;
+        line-height: 1.2;
+        margin: 0 0 24px;
+      }
+      article :global(p) {
+        color: var(--text-secondary);
+        line-height: 1.7;
+        font-size: 15.5px;
+      }
+      article :global(a) {
+        color: var(--lime-deep);
+      }
+      article :global(h2) {
+        font-size: 20px;
+        margin-top: 32px;
+      }
+      article :global(code) {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: 13.5px;
+      }
+      footer {
+        border-top: 1px solid var(--panel-border);
+        padding: 24px;
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      footer a {
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a href="/">🥭 Mango Protocol Blog</a>
+    </header>
+    <main>
+      <article>
+        <p class="post-date">{formattedDate}</p>
+        <h1>{title}</h1>
+        <slot />
+      </article>
+    </main>
+    <footer>
+      <a href="https://mangoprotocol.site">mangoprotocol.site</a> · <a href="/rss.xml">RSS</a>
+    </footer>
+  </body>
+</html>
