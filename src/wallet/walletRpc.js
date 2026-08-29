@@ -303,3 +303,31 @@ export async function fetchSplMintDecimals(mintAddress) {
   }
   throw lastError;
 }
+
+/**
+ * Real symbol/name lookup for a verified SPL mint — DexScreener's public
+ * tokens API, the same source customTokenLogoUrl() above already trusts
+ * for this project's custom-token icons. A mint carries no on-chain
+ * symbol itself (fetchSplMintDecimals's own comment on the unparsed
+ * Metaplex metadata account still applies), so this is the only real,
+ * non-guessed source available without asking the user to type one in —
+ * this used to be a manual "type it yourself" text field, which put the
+ * burden of naming a token correctly on the user instead of the app.
+ * A mint DexScreener has never indexed a pair for (brand new, zero
+ * liquidity) genuinely has nothing to report — this throws rather than
+ * fabricating a placeholder symbol, same "not safe to guess" rule
+ * currencyAddress() already enforces elsewhere in this codebase.
+ */
+export async function fetchSplTokenSymbol(mintAddress) {
+  const key = `solana-symbol:${mintAddress}`;
+  if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
+  const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`);
+  if (!res.ok) throw new Error("Couldn't look up this token right now — try again in a moment.");
+  const data = await res.json().catch(() => null);
+  const pair = (data?.pairs || []).find((p) => p.baseToken?.address === mintAddress || p.quoteToken?.address === mintAddress);
+  const matched = pair?.baseToken?.address === mintAddress ? pair.baseToken : pair?.quoteToken?.address === mintAddress ? pair.quoteToken : null;
+  if (!matched?.symbol) throw new Error("This token has no indexed trading pairs yet, so there's no symbol to fetch.");
+  const result = { symbol: matched.symbol.toUpperCase(), name: matched.name || matched.symbol };
+  tokenMetadataCache.set(key, result);
+  return result;
+}
