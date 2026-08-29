@@ -161,14 +161,12 @@ export async function fetchWalletTokenBalance(chainKey, tokenAddress, decimals, 
 
 /**
  * SOL balance via a reversed-priority endpoint list vs. solanaRpc.js's
- * withSolanaFallback. Honest limit: with no VITE_ALCHEMY_API_KEY set,
- * solanaRpcUrls() only has ONE verified public endpoint (SolanaTracker) —
- * there's no second free, verified Solana RPC in this codebase to genuinely
- * separate from, so in that case this still lands on the same endpoint as
- * every other Solana call. Real separation only kicks in once an Alchemy
- * key is configured (two real endpoints to reorder between); rather than
- * fabricate an unverified second public URL to force separation, this
- * stays honest about that gap.
+ * withSolanaFallback — PublicNode first here (this codebase's own
+ * established, trusted, keyless RPC provider), SolanaTracker as the
+ * fallback, Alchemy last if a key happens to be configured. Genuine
+ * separation now even without an Alchemy key, unlike before
+ * solanaRpcUrls() had a real second entry (see that file's own
+ * comment).
  */
 export async function fetchWalletSolanaBalance(address, { forceFresh = false } = {}) {
   const key = `solana:${address}`;
