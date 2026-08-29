@@ -26,6 +26,15 @@
 // ?format=csv returns address,points,referralCount,referredBy,createdAt
 // as a downloadable CSV, ready to paste into a spreadsheet for a reward
 // run; the default JSON response is the same data machine-readable.
+//
+// IMPORTANT for callers: use https://www.mangoprotocol.site/... (not
+// the bare mangoprotocol.site apex) if calling with curl -L or any
+// client that follows redirects by stripping Authorization on a
+// cross-host hop — the apex domain redirects to www, and that redirect
+// silently drops the header, producing an Unauthorized that has
+// nothing to do with the secret's actual value. Confirmed live: the
+// exact same secret worked immediately once called against www
+// directly.
 
 import { timingSafeEqual } from "node:crypto";
 import { listAllReferralRecords } from "../../referralStore.js";
@@ -58,21 +67,7 @@ export default async function handler(request, response) {
   const secret = process.env.ADMIN_API_SECRET;
   const provided = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!secret || !provided || !safeEqual(provided, secret)) {
-    // TEMPORARY debug fields — never the actual values, only length and
-    // a 2-char prefix of each side, just enough to spot a mismatch
-    // (trailing whitespace, wrong env var, stale deployment) without
-    // exposing the real secret. Remove once the live mismatch this is
-    // diagnosing is resolved.
-    return response.status(401).json({
-      error: "Unauthorized.",
-      debug: {
-        secretConfigured: !!secret,
-        secretLength: secret ? secret.length : 0,
-        secretPrefix: secret ? secret.slice(0, 2) : null,
-        providedLength: provided.length,
-        providedPrefix: provided.slice(0, 2) || null,
-      },
-    });
+    return response.status(401).json({ error: "Unauthorized." });
   }
 
   try {
