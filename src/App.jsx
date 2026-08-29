@@ -29,7 +29,7 @@ import { ChainBadge } from "./chainBadges.jsx";
 import { MangoLogo } from "./MangoLogo.jsx";
 import { parseUnits, formatUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
-import { fetchErc20TokenMetadata } from "./wallet/walletRpc.js";
+import { fetchErc20TokenMetadata, fetchSplMintDecimals } from "./wallet/walletRpc.js";
 import { loadCustomTokens, addCustomToken } from "./wallet/customTokens.js";
 import { PublicKey } from "@solana/web3.js";
 import { useSolanaWallet } from "./SolanaWalletContext.jsx";
@@ -794,24 +794,23 @@ function SolanaLogoIcon({ size, fallback }) {
 // dependency to go stale or get blocked again.
 
 // DexScreener's own token-image CDN, keyed by chain slug + checksummed
-// contract address — no API key, works for any token DexScreener has
-// ever indexed a pair for, which in practice covers the vast majority
-// of real tokens (including small/meme ones), unlike a curated icon
-// package that could only ever ship well-known symbols. Chain slugs
-// below are DexScreener's own naming for the chains this app's custom-
-// token search actually supports (AssetDropdown's supportsCustomTokens
-// is EVM-only, and only for chains isAddress()/fetchErc20TokenMetadata
-// can resolve) — the well-established ones (base/ethereum/bnb/
-// arbitrum/optimism/avalanche/polygon and the rest of chainData.js's
-// original hand-verified set) are confirmed against DexScreener's own
-// site; the newer/less common chains added later (walletChains.js's
-// broader wallet-only set) are a best-effort guess at their slug, not
-// independently confirmed the way every other icon in this file is —
-// this sandbox has no network access to verify them. Either way a
-// wrong or unlisted slug just 404s the image, which CustomTokenIcon
-// below already falls back from safely — never a broken/blank icon.
+// contract address (or Solana mint) — no API key, works for any token
+// DexScreener has ever indexed a pair for, which in practice covers the
+// vast majority of real tokens (including small/meme ones), unlike a
+// curated icon package that could only ever ship well-known symbols.
+// Chain slugs below are DexScreener's own naming — the well-established
+// ones (base/ethereum/bnb/arbitrum/optimism/avalanche/polygon/solana and
+// the rest of chainData.js's original hand-verified set) are confirmed
+// against DexScreener's own site; the newer/less common chains added
+// later (walletChains.js's broader wallet-only set) are a best-effort
+// guess at their slug, not independently confirmed the way every other
+// icon in this file is — DexScreener itself is blocked from this
+// sandbox, unlike GitHub, so there's no way to verify them here. Either
+// way a wrong or unlisted slug just 404s the image, which
+// CustomTokenIcon below already falls back from safely — never a
+// broken/blank icon.
 const CUSTOM_TOKEN_CHAIN_SLUG = {
-  ethereum: "ethereum", base: "base", bnb: "bsc", arbitrum: "arbitrum",
+  ethereum: "ethereum", base: "base", bnb: "bsc", arbitrum: "arbitrum", solana: "solana",
   avalanche: "avalanche", abstract: "abstract", ink: "ink", unichain: "unichain",
   polygon: "polygon", optimism: "optimism", zksync: "zksync", linea: "linea",
   scroll: "scroll", gnosis: "gnosischain", blast: "blast", mantle: "mantle",
@@ -821,7 +820,12 @@ const CUSTOM_TOKEN_CHAIN_SLUG = {
 function customTokenLogoUrl(chainId, address) {
   const slug = CUSTOM_TOKEN_CHAIN_SLUG[chainId];
   if (!slug || !address) return null;
-  return `https://dd.dexscreener.com/ds-data/tokens/${slug}/${address.toLowerCase()}.png`;
+  // EVM addresses are case-insensitive (lowercasing is the safe,
+  // conventional normalization) — a Solana base58 mint is genuinely
+  // case-sensitive, so lowercasing it here would silently corrupt it
+  // into a different, invalid address and the image would never match.
+  const normalized = chainId === "solana" ? address : address.toLowerCase();
+  return `https://dd.dexscreener.com/ds-data/tokens/${slug}/${normalized}.png`;
 }
 function CustomTokenIcon({ size, chainId, address, fallback }) {
   const [failed, setFailed] = useState(false);
@@ -992,14 +996,28 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   const [customTokensForChain, setCustomTokensForChain] = useState([]);
   const [fetching, setFetching] = useState(false);
   const [fetchedToken, setFetchedToken] = useState(null);
+  // Real gap fix: an SPL mint carries no on-chain symbol (that lives in
+  // an optional, separate Metaplex metadata account this app doesn't
+  // parse — same honest limitation mango-mobile's own DexScreen.tsx
+  // documents and asks the user to work around the same way). splDecimals
+  // !== null just means "this is a real mint" — the user still has to
+  // type a symbol before it can be added, unlike the EVM path above
+  // where fetchErc20TokenMetadata reads the real symbol off the contract.
+  const [splDecimals, setSplDecimals] = useState(null);
+  const [splSymbolInput, setSplSymbolInput] = useState("");
   const [fetchError, setFetchError] = useState("");
   const ref = useRef(null);
   const asset = customToken || ASSETS[assetIdx];
+  const isSolanaChain = chainId === "solana";
   // Bridge doesn't get this: Relay only ever routes currencies it has
   // verified itself, so a pasted, unverified token would just fail to
   // quote — Swap (same-chain, no cross-chain route to verify) is where
-  // pasting an arbitrary contract address actually works.
-  const supportsCustomTokens = allowCustomToken && chainId !== "solana";
+  // pasting an arbitrary contract address actually works. Solana IS
+  // included now — same mint-search flow mango-mobile's DexScreen.tsx
+  // already has, just ported over (it was excluded here purely because
+  // this file's isAddress() check only recognizes EVM addresses, not
+  // because Solana genuinely can't support it).
+  const supportsCustomTokens = allowCustomToken;
 
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
@@ -1011,9 +1029,16 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   // mobile's own DexScreen.tsx uses for its equivalent list, so a token
   // added from elsewhere in the app (or a moment ago, on the other side
   // of this same swap) always shows up here too.
+  // customTokens.js stores a Solana entry's identifier under .mint, not
+  // .address (tokenKey()'s own chain-aware convention) — normalized to
+  // .address here so every consumer below (icon lookup, balance lookup,
+  // onCustomTokenSelect) can stay chain-agnostic instead of branching
+  // on isSolanaChain at every single use site.
   useEffect(() => {
-    if (open && supportsCustomTokens) setCustomTokensForChain(loadCustomTokens(chainId));
-  }, [open, chainId, supportsCustomTokens]);
+    if (!open || !supportsCustomTokens) return;
+    const loaded = loadCustomTokens(chainId);
+    setCustomTokensForChain(isSolanaChain ? loaded.map((t) => ({ ...t, address: t.mint })) : loaded);
+  }, [open, chainId, supportsCustomTokens, isSolanaChain]);
 
   // Real fix for the dropdown getting hidden behind the fixed bottom nav:
   // measure actual available space below the trigger every time it opens,
@@ -1034,35 +1059,50 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     } else {
       setQuery("");
       setFetchedToken(null);
+      setSplDecimals(null);
+      setSplSymbolInput("");
       setFetchError("");
     }
     setOpen((o) => !o);
   }
 
   const trimmedQuery = query.trim();
-  const looksLikeAddress = supportsCustomTokens && isAddress(trimmedQuery);
+  const looksLikeAddress = supportsCustomTokens && isValidDestinationAddress(trimmedQuery, isSolanaChain);
 
   useEffect(() => {
     setFetchedToken(null);
+    setSplDecimals(null);
+    setSplSymbolInput("");
     setFetchError("");
     if (!open || !looksLikeAddress) return;
     // Already a known built-in or already-added custom token at this
-    // exact address — nothing new to verify or offer adding again.
+    // exact address/mint — nothing new to verify or offer adding again.
+    // A Solana mint is case-sensitive base58, unlike an EVM address, so
+    // this only lowercases for the comparison on EVM chains — matches
+    // customTokenLogoUrl's own reasoning above.
+    const sameAddress = (a, b) => (isSolanaChain ? a === b : a.toLowerCase() === b.toLowerCase());
     const already =
-      customTokensForChain.some((t) => t.address.toLowerCase() === trimmedQuery.toLowerCase()) ||
+      customTokensForChain.some((t) => sameAddress(t.address, trimmedQuery)) ||
       ASSETS.some((a) => {
-        try { return currencyAddress(chainId, a.symbol).toLowerCase() === trimmedQuery.toLowerCase(); } catch { return false; }
+        try { return sameAddress(currencyAddress(chainId, a.symbol), trimmedQuery); } catch { return false; }
       });
     if (already) return;
     let cancelled = false;
     setFetching(true);
-    fetchErc20TokenMetadata(chainId, trimmedQuery)
-      .then(({ symbol, decimals }) => { if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery }); })
-      .catch((err) => { if (!cancelled) setFetchError(err?.message || "Couldn't verify this token — check the address and network."); })
-      .finally(() => { if (!cancelled) setFetching(false); });
+    if (isSolanaChain) {
+      fetchSplMintDecimals(trimmedQuery)
+        .then((decimals) => { if (!cancelled) setSplDecimals(decimals); })
+        .catch((err) => { if (!cancelled) setFetchError(err?.message || "Couldn't verify this mint — check the address and network."); })
+        .finally(() => { if (!cancelled) setFetching(false); });
+    } else {
+      fetchErc20TokenMetadata(chainId, trimmedQuery)
+        .then(({ symbol, decimals }) => { if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery }); })
+        .catch((err) => { if (!cancelled) setFetchError(err?.message || "Couldn't verify this token — check the address and network."); })
+        .finally(() => { if (!cancelled) setFetching(false); });
+    }
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, chainId, trimmedQuery, looksLikeAddress]);
+  }, [open, chainId, trimmedQuery, looksLikeAddress, isSolanaChain]);
 
   function handleAddFetchedToken() {
     if (!fetchedToken) return;
@@ -1073,6 +1113,22 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
       setOpen(false);
       setQuery("");
       setFetchedToken(null);
+    } catch (err) {
+      setFetchError(err?.message || "Could not add this token.");
+    }
+  }
+
+  function handleAddSplToken() {
+    const symbol = splSymbolInput.trim().toUpperCase();
+    if (splDecimals === null || !symbol) return;
+    try {
+      addCustomToken("solana", { symbol, decimals: splDecimals, mint: trimmedQuery });
+      setCustomTokensForChain(loadCustomTokens("solana").map((t) => ({ ...t, address: t.mint })));
+      onCustomTokenSelect({ symbol, decimals: splDecimals, address: trimmedQuery });
+      setOpen(false);
+      setQuery("");
+      setSplDecimals(null);
+      setSplSymbolInput("");
     } catch (err) {
       setFetchError(err?.message || "Could not add this token.");
     }
@@ -1145,7 +1201,28 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                 {fetching ? (
                   <div className="flex items-center gap-2">
                     <Loader2 size={14} className="animate-spin" color={P.textMuted} />
-                    <span className="text-[12px]" style={{ color: P.textMuted }}>Checking this contract on {CHAINS[chainId]?.name}…</span>
+                    <span className="text-[12px]" style={{ color: P.textMuted }}>Checking this {isSolanaChain ? "mint" : "contract"} on {CHAINS[chainId]?.name}…</span>
+                  </div>
+                ) : isSolanaChain && splDecimals !== null ? (
+                  <div className="flex flex-col gap-2">
+                    <input
+                      value={splSymbolInput}
+                      onChange={(e) => setSplSymbolInput(e.target.value.toUpperCase())}
+                      placeholder="Symbol (e.g. BONK)"
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      className="w-full px-2.5 py-2 rounded-lg text-[12.5px]"
+                      style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+                    />
+                    <span className="text-[10.5px]" style={{ color: P.textMuted }}>SPL mints don't carry an on-chain symbol — enter it yourself.</span>
+                    <button
+                      onClick={handleAddSplToken}
+                      disabled={!splSymbolInput.trim()}
+                      className="w-full py-2 rounded-lg text-[12.5px] font-semibold"
+                      style={{ background: splSymbolInput.trim() ? `${LIME}1A` : P.pillBg, color: splSymbolInput.trim() ? LIME_DEEP : P.textMuted }}
+                    >
+                      Add token
+                    </button>
                   </div>
                 ) : fetchedToken ? (
                   <button onClick={handleAddFetchedToken} className="w-full flex items-center justify-between gap-2.5">
