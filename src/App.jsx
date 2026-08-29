@@ -293,16 +293,27 @@ const ASSETS = [
   { symbol: "FRAX", name: "Fraxtal", decimals: 4, price: 1, color: "#000000" },
 ];
 
-// Real bug fix: these 13 symbols exist in ASSETS above purely so each
-// wallet-only chain HAS a native-asset entry to select as its own
-// default (see WALLET_ONLY_CHAINS_MAINNET/handleSwapChainChange) — they
-// were never meant to show up as generic, always-offered options the
-// way USDC/ETH/USDT (real multi-chain assets) already are. Left
-// unfiltered, the asset picker offered "POL"/"MON"/"BERA"/etc. while on
-// completely unrelated chains like Base, where they were never valid —
-// AssetDropdown's own built-in list below excludes each of these unless
-// the chain currently selected is that exact symbol's own native chain.
-const WALLET_ONLY_ONLY_NATIVE_SYMBOLS = new Set(["POL", "XDAI", "MON", "S", "MNT", "BERA", "SEI", "CELO", "FTM", "GLMR", "CRO", "METIS", "FRAX"]);
+// Real bug fix: these symbols exist in ASSETS above purely so each
+// chain that doesn't share ETH/BNB as its native asset HAS a
+// native-asset entry to select as its own default (see
+// WALLET_ONLY_CHAINS_MAINNET/handleSwapChainChange) — they were never
+// meant to show up as generic, always-offered options the way
+// USDC/ETH/USDT (real multi-chain assets) already are. Left unfiltered,
+// the asset picker offered "POL"/"MON"/"BERA"/etc., and separately
+// "SOL"/"AVAX"/"HYPE"/"XPL"/"OKB" (Solana/Avalanche/HyperEVM/Plasma/X
+// Layer's own natives, added earlier for those chains and missed by the
+// first pass of this same fix), while on completely unrelated chains
+// like Base, where none of them were ever valid. Covers every symbol in
+// ASSETS that's exclusive to exactly one chain — built by inspecting
+// NATIVE_SYMBOL_BY_CHAIN/WALLET_ONLY_NATIVE_SYMBOL, not by construction,
+// so this only needs updating if a new chain's own native symbol is
+// added to ASSETS. AssetDropdown's own built-in list below excludes
+// each of these unless the chain currently selected is that exact
+// symbol's own native chain.
+const CHAIN_EXCLUSIVE_NATIVE_SYMBOLS = new Set([
+  "SOL", "AVAX", "HYPE", "XPL", "OKB",
+  "POL", "XDAI", "MON", "S", "MNT", "BERA", "SEI", "CELO", "FTM", "GLMR", "CRO", "METIS", "FRAX",
+]);
 
 const DEFAULT_BALANCES = {
   ethereum: { USDC: 1820.44, ETH: 1.284, USDT: 500, WBTC: 0.021 },
@@ -758,7 +769,7 @@ function AssetIcon({ symbol, size = 18 }) {
 // symbol anyway (a real, separate limitation mobile's own DexScreen.tsx
 // asks the user to type one for), a genuinely bigger UI to add later,
 // not silently done wrong now.
-function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect }) {
+function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true }) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const [query, setQuery] = useState("");
@@ -768,7 +779,11 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   const [fetchError, setFetchError] = useState("");
   const ref = useRef(null);
   const asset = customToken || ASSETS[assetIdx];
-  const supportsCustomTokens = chainId !== "solana";
+  // Bridge doesn't get this: Relay only ever routes currencies it has
+  // verified itself, so a pasted, unverified token would just fail to
+  // quote — Swap (same-chain, no cross-chain route to verify) is where
+  // pasting an arbitrary contract address actually works.
+  const supportsCustomTokens = allowCustomToken && chainId !== "solana";
 
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
@@ -879,8 +894,8 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
               if (upperQuery && !a.symbol.includes(upperQuery)) return null;
               // Hide another chain's own native-asset symbol (POL, MON,
               // BERA, etc.) — never a real option except on that exact
-              // chain. See WALLET_ONLY_ONLY_NATIVE_SYMBOLS's own comment.
-              if (WALLET_ONLY_ONLY_NATIVE_SYMBOLS.has(a.symbol) && a.symbol !== NATIVE_SYMBOL_BY_CHAIN[chainId]) return null;
+              // chain. See CHAIN_EXCLUSIVE_NATIVE_SYMBOLS's own comment.
+              if (CHAIN_EXCLUSIVE_NATIVE_SYMBOLS.has(a.symbol) && a.symbol !== NATIVE_SYMBOL_BY_CHAIN[chainId]) return null;
               // Real balance for this specific asset, if we have a fetched
               // value for it — assets with no real address on the current
               // chain (and thus no entry in `balances`) show nothing
@@ -901,7 +916,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                 </button>
               );
             })}
-            {!looksLikeAddress && customTokensForChain.map((t) => {
+            {!looksLikeAddress && supportsCustomTokens && customTokensForChain.map((t) => {
               if (upperQuery && !t.symbol.toUpperCase().includes(upperQuery)) return null;
               return (
                 <button key={t.address} onClick={() => { onCustomTokenSelect(t); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left">
@@ -3127,7 +3142,7 @@ export default function MangoBridge() {
                     style={{ color: P.textPrimary }}
                   />
                   <button onClick={setMax} disabled={availableBalance === null} className="text-[10.5px] font-bold px-2 py-1 rounded-md mr-2 shrink-0" style={{ background: availableBalance === null ? P.pillBg : `${LIME}1A`, color: availableBalance === null ? P.textMuted : LIME_DEEP, opacity: availableBalance === null ? 0.6 : 1 }}>MAX</button>
-                  <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} />
+                  <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} allowCustomToken={isSwapTab} />
                 </div>
                 {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>Insufficient balance on {CHAINS[from].name}</div>}
               </div>
@@ -3156,7 +3171,7 @@ export default function MangoBridge() {
                 </div>
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
                   <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 ? P.textPrimary : P.textMuted }}>{amtNum > 0 ? fmt(received, 4) : "0"}</span>
-                  <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} />
+                  <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken={isSwapTab} />
                 </div>
               </div>
 
