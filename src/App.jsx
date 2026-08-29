@@ -293,27 +293,20 @@ const ASSETS = [
   { symbol: "FRAX", name: "Fraxtal", decimals: 4, price: 1, color: "#000000" },
 ];
 
-// Real bug fix: these symbols exist in ASSETS above purely so each
-// chain that doesn't share ETH/BNB as its native asset HAS a
-// native-asset entry to select as its own default (see
-// WALLET_ONLY_CHAINS_MAINNET/handleSwapChainChange) — they were never
-// meant to show up as generic, always-offered options the way
-// USDC/ETH/USDT (real multi-chain assets) already are. Left unfiltered,
-// the asset picker offered "POL"/"MON"/"BERA"/etc., and separately
-// "SOL"/"AVAX"/"HYPE"/"XPL"/"OKB" (Solana/Avalanche/HyperEVM/Plasma/X
-// Layer's own natives, added earlier for those chains and missed by the
-// first pass of this same fix), while on completely unrelated chains
-// like Base, where none of them were ever valid. Covers every symbol in
-// ASSETS that's exclusive to exactly one chain — built by inspecting
-// NATIVE_SYMBOL_BY_CHAIN/WALLET_ONLY_NATIVE_SYMBOL, not by construction,
-// so this only needs updating if a new chain's own native symbol is
-// added to ASSETS. AssetDropdown's own built-in list below excludes
-// each of these unless the chain currently selected is that exact
-// symbol's own native chain.
-const CHAIN_EXCLUSIVE_NATIVE_SYMBOLS = new Set([
-  "SOL", "AVAX", "HYPE", "XPL", "OKB",
-  "POL", "XDAI", "MON", "S", "MNT", "BERA", "SEI", "CELO", "FTM", "GLMR", "CRO", "METIS", "FRAX",
-]);
+// These symbols exist in ASSETS above purely so each chain that doesn't
+// share ETH/BNB as its native asset HAS a native-asset entry of its own
+// (see WALLET_ONLY_CHAINS_MAINNET/handleSwapChainChange) — each is only
+// ever real on exactly one chain (Solana/Avalanche/HyperEVM/Plasma/X
+// Layer/the 13 wallet-only-chain natives), unlike USDC/ETH/USDT, which
+// are real on many. Picking one of these while a DIFFERENT chain is
+// selected switches that side to the symbol's own chain instead of
+// just leaving an asset selected that was never real there — see
+// handleFromAssetChange/handleToAssetChange's own use of this map.
+const CHAIN_FOR_EXCLUSIVE_NATIVE_SYMBOL = {
+  SOL: "solana", AVAX: "avalanche", HYPE: "hyperevm", XPL: "plasma", OKB: "xlayer",
+  POL: "polygon", XDAI: "gnosis", MON: "monad", S: "sonic", MNT: "mantle", BERA: "berachain",
+  SEI: "sei", CELO: "celo", FTM: "fantom", GLMR: "moonbeam", CRO: "cronos", METIS: "metis", FRAX: "fraxtal",
+};
 
 const DEFAULT_BALANCES = {
   ethereum: { USDC: 1820.44, ETH: 1.284, USDT: 500, WBTC: 0.021 },
@@ -892,10 +885,6 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
           <div className="overflow-y-auto">
             {!looksLikeAddress && ASSETS.map((a, i) => {
               if (upperQuery && !a.symbol.includes(upperQuery)) return null;
-              // Hide another chain's own native-asset symbol (POL, MON,
-              // BERA, etc.) — never a real option except on that exact
-              // chain. See CHAIN_EXCLUSIVE_NATIVE_SYMBOLS's own comment.
-              if (CHAIN_EXCLUSIVE_NATIVE_SYMBOLS.has(a.symbol) && a.symbol !== NATIVE_SYMBOL_BY_CHAIN[chainId]) return null;
               // Real balance for this specific asset, if we have a fetched
               // value for it — assets with no real address on the current
               // chain (and thus no entry in `balances`) show nothing
@@ -2586,8 +2575,41 @@ export default function MangoBridge() {
   // {symbol, decimals: <display>, address, onchainDecimals, custom:true}.
   const [fromCustomToken, setFromCustomTokenRaw] = useState(null);
   const [toCustomToken, setToCustomTokenRaw] = useState(null);
-  function handleFromAssetChange(idx) { setFromAssetIdxRaw(idx); setFromCustomTokenRaw(null); setAmount(""); }
-  function handleToAssetChange(idx) { setToAssetIdxRaw(idx); setToCustomTokenRaw(null); } // don't clear amount — user is choosing what to receive, not resetting input
+  // Picking a chain-exclusive native (POL, SOL, AVAX, etc. — see
+  // CHAIN_FOR_EXCLUSIVE_NATIVE_SYMBOL's own comment) switches that side
+  // to the symbol's own chain, same pattern the ChainDropdown's own
+  // handleFromChange/handleToChange already use when from/to would
+  // otherwise collide. On Swap, both sides move together (a same-chain
+  // swap can't have from !== to) — same as handleSwapChainChange.
+  function handleFromAssetChange(idx) {
+    const targetChain = CHAIN_FOR_EXCLUSIVE_NATIVE_SYMBOL[ASSETS[idx]?.symbol];
+    if (targetChain) {
+      if (isSwapTab) {
+        setFrom(targetChain);
+        setTo(targetChain);
+      } else if (targetChain !== from) {
+        setFrom(targetChain);
+        if (targetChain === to) setTo(CHAIN_ORDER.find((c) => c !== targetChain));
+      }
+    }
+    setFromAssetIdxRaw(idx);
+    setFromCustomTokenRaw(null);
+    setAmount("");
+  }
+  function handleToAssetChange(idx) {
+    const targetChain = CHAIN_FOR_EXCLUSIVE_NATIVE_SYMBOL[ASSETS[idx]?.symbol];
+    if (targetChain) {
+      if (isSwapTab) {
+        setFrom(targetChain);
+        setTo(targetChain);
+      } else if (targetChain !== to) {
+        setTo(targetChain);
+        if (targetChain === from) setFrom(CHAIN_ORDER.find((c) => c !== targetChain));
+      }
+    }
+    setToAssetIdxRaw(idx);
+    setToCustomTokenRaw(null);
+  } // don't clear amount — user is choosing what to receive, not resetting input
   function handleFromCustomTokenSelect(token) { setFromCustomTokenRaw(token); setAmount(""); }
   function handleToCustomTokenSelect(token) { setToCustomTokenRaw(token); }
   // Real deep-link support for a shared token page: ?token=0x... on load
@@ -3162,13 +3184,20 @@ export default function MangoBridge() {
                     {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between mb-3">
-                  {isSwapTab ? (
-                    <ChainDropdown value={to} onChange={handleSwapChainChange} P={P} chainOrder={swapChainOrder} />
-                  ) : (
+                {/* Real swap widgets (Uniswap, Jupiter, 1inch, PancakeSwap)
+                    all use ONE network selector for the whole swap, not
+                    one per side — a same-chain swap only ever has one
+                    chain to pick. Swap's own selector lives in the "You
+                    send" card above (handleSwapChainChange already sets
+                    from/to together); this card only needs the token
+                    picker. Bridge keeps its own second, independent
+                    picker below — a bridge genuinely can move between
+                    two different chains. */}
+                {!isSwapTab && (
+                  <div className="flex items-center justify-between mb-3">
                     <ChainDropdown value={to} exclude={from} onChange={handleToChange} P={P} chainOrder={bridgeToChainOrder} />
-                  )}
-                </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
                   <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 ? P.textPrimary : P.textMuted }}>{amtNum > 0 ? fmt(received, 4) : "0"}</span>
                   <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken={isSwapTab} />
