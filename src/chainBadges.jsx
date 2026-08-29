@@ -18,23 +18,60 @@ import {
   NetworkEthereum, NetworkBase, NetworkBinanceSmartChain,
   NetworkArbitrumOne, NetworkAvalanche, NetworkAbstract, NetworkHyperEvm, NetworkInk, NetworkPlasma, NetworkUnichain, NetworkXLayer,
   NetworkStable, NetworkRobinhood,
+  // Wallet-only chains (walletChains.js's own 25-chain list, now also
+  // offered as Bridge routes — see App.jsx) — the exact same icon exports
+  // already verified working in MangoWallet.jsx's own WALLET_ONLY_ICON map
+  // (that file's own comment documents the live server-render check these
+  // names were confirmed against, including the non-obvious ones: zkSync
+  // Era is NetworkZksync, World Chain is NetworkWorld, Sei is
+  // NetworkSeiNetwork). opBNB has no matching icon anywhere in
+  // @web3icons/react (checked directly, same as that file found) — handled
+  // as its own tinted-circle special case below, not listed here.
+  NetworkPolygon, NetworkOptimism, NetworkZksync, NetworkLinea, NetworkScroll, NetworkGnosis,
+  NetworkMonad, NetworkSonic, NetworkMantle, NetworkBlast, NetworkBerachain, NetworkWorld, NetworkSeiNetwork,
+  NetworkCelo, NetworkFantom, NetworkMoonbeam, NetworkCronos, NetworkMetisAndromeda, NetworkMode,
+  NetworkZora, NetworkMantaPacific, NetworkTaiko, NetworkPolygonZkevm, NetworkFraxtal,
 } from "@web3icons/react";
 import { useState } from "react";
 
 // Same accent colors CHAINS_MAINNET in App.jsx defines per chain — kept
 // as a separate, minimal copy here rather than importing that object,
 // since pulling in App.jsx at all is exactly what this file exists to
-// avoid (see module doc above).
+// avoid (see module doc above). Wallet-only chain colors are each
+// chain's own real, public brand color (same standard as every color
+// above) — cosmetic only, this file's colors aren't fund-critical data.
 const CHAIN_COLOR = {
   ethereum: "#8C9BAE", base: "#3D6BFF", bnb: "#F0B90B", robinhood: "#00C805", stable: "#26A17B", solana: "#9945FF",
   arbitrum: "#28A0F0", avalanche: "#E84142", abstract: "#00E599", hyperevm: "#97FCE4",
   ink: "#7132F5", plasma: "#0FDD8D", unichain: "#FF007A", xlayer: "#00D2B5",
+  polygon: "#8247E5", optimism: "#FF0420", zksync: "#8C8DFC", linea: "#61DFFF", scroll: "#FFEEDA",
+  gnosis: "#04795B", monad: "#836EF9", sonic: "#FE9A4D", mantle: "#000000", blast: "#FCFC03",
+  berachain: "#814625", worldchain: "#191919", sei: "#9E1F19", celo: "#FCFF52", fantom: "#1969FF",
+  moonbeam: "#53CBC9", cronos: "#002D74", metis: "#00DACC", mode: "#DFFE00", zora: "#000000",
+  manta: "#8358FF", opbnb: "#F0B90B", taiko: "#E81899", polygonzkevm: "#8247E5", fraxtal: "#000000",
 };
 
 const SELF_CONTAINED_BADGE_CHAINS = [
   "ethereum", "base", "bnb", "solana", "stable", "robinhood",
   "arbitrum", "avalanche", "abstract", "hyperevm", "ink", "plasma", "unichain", "xlayer",
+  "polygon", "optimism", "zksync", "linea", "scroll", "gnosis",
+  "monad", "sonic", "mantle", "blast", "berachain", "worldchain", "sei",
+  "celo", "fantom", "moonbeam", "cronos", "metis", "mode", "zora", "manta", "taiko", "polygonzkevm", "fraxtal",
 ];
+
+// opBNB icon gap — see the import comment above. A plain tinted circle in
+// BNB's real brand yellow, same fix MangoWallet.jsx's own WalletChainBadge
+// already applies for the wallet dashboard, rather than a generic "?"
+// fallback that would incorrectly imply an unrecognized chain.
+const WALLET_ONLY_ICON = {
+  polygon: NetworkPolygon, optimism: NetworkOptimism, zksync: NetworkZksync,
+  linea: NetworkLinea, scroll: NetworkScroll, gnosis: NetworkGnosis,
+  monad: NetworkMonad, sonic: NetworkSonic, mantle: NetworkMantle,
+  blast: NetworkBlast, berachain: NetworkBerachain, worldchain: NetworkWorld, sei: NetworkSeiNetwork,
+  celo: NetworkCelo, fantom: NetworkFantom, moonbeam: NetworkMoonbeam, cronos: NetworkCronos,
+  metis: NetworkMetisAndromeda, mode: NetworkMode, zora: NetworkZora, manta: NetworkMantaPacific,
+  taiko: NetworkTaiko, polygonzkevm: NetworkPolygonZkevm, fraxtal: NetworkFraxtal,
+};
 
 function SolanaLogoIcon({ size, fallback }) {
   const [failed, setFailed] = useState(false);
@@ -70,6 +107,8 @@ function ChainIcon({ id, size }) {
   if (id === "plasma") return <NetworkPlasma variant="branded" size={s} />;
   if (id === "unichain") return <NetworkUnichain variant="branded" size={s} />;
   if (id === "xlayer") return <NetworkXLayer variant="branded" size={s} />;
+  const WalletOnlyIcon = WALLET_ONLY_ICON[id];
+  if (WalletOnlyIcon) return <WalletOnlyIcon variant="branded" size={s} />;
   const sHand = size * 0.56;
   if (id === "solana") {
     const solanaFallback = (
@@ -90,6 +129,13 @@ function ChainIcon({ id, size }) {
 }
 
 export function ChainBadge({ id, size = 18 }) {
+  if (id === "opbnb") {
+    return (
+      <span className="flex items-center justify-center rounded-full shrink-0" style={{ width: size, height: size, background: "#F0B90B22", border: "1px solid #F0B90B55" }}>
+        <span style={{ fontSize: size * 0.42, fontWeight: 700, color: "#F0B90B" }}>BNB</span>
+      </span>
+    );
+  }
   const color = CHAIN_COLOR[id];
   if (!color) {
     // Defensive fallback: id could be a chain neither the site nor the

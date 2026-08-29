@@ -1,4 +1,5 @@
 import { CHAIN_KEY_TO_WAGMI_TESTNET, CHAIN_KEY_TO_WAGMI_MAINNET } from "./wagmi.js";
+import { WALLET_ONLY_EVM_CHAINS } from "./wallet/walletChains.js";
 
 // This app now runs mainnet-only, permanently. The testnet/mainnet toggle
 // that used to live here has been removed by deliberate choice — there is
@@ -26,7 +27,12 @@ export function getWagmiChain(chainKey) {
   if (chainKey === "solana") {
     return { id: undefined, name: "Solana", isSolana: true };
   }
-  const chain = CHAIN_KEY_TO_WAGMI_MAINNET[chainKey];
+  // Falls back to walletChains.js's broader wallet-only chain list — the
+  // Bridge tab now offers these as routes too (App.jsx), and they're
+  // registered in wagmi.js's own Config (ALL_CHAINS) exactly like every
+  // chain in CHAIN_KEY_TO_WAGMI_MAINNET, so useBalance/switchChain work
+  // for them the same way.
+  const chain = CHAIN_KEY_TO_WAGMI_MAINNET[chainKey] || WALLET_ONLY_EVM_CHAINS[chainKey];
   if (!chain) throw new Error(`No mainnet chain configured for key "${chainKey}"`);
   return chain;
 }

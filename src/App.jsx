@@ -8,7 +8,7 @@ import {
   // was independently re-checked and every name below does).
   TokenWBTC, TokenAVAX, TokenHYPE, TokenXPL, TokenOKB,
 } from "@web3icons/react";
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { ChainBadge } from "./chainBadges.jsx";
 import { MangoLogo } from "./MangoLogo.jsx";
 import { parseUnits, isAddress } from "viem";
@@ -53,6 +53,8 @@ import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeA
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
 import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
 import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
+import { fetchRelayChains } from "./relayChains.js";
+import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL, WALLET_ONLY_EVM_CHAINS } from "./wallet/walletChains.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
 import { LaunchpadTab } from "./Launchpad.jsx";
 import { MangoWalletTab } from "./MangoWallet.jsx";
@@ -99,6 +101,44 @@ const CHAINS_MAINNET = {
   unichain: { id: "unichain", name: "Unichain", short: "UNI", color: "#FF007A", mark: "◆", baseSeconds: 30, baseFee: 0.03, explorer: "https://uniscan.xyz/tx/" },
   xlayer: { id: "xlayer", name: "X Layer", short: "OKB", color: "#00D2B5", mark: "◆", baseSeconds: 30, baseFee: 0.03, explorer: "https://www.oklink.com/xlayer/tx/" },
 };
+
+// Wallet-only chains — the same 25-chain list Mango Wallet's own dashboard
+// already supports (walletChains.js), now also offered as Bridge routes.
+// Built directly FROM walletChains.js's own already-verified data rather
+// than hand-copied: name from WALLET_ONLY_CHAIN_LABEL, explorer from each
+// chain's own wagmi/chains blockExplorers.default.url (real, verified —
+// same standard chainData.js's own currencyAddress() requires), native
+// symbol from WALLET_ONLY_NATIVE_SYMBOL. baseSeconds/baseFee use one
+// shared, deliberately rough estimate rather than 25 individually-tuned
+// guesses — same "rough initial display estimate only, replaced by a real
+// Relay quote once one loads" caveat CHAINS_MAINNET's own comment already
+// states for the native-asset-only chains above, just not worth
+// fabricating false precision for 25 more entries at once.
+//
+// IMPORTANT: being in this object only means the app CAN render/quote for
+// a chain — it does NOT mean the Bridge tab offers it. That's decided
+// separately, live, by liveBridgeOrigins/liveBridgeDestinations below
+// (Relay's own GET /chains response) — see bridgeFromChainOrder/
+// bridgeToChainOrder inside MangoBridge().
+const WALLET_ONLY_CHAINS_MAINNET = Object.fromEntries(
+  WALLET_ONLY_CHAIN_ORDER.map((key) => {
+    const chain = WALLET_ONLY_EVM_CHAINS[key];
+    const explorerUrl = chain.blockExplorers?.default?.url;
+    return [
+      key,
+      {
+        id: key,
+        name: WALLET_ONLY_CHAIN_LABEL[key],
+        short: WALLET_ONLY_NATIVE_SYMBOL[key],
+        baseSeconds: 30,
+        baseFee: 0.05,
+        explorer: explorerUrl ? `${explorerUrl}/tx/` : undefined,
+      },
+    ];
+  })
+);
+Object.assign(CHAINS_MAINNET, WALLET_ONLY_CHAINS_MAINNET);
+
 function getChains() { return isMainnet() ? CHAINS_MAINNET : CHAINS_TESTNET; }
 // Proxy so every existing `CHAINS[key]` reference throughout this file stays
 // correct without needing to be rewritten — always reflects the CURRENT mode.
@@ -131,7 +171,47 @@ const NATIVE_SYMBOL_BY_CHAIN = {
   ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", stable: "USDT0", solana: "SOL",
   arbitrum: "ETH", avalanche: "AVAX", abstract: "ETH", hyperevm: "HYPE",
   ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB",
+  ...WALLET_ONLY_NATIVE_SYMBOL,
 };
+
+// Every chain key from walletChains.js's wallet-only list — used to gate
+// which chains actually need App.jsx's own resolveChainId/resolveCurrency
+// branch below (their chain id comes from wagmi/chains' own chain objects,
+// not chainData.js's hand-verified MAINNET_CHAIN_IDS) and, in
+// MangoBridge(), to compute the live-Relay-support intersection.
+const WALLET_ONLY_CHAIN_SET = new Set(WALLET_ONLY_CHAIN_ORDER);
+function isWalletOnlyChain(chainKey) {
+  return WALLET_ONLY_CHAIN_SET.has(chainKey);
+}
+
+// Relay's live chain id -> our own chainKey, restricted to chains we've
+// already explicitly reviewed and imported (walletChains.js) — Relay's
+// live /chains response can only ever narrow this down (a chain it
+// reports disabled just won't match), never add a chain this app hasn't
+// already vetted. Same pattern mango-mobile's own BridgeScreen.tsx uses.
+const WALLET_ONLY_CHAIN_ID_TO_KEY = Object.fromEntries(
+  WALLET_ONLY_CHAIN_ORDER.map((key) => [WALLET_ONLY_EVM_CHAINS[key]?.id, key]).filter(([id]) => id !== undefined)
+);
+
+/** Numeric chain id for a Relay quote request — chainData.js's verified MAINNET_CHAIN_IDS for a hand-verified chain, wagmi/chains' own chain id for one of walletChains.js's broader wallet-only chains. */
+function resolveChainId(chainKey) {
+  if (isWalletOnlyChain(chainKey)) return WALLET_ONLY_EVM_CHAINS[chainKey]?.id;
+  return MAINNET_CHAIN_IDS[chainKey];
+}
+
+// The universal EVM native-asset placeholder — the exact same constant
+// chainData.js's own currencyAddress() returns for every hand-verified
+// chain's native asset, so reusing it for walletChains.js's broader
+// wallet-only chains needs no per-chain "verified address" at all: unlike
+// an ERC-20 contract, this isn't chain-specific data, it's just how every
+// EVM chain represents "the native asset" to solvers/bridges.
+const NATIVE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/** Currency address for a Relay quote request — chainData.js's verified currencyAddress() for a hand-verified chain, or the universal native placeholder for a wallet-only chain (native-asset bridging only there, same as the CHAINS_MAINNET native-asset-only additions above). */
+function resolveCurrency(chainKey, assetSymbol) {
+  if (isWalletOnlyChain(chainKey)) return NATIVE_TOKEN_ADDRESS;
+  return currencyAddress(chainKey, assetSymbol);
+}
 
 const ASSETS = [
   { symbol: "USDC", name: "USD Coin", decimals: 2, price: 1, color: "#2775CA" },
@@ -155,6 +235,26 @@ const ASSETS = [
   { symbol: "HYPE", name: "Hyperliquid", decimals: 4, price: 25, color: "#97FCE4" },
   { symbol: "XPL", name: "Plasma", decimals: 2, price: 0.5, color: "#0FDD8D" },
   { symbol: "OKB", name: "OKB", decimals: 4, price: 45, color: "#00D2B5" },
+  // Native assets for walletChains.js's 25 wallet-only chains, now also
+  // offered as Bridge routes — same "ETH already covers chains that share
+  // it" logic as above (Optimism/zkSync/Linea/Scroll/World Chain/Mode/
+  // Zora/Manta/Taiko/Polygon zkEVM all use plain ETH, opBNB uses BNB — no
+  // new entry needed for any of those). price is the same rough,
+  // cosmetic-only UI-preview estimate every other entry here already
+  // uses, never fund-critical.
+  { symbol: "POL", name: "Polygon", decimals: 4, price: 0.4, color: "#8247E5" },
+  { symbol: "XDAI", name: "xDai", decimals: 2, price: 1, color: "#04795B" },
+  { symbol: "MON", name: "Monad", decimals: 4, price: 0.03, color: "#836EF9" },
+  { symbol: "S", name: "Sonic", decimals: 4, price: 0.5, color: "#FE9A4D" },
+  { symbol: "MNT", name: "Mantle", decimals: 4, price: 1, color: "#000000" },
+  { symbol: "BERA", name: "Berachain", decimals: 4, price: 3, color: "#814625" },
+  { symbol: "SEI", name: "Sei", decimals: 4, price: 0.3, color: "#9E1F19" },
+  { symbol: "CELO", name: "Celo", decimals: 4, price: 0.5, color: "#FCFF52" },
+  { symbol: "FTM", name: "Fantom", decimals: 4, price: 0.6, color: "#1969FF" },
+  { symbol: "GLMR", name: "Moonbeam", decimals: 4, price: 0.1, color: "#53CBC9" },
+  { symbol: "CRO", name: "Cronos", decimals: 4, price: 0.1, color: "#002D74" },
+  { symbol: "METIS", name: "Metis", decimals: 4, price: 30, color: "#00DACC" },
+  { symbol: "FRAX", name: "Fraxtal", decimals: 4, price: 1, color: "#000000" },
 ];
 
 const DEFAULT_BALANCES = {
@@ -176,6 +276,11 @@ const DEFAULT_BALANCES = {
   plasma: { XPL: 0 },
   unichain: { ETH: 0 },
   xlayer: { OKB: 0 },
+  // Same reason again, for walletChains.js's 25 wallet-only chains — built
+  // programmatically from WALLET_ONLY_NATIVE_SYMBOL rather than hand-typed,
+  // so there's no risk of missing one and reintroducing the exact crash
+  // the comment above already documents.
+  ...Object.fromEntries(WALLET_ONLY_CHAIN_ORDER.map((key) => [key, { [WALLET_ONLY_NATIVE_SYMBOL[key]]: 0 }])),
 };
 
 const STEPS = [
@@ -264,7 +369,7 @@ function FloatingMangoDecor({ P }) {
   );
 }
 
-function ChainDropdown({ value, exclude, onChange, P }) {
+function ChainDropdown({ value, exclude, onChange, P, chainOrder = CHAIN_ORDER }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const c = CHAINS[value];
@@ -281,8 +386,13 @@ function ChainDropdown({ value, exclude, onChange, P }) {
         <ChevronDown size={13} color={P.textMuted} />
       </button>
       {open && (
-        <div className="absolute left-0 z-30 mt-2 w-44 rounded-xl overflow-hidden shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-          {CHAIN_ORDER.filter((id) => id !== exclude).map((id) => {
+        // max-h + overflow-y-auto: this list used to be a fixed 14 items
+        // (always fit unscrolled) — now optionally extended with
+        // whichever of walletChains.js's 25 wallet-only chains Relay's
+        // live data currently supports, which can run well past what
+        // fits on screen without this.
+        <div className="absolute left-0 z-30 mt-2 w-44 max-h-80 overflow-y-auto rounded-xl shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          {chainOrder.filter((id) => id !== exclude).map((id) => {
             const cc = CHAINS[id];
             return (
               <button key={id} onClick={() => { onChange(id); setOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-left" style={{ background: "transparent" }}>
@@ -937,6 +1047,16 @@ function BridgeModal({ from, to, amount, asset, toAsset, fee, etaLabel, received
         const quote = await getRelayQuote({
           fromChainKey: from, toChainKey: to,
           fromAsset: asset, toAsset: toAsset,
+          // Overrides needed for walletChains.js's wallet-only chains —
+          // chainData.js has no verified MAINNET_CHAIN_IDS/currencyAddress
+          // entry for them, so resolveChainId/resolveCurrency step in with
+          // wagmi/chains' own chain id and the universal native
+          // placeholder instead. undefined for every hand-verified chain,
+          // where getRelayQuote's own internal lookups already apply.
+          originChainId: isWalletOnlyChain(from) ? resolveChainId(from) : undefined,
+          originCurrency: isWalletOnlyChain(from) ? resolveCurrency(from, asset) : undefined,
+          destinationChainId: isWalletOnlyChain(to) ? resolveChainId(to) : undefined,
+          destinationCurrency: isWalletOnlyChain(to) ? resolveCurrency(to, toAsset) : undefined,
           amountBaseUnits: totalBaseUnits.toString(), userAddress: account,
           recipientAddress: destination || defaultRecipient,
         });
@@ -1977,6 +2097,47 @@ export default function MangoBridge() {
   const [theme, setTheme] = useState("light");
   const [from, setFrom] = useState("base");
   const [to, setTo] = useState("ethereum");
+
+  // Which of walletChains.js's 25 wallet-only chains Relay's live GET
+  // /chains response currently reports as usable — fetched once per app
+  // mount (relayChains.js caches it anyway), split into origin (disabled
+  // !== true) and destination (also depositEnabled !== false — Relay's
+  // own field for "can this chain be a destination") eligibility, since a
+  // chain can support one direction without the other. Same pattern
+  // mango-mobile's own BridgeScreen.tsx already uses. Any fetch failure
+  // (network down, this sandbox blocking relay.link, etc) just means
+  // these stay empty and the Bridge tab behaves exactly as it did before
+  // this feature — the original 14 hand-verified chains only.
+  const [liveBridgeOrigins, setLiveBridgeOrigins] = useState(() => new Set());
+  const [liveBridgeDestinations, setLiveBridgeDestinations] = useState(() => new Set());
+  useEffect(() => {
+    let cancelled = false;
+    fetchRelayChains()
+      .then((chains) => {
+        if (cancelled) return;
+        const origins = new Set();
+        const destinations = new Set();
+        for (const chain of chains) {
+          const key = WALLET_ONLY_CHAIN_ID_TO_KEY[chain?.id];
+          if (!key || chain.disabled === true) continue;
+          origins.add(key);
+          if (chain.depositEnabled !== false) destinations.add(key);
+        }
+        setLiveBridgeOrigins(origins);
+        setLiveBridgeDestinations(destinations);
+      })
+      .catch(() => {}); // fails closed — see comment above
+    return () => { cancelled = true; };
+  }, []);
+  const bridgeFromChainOrder = useMemo(
+    () => [...CHAIN_ORDER, ...WALLET_ONLY_CHAIN_ORDER.filter((key) => liveBridgeOrigins.has(key))],
+    [liveBridgeOrigins]
+  );
+  const bridgeToChainOrder = useMemo(
+    () => [...CHAIN_ORDER, ...WALLET_ONLY_CHAIN_ORDER.filter((key) => liveBridgeDestinations.has(key))],
+    [liveBridgeDestinations]
+  );
+
   const [amount, setAmount] = useState("");
   const [fromAssetIdx, setFromAssetIdxRaw] = useState(0);
   const [toAssetIdx, setToAssetIdxRaw] = useState(0);
@@ -2213,6 +2374,12 @@ export default function MangoBridge() {
         await getRelayQuote({
           fromChainKey: from, toChainKey: to,
           fromAsset: fromAsset.symbol, toAsset: toAsset.symbol,
+          // Same override reasoning as the execution path in BridgeModal
+          // above — see that call site's own comment.
+          originChainId: isWalletOnlyChain(from) ? resolveChainId(from) : undefined,
+          originCurrency: isWalletOnlyChain(from) ? resolveCurrency(from, fromAsset.symbol) : undefined,
+          destinationChainId: isWalletOnlyChain(to) ? resolveChainId(to) : undefined,
+          destinationCurrency: isWalletOnlyChain(to) ? resolveCurrency(to, toAsset.symbol) : undefined,
           amountBaseUnits, userAddress: activeAccount,
           // Same real fix as the execution path — a Solana source needs
           // the connected EVM address as the recipient on an EVM
@@ -2405,7 +2572,7 @@ export default function MangoBridge() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between mb-3">
-                  <ChainDropdown value={from} exclude={to} onChange={handleFromChange} P={P} />
+                  <ChainDropdown value={from} exclude={to} onChange={handleFromChange} P={P} chainOrder={bridgeFromChainOrder} />
                 </div>
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${insufficient ? "#D92D20" : P.panelBorder}` }}>
                   <input
@@ -2440,7 +2607,7 @@ export default function MangoBridge() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between mb-3">
-                  <ChainDropdown value={to} exclude={from} onChange={handleToChange} P={P} />
+                  <ChainDropdown value={to} exclude={from} onChange={handleToChange} P={P} chainOrder={bridgeToChainOrder} />
                 </div>
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
                   <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 ? P.textPrimary : P.textMuted }}>{amtNum > 0 ? fmt(received, 4) : "0"}</span>
