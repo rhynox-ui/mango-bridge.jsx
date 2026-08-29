@@ -140,4 +140,34 @@ export async function claimDailyPoints(address) {
   return { claimed: true, pointsAwarded: DAILY_CHECKIN_POINTS };
 }
 
+/**
+ * Removes every server-side key this store ever writes for `address` —
+ * the real, automated version of the manual email-request flow
+ * (app-delete-data.html). Three keys, all namespaced by this exact
+ * address:
+ *  - `referral:<address>` — the main hash (points, referralCount,
+ *    referredBy, the one-time claimed flag, createdAt).
+ *  - `daily-claim-lock:<address>` — their own check-in cooldown lock.
+ *  - `referral-daily:<address>:<today>` — today's count of referrals
+ *    THEY made as a referrer, if any. Past days' equivalents are
+ *    already gone (DAILY_KEY_TTL_SECONDS self-expires them), so only
+ *    today's can still exist to delete.
+ * Deliberately does NOT touch other addresses' `referredBy` pointers —
+ * a referral this address made stays a real, already-happened event in
+ * the referrer's own ledger (referralCount/points already credited);
+ * deleting this address's record doesn't retroactively unwind rewards
+ * someone else already received, the same way deleting a bank
+ * transaction's source account doesn't undo the destination's balance.
+ */
+export async function deleteReferralRecord(address) {
+  const client = getRedis();
+  const today = new Date().toISOString().slice(0, 10);
+  await Promise.all([
+    client.del(referralKey(address)),
+    client.del(`daily-claim-lock:${address.toLowerCase()}`),
+    client.del(`referral-daily:${address.toLowerCase()}:${today}`),
+  ]);
+  return { deleted: true };
+}
+
 export { REFERRAL_SIGNUP_BONUS, REFERRAL_REWARD, MAX_REFERRALS_PER_DAY, DAILY_CHECKIN_POINTS, DAILY_CHECKIN_COOLDOWN_SECONDS };
