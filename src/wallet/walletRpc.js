@@ -212,6 +212,17 @@ export async function fetchWalletSolanaBalance(address, { forceFresh = false } =
  * failure is treated as balance 0, not surfaced as an error, since from
  * the user's point of view "you have none of this token" is exactly
  * correct.
+ *
+ * Real bug fix: same Token-2022 gap fetchSplMintDecimals's own comment
+ * documents — getAssociatedTokenAddress/getAccount both default to the
+ * legacy TOKEN_PROGRAM_ID, which derives and reads the WRONG account
+ * address entirely for a Token-2022 mint (the ATA address itself is
+ * derived FROM the owning program id, not just read under it). Without
+ * this, a real Token-2022 balance wasn't an error to catch — it was a
+ * lookup at the wrong address that always came back "no account", so
+ * every such token silently showed 0 forever, indistinguishable from
+ * genuinely holding none. Tried under TOKEN_2022_PROGRAM_ID as a real
+ * second attempt before falling back to 0, not merely a caught error.
  */
 export async function fetchWalletSplTokenBalance(mintAddress, decimals, ownerAddress, { forceFresh = false } = {}) {
   const key = `solana-token:${mintAddress}:${ownerAddress}`;
@@ -223,19 +234,26 @@ export async function fetchWalletSplTokenBalance(mintAddress, decimals, ownerAdd
   let lastError;
   for (const url of urls) {
     try {
-      const [{ Connection, PublicKey }, { getAssociatedTokenAddress, getAccount }] = await Promise.all([
+      const [{ Connection, PublicKey }, { getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID }] = await Promise.all([
         import("@solana/web3.js"),
         import("@solana/spl-token"),
       ]);
       const connection = new Connection(url, "confirmed");
-      const ata = await getAssociatedTokenAddress(new PublicKey(mintAddress), new PublicKey(ownerAddress));
-      let balance;
-      try {
-        const account = await getAccount(connection, ata);
-        balance = Number(account.amount) / 10 ** decimals;
-      } catch {
-        balance = 0; // no ATA exists yet for this mint — genuinely zero, not an error
+      const mintPubkey = new PublicKey(mintAddress);
+      const ownerPubkey = new PublicKey(ownerAddress);
+      let balance = null;
+      for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+        try {
+          const ata = await getAssociatedTokenAddress(mintPubkey, ownerPubkey, false, programId);
+          const account = await getAccount(connection, ata, "confirmed", programId);
+          balance = Number(account.amount) / 10 ** decimals;
+          break;
+        } catch {
+          // No ATA under this program — try the other one before
+          // concluding the balance is genuinely zero.
+        }
       }
+      if (balance === null) balance = 0; // neither program has an ATA for this mint — genuinely zero, not an error
       setCached(key, balance);
       return balance;
     } catch (err) {
@@ -281,24 +299,51 @@ export async function fetchErc20TokenMetadata(chainKey, tokenAddress) {
  * already retries across solanaRpcUrls() for exactly that reason —
  * this was the one read path that didn't, so a single flaky/rate-
  * limited endpoint could reject a genuinely real mint.
+ *
+ * Real bug fix #2: getMint() defaults to the legacy TOKEN_PROGRAM_ID —
+ * a mint actually created under Token-2022 (TOKEN_2022_PROGRAM_ID),
+ * increasingly common for newer pump.fun-style launches that want
+ * transfer-fee/metadata extensions, decodes its account data under a
+ * completely different owner program, so unpackMint's own
+ * info.owner.equals(programId) check throws
+ * TokenInvalidAccountOwnerError — every real Token-2022 mint failed
+ * verification outright, indistinguishable from a genuinely invalid
+ * address. Now retried under TOKEN_2022_PROGRAM_ID on that exact
+ * error before moving to the next RPC URL — the base MintLayout (where
+ * decimals lives) is identical between the two programs, only the
+ * owner and any TLV extension data after it differ, so decoding a
+ * Token-2022 mint this way is exactly as real as the legacy path.
  */
 export async function fetchSplMintDecimals(mintAddress) {
   // Not lowercased — see tokenMetadataCache's own comment on why a
   // Solana mint's case has to stay exactly as given.
   const key = `solana:${mintAddress}`;
   if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
-  const [{ getMint }, { Connection, PublicKey }] = await Promise.all([import("@solana/spl-token"), import("@solana/web3.js")]);
+  const [{ getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID }, { Connection, PublicKey }] = await Promise.all([
+    import("@solana/spl-token"),
+    import("@solana/web3.js"),
+  ]);
   const mintPubkey = new PublicKey(mintAddress);
   const urls = [...solanaRpcUrls()].reverse();
   let lastError;
   for (const url of urls) {
+    const connection = new Connection(url, "confirmed");
     try {
-      const connection = new Connection(url, "confirmed");
-      const mint = await getMint(connection, mintPubkey);
+      const mint = await getMint(connection, mintPubkey, "confirmed", TOKEN_PROGRAM_ID);
       tokenMetadataCache.set(key, mint.decimals);
       return mint.decimals;
     } catch (err) {
-      lastError = err;
+      if (err?.name !== "TokenInvalidAccountOwnerError") {
+        lastError = err;
+        continue;
+      }
+      try {
+        const mint = await getMint(connection, mintPubkey, "confirmed", TOKEN_2022_PROGRAM_ID);
+        tokenMetadataCache.set(key, mint.decimals);
+        return mint.decimals;
+      } catch (err2) {
+        lastError = err2;
+      }
     }
   }
   throw lastError;
