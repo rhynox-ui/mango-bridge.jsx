@@ -10,9 +10,20 @@
 // `buildReferralClaimMessage(address, referrer)` — binding the address
 // AND referrer into the signed message means a signature captured for
 // one referral can't be replayed to claim a different one.
+//
+// `referrer` accepts EITHER a raw EVM address OR a claimed referral
+// handle (set-handle.js) — resolved to the underlying wallet address
+// right here, server-side, before crediting. Deliberately NOT resolved
+// client-side: the signed message binds whatever raw string the user's
+// client sent as `referrer` (a handle stays a handle in the signed
+// message, never silently swapped for an address before signing), so
+// resolving here — using this server's own authoritative reverse-lookup,
+// not anything the client asserts — is what actually satisfies "resolve
+// the handle and credit the underlying wallet" without weakening the
+// signature's own binding guarantee.
 
 import { verifyMessage } from "viem";
-import { claimReferral, isValidAddress } from "../../referralStore.js";
+import { claimReferral, isValidAddress, isValidHandle, resolveHandle } from "../../referralStore.js";
 import { checkRateLimit } from "../../rateLimit.js";
 
 export function buildReferralClaimMessage(address, referrer) {
@@ -31,16 +42,19 @@ export default async function handler(request, response) {
 
   const { address, referrer, message, signature } = request.body || {};
 
-  if (!isValidAddress(address) || !isValidAddress(referrer)) {
-    return response.status(400).json({ error: "address and referrer must both be valid EVM addresses." });
+  if (!isValidAddress(address)) {
+    return response.status(400).json({ error: "address must be a valid EVM address." });
   }
-  if (address.toLowerCase() === referrer.toLowerCase()) {
-    return response.status(400).json({ error: "A wallet cannot refer itself." });
+  if (!isValidAddress(referrer) && !isValidHandle(referrer)) {
+    return response.status(400).json({ error: "referrer must be a valid EVM address or referral handle." });
   }
   if (!signature) {
     return response.status(400).json({ error: "Missing signature." });
   }
 
+  // The signed message binds whatever raw string was typed — a handle
+  // stays a handle here, resolved to a real address only after the
+  // signature itself is verified against it.
   const expectedMessage = buildReferralClaimMessage(address, referrer);
   if (message !== expectedMessage) {
     return response.status(400).json({ error: "Message does not match the expected referral claim message." });
@@ -56,8 +70,16 @@ export default async function handler(request, response) {
     return response.status(401).json({ error: "Signature does not match the claimed address." });
   }
 
+  const resolvedReferrer = isValidAddress(referrer) ? referrer : await resolveHandle(referrer);
+  if (!resolvedReferrer) {
+    return response.status(404).json({ error: "No wallet has claimed this referral handle." });
+  }
+  if (address.toLowerCase() === resolvedReferrer.toLowerCase()) {
+    return response.status(400).json({ error: "A wallet cannot refer itself." });
+  }
+
   try {
-    const result = await claimReferral({ address, referrer });
+    const result = await claimReferral({ address, referrer: resolvedReferrer });
     if (result.alreadyClaimed) {
       return response.status(409).json({ error: "This wallet has already claimed its signup bonus." });
     }
