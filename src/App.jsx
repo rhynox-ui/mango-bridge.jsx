@@ -1909,16 +1909,40 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // after the swap succeeds, actively working against the smooth
         // experience this fallback exists for. Forgoing a fee that
         // would mostly be sub-cent dust anyway is the right trade.
+        // Same rounds-to-zero guard as App.jsx's own preview effect (see
+        // that call site's own comment for the full explanation, and
+        // why fixing only the preview isn't enough): without this,
+        // execution could accept and actually SEND a Relay quote whose
+        // real output rounds to zero, even after the preview had
+        // already found a genuinely better fallback-provider route —
+        // this function runs its own fresh quote independently of
+        // whatever the preview displayed.
+        const execToDecimals = toCustom ? toCustom.decimals : ASSET_ONCHAIN_DECIMALS[toAsset];
+        const execAmtNum = Math.max(0, parseFloat(amount) || 0);
+        function execQuoteRoundsToZero(q) {
+          try {
+            const r = summarizeQuote(q, execToDecimals).receivedAmount;
+            return from === to && r !== null && execAmtNum > 0 && Number(r.toFixed(4)) === 0;
+          } catch {
+            return false;
+          }
+        }
         let quote;
         let fallbackResult = null;
         try {
           quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
+          if (execQuoteRoundsToZero(quote)) {
+            throw new Error("Relay's route for this pair returns next to nothing at the current rate.");
+          }
         } catch (firstErr) {
           if (from !== to) {
             throw firstErr;
           }
           try {
             quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
+            if (execQuoteRoundsToZero(quote)) {
+              throw new Error("Even the 0%-fee route for this pair returns next to nothing at the current rate.");
+            }
           } catch {
             // Both Relay attempts failed — a genuine route gap, not a
             // fee-margin problem. Real second-source fallback
@@ -1943,6 +1967,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                 // inside fallbackDex.js — a closed tab or slow RPC
                 // during that wait left no record it had broadcast.
                 onSwapHashKnown: setRealBurnHash,
+                buyDecimals: execToDecimals,
               });
             } catch (err) {
               fallbackErr = err;
@@ -3834,8 +3859,27 @@ export default function MangoBridge() {
         };
         try {
           const quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
-          applyOkQuote(quote);
-          return;
+          // Real bug fix, live-reported: Relay can return a
+          // technically-successful (200) quote whose actual output
+          // rounds to zero for a pair it doesn't have real routing
+          // data for — live-confirmed on a Robinhood Chain token with
+          // $1M+ of genuine on-chain Uniswap v3 liquidity that Relay
+          // simply hadn't indexed. This used to be accepted as-is
+          // (applyOkQuote/return, right below), which meant the
+          // fallback providers a few lines down — which query Uniswap/
+          // PancakeSwap/etc. directly and might have the real route
+          // Relay doesn't — never got a chance to run: a "successful"
+          // quote short-circuited the whole fallback chain before it
+          // could even start. Same-chain only (from === to) — Bridge
+          // always has from !== to and has no same-chain DEX aggregator
+          // to fall back to anyway.
+          const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset)).receivedAmount;
+          const relayRoundsToZero = from === to && relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
+          if (!relayRoundsToZero) {
+            applyOkQuote(quote);
+            return;
+          }
+          firstErr = new Error("Relay's route for this pair returns next to nothing at the current rate.");
         } catch (err) {
           firstErr = err;
         }
@@ -3853,8 +3897,12 @@ export default function MangoBridge() {
         if (from === to) {
           try {
             const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
-            applyOkQuote(quote);
-            return;
+            const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset)).receivedAmount;
+            const roundsToZero = relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
+            if (!roundsToZero) {
+              applyOkQuote(quote);
+              return;
+            }
           } catch {
             // Falls through to the fallback-provider check below.
           }
@@ -3878,8 +3926,25 @@ export default function MangoBridge() {
               // estimate yet" even when a fallback route (with a real
               // quoted output amount) was exactly what unlocked the
               // button.
-              applyOkQuote(null, fallbackQuote);
-              return;
+              //
+              // Same rounds-to-zero guard as the Relay quote above —
+              // a fallback provider can also return a technically-real
+              // but functionally-worthless quote for a thin/mispriced
+              // pair. Only accept it here if it's actually a usable
+              // amount; otherwise keep falling through to "unavailable"
+              // below rather than presenting a 0.0000 trade as tappable.
+              let fallbackRoundsToZero = false;
+              try {
+                const fallbackAmt = Number(formatUnits(BigInt(fallbackQuote.buyAmount), onchainDecimalsForAsset(toAsset)));
+                fallbackRoundsToZero = amtNum > 0 && Number(fallbackAmt.toFixed(4)) === 0;
+              } catch {
+                // Unparseable buyAmount — treat as not-zero, same as
+                // today's behavior, rather than block on it here.
+              }
+              if (!fallbackRoundsToZero) {
+                applyOkQuote(null, fallbackQuote);
+                return;
+              }
             }
           } catch {
             // No fallback route either — falls through to unavailable.
