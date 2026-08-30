@@ -4397,8 +4397,19 @@ export default function MangoBridge() {
               {/* Real, contextual second-wallet prompt — only appears at
                   all when Solana is genuinely involved on either side of
                   the current selection, since that's the only time a
-                  second, separate wallet is actually needed. */}
-              {(isFromSolana || CHAINS[to]?.isSolana) && !activeSolanaAddress && (
+                  second, separate wallet is actually needed.
+                  Real bug fix, live-confirmed: this used to fire on
+                  !activeSolanaAddress alone, ignoring sendToOther — so a
+                  user who checked "Send to another address" and typed a
+                  real external Solana recipient still saw "Solana wallet
+                  needed" / "Connect Solana Wallet" even though the
+                  actual route logic (needsSolanaAddressForSolanaDest,
+                  used for canBridge below) already correctly knew no
+                  wallet was required for that case. isFromSolana still
+                  always needs a connected wallet regardless of
+                  sendToOther — that's what SIGNS the outgoing
+                  transaction, not just who the destination is. */}
+              {((isFromSolana && !activeSolanaAddress) || needsSolanaAddressForSolanaDest) && (
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <div className="text-[12.5px] font-medium mb-1" style={{ color: P.textPrimary }}>Solana wallet needed</div>
                   <div className="text-[11px] mb-2.5" style={{ color: P.textMuted }}>
@@ -4464,6 +4475,21 @@ export default function MangoBridge() {
                       {destAddress.trim() && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) && (
                         <div className="text-[11px] mt-1.5" style={{ color: "#D92D20" }}>
                           Invalid {CHAINS[to].name} address
+                        </div>
+                      )}
+                      {/* Real disclosure, live-confirmed: a SOL bridge to
+                          an external address can settle as Wrapped SOL
+                          (a real, separate SPL token account) rather
+                          than a native SOL balance — confirmed directly
+                          against a real transaction's destination
+                          wallet. Not a lost-funds bug (WSOL unwraps to
+                          SOL in one permissionless step in any Solana
+                          wallet), but showing "SOL" without this note
+                          reads as a broken/missing delivery when it
+                          isn't. */}
+                      {CHAINS[to]?.isSolana && toAsset.symbol === "SOL" && (
+                        <div className="text-[11px] mt-1.5" style={{ color: P.textMuted }}>
+                          This may arrive as Wrapped SOL (WSOL) in the recipient's wallet rather than a native SOL balance — a real, separate token, unwrappable to SOL in one step from most Solana wallets if it doesn't show as spendable SOL right away.
                         </div>
                       )}
                     </>
