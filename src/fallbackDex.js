@@ -37,14 +37,19 @@ import { appFeeBps, DEV_FEE_WALLET } from "./devFeeWallets.js";
 
 const FALLBACK_QUOTE_URL = "/api/v1/bridge/fallback-quote";
 
-// Tried in this order — all three real, all fully wired; 1inch and 0x
-// first since both are verified against a real account/live docs and
-// need their own API key, kyberswap last since it needs no key but its
-// exact shape is only verified against public docs, not a live
-// account. Odos/ParaSwap are still NOT listed — see
-// fallback-quote.js's own header for the real, specific reason each is
-// still deliberately unwired.
-export const FALLBACK_PROVIDERS = ["1inch", "0x", "kyberswap"];
+// Tried in this order — all four real, all fully wired. 1inch and 0x
+// first, both verified against a real account/live docs and needing
+// their own API key. okx third — live-confirmed working for the exact
+// real-world case this fallback chain exists for (a thin Base token
+// Relay couldn't route) and aggregates the broadest set of underlying
+// DEX sources of any provider here, but its own service fee (0.5%
+// on the trade that live-confirmed it, per its own UI) runs higher
+// than the others, so it's a later resort rather than the first one
+// tried. kyberswap last since it needs no key but its exact shape is
+// only verified against public docs, not a live account. Odos/ParaSwap
+// are still NOT listed — see fallback-quote.js's own header for the
+// real, specific reason each is still deliberately unwired.
+export const FALLBACK_PROVIDERS = ["1inch", "0x", "okx", "kyberswap"];
 
 const ERC20_ALLOWANCE_ABI = [
   { type: "function", name: "allowance", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },

@@ -1,7 +1,7 @@
 // api/v1/bridge/fallback-quote.js
 //
 // POST /api/v1/bridge/fallback-quote
-// Body: { provider: '0x' | '1inch' | 'kyberswap', chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps?, feeWallet? }
+// Body: { provider: 'okx' | '0x' | '1inch' | 'kyberswap', chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps?, feeWallet? }
 //
 // Second-source same-chain swap quoting, tried only when Relay itself
 // has no route at all (relaybridge.js's own getRelayQuote, even at 0%
@@ -62,6 +62,7 @@
 // callers know NOT to also run their own post-success fee sweep for
 // that swap — see mango-mobile's own settleFallbackFeeFromNativeBalance.
 
+import crypto from "node:crypto";
 import { checkRateLimit } from "../../rateLimit.js";
 
 const NATIVE_PLACEHOLDER_ZERO = "0x0000000000000000000000000000000000000000";
@@ -286,6 +287,121 @@ async function quoteFromKyberSwap({ chainId, sellToken, buyToken, sellAmount, ta
   };
 }
 
+// OKX DEX Aggregator — live-confirmed working for the exact real-world
+// case this whole fallback chain exists for: the user successfully
+// sold a thin, newly-launched Base token through OKX Wallet's own
+// "Swap via OKX DEX" (screenshotted mid-session) on a pair Relay
+// itself couldn't route. Endpoint shapes below are verified directly
+// against OKX's own current Onchain OS docs (Get Quotes/Approve
+// Transactions/Swap reference pages, not search snippets). One real
+// structural difference from every other provider here: the request
+// needs OKX's own HMAC-SHA256 signature (OK-ACCESS-KEY/SIGN/
+// PASSPHRASE/TIMESTAMP headers, three credentials instead of one bare
+// API key) — okxSignRequest below implements OKX's own long-standing,
+// platform-wide signing convention (unchanged across their whole API
+// surface for years, the same scheme their trading API uses), not
+// independently re-verified against a dedicated auth page this session
+// since their Swap API docs only showed masked example headers. A
+// signature mismatch here fails loudly and safely (every call 401s
+// cleanly) rather than silently misrouting funds, so this is a lower-
+// risk unknown than the SHAPE mistakes elsewhere in this file (like
+// 1inch's own endpoint version) would have been.
+function okxSignRequest({ method, requestPath, timestamp, secretKey }) {
+  const prehash = `${timestamp}${method}${requestPath}`;
+  return crypto.createHmac("sha256", secretKey).update(prehash).digest("base64");
+}
+
+async function quoteFromOKX({ chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps, feeWallet }) {
+  const apiKey = process.env.OKX_API_KEY;
+  const secretKey = process.env.OKX_SECRET_KEY;
+  const passphrase = process.env.OKX_PASSPHRASE;
+  if (!apiKey || !secretKey || !passphrase) {
+    throw new Error("OKX fallback isn't configured yet (missing OKX_API_KEY/OKX_SECRET_KEY/OKX_PASSPHRASE).");
+  }
+  const sellTokenAddress = toProviderAddress(sellToken);
+  const params = new URLSearchParams({
+    // chainIndex is the same numeric chain id used everywhere else in
+    // this file — confirmed directly against OKX's own docs (chainIndex=1
+    // for Ethereum in their examples; a separate response example shows
+    // chainIndex=130 for a Unichain-native token, matching Unichain's
+    // real chain id).
+    chainIndex: String(chainId),
+    amount: sellAmount,
+    fromTokenAddress: sellTokenAddress,
+    toTokenAddress: toProviderAddress(buyToken),
+    slippagePercent: "1",
+    userWalletAddress: takerAddress,
+    // Generates the approval calldata inline (signatureData below) —
+    // confirmed against OKX's own Swap reference page: the APPROVAL
+    // spender is a DIFFERENT contract from the swap router itself
+    // (tx.to) for OKX specifically, unlike every other provider in
+    // this file, where the router IS the approval spender. Missing
+    // this would approve the wrong contract entirely.
+    approveTransaction: "true",
+    approveAmount: sellAmount,
+  });
+  if (feeBps > 0 && feeWallet) {
+    // Partner fee — confirmed against OKX's own Swap reference page:
+    // feePercent (percent, not bps — same conversion 1inch's own fee
+    // param needs; max 3% on non-Solana chains, well above anything
+    // appFeeBps ever produces) + fromTokenReferrerWalletAddress
+    // (charged on the sell side, consistent with every other
+    // provider's own fee placement in this file).
+    params.set("feePercent", String(feeBps / 100));
+    params.set("fromTokenReferrerWalletAddress", feeWallet);
+  }
+  const requestPath = `/api/v6/dex/aggregator/swap?${params.toString()}`;
+  const timestamp = new Date().toISOString();
+  const res = await fetch(`https://web3.okx.com${requestPath}`, {
+    headers: {
+      "OK-ACCESS-KEY": apiKey,
+      "OK-ACCESS-SIGN": okxSignRequest({ method: "GET", requestPath, timestamp, secretKey }),
+      "OK-ACCESS-PASSPHRASE": passphrase,
+      "OK-ACCESS-TIMESTAMP": timestamp,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`OKX quote failed (${res.status}): ${text || res.statusText}`);
+  }
+  const json = await res.json();
+  if (json?.code !== "0") {
+    throw new Error(`OKX quote failed: ${json?.msg || `code ${json?.code}`}`);
+  }
+  const result = json?.data?.[0];
+  const tx = result?.tx;
+  if (!tx?.to || !tx?.data) {
+    throw new Error("OKX returned no executable transaction for this pair.");
+  }
+  let allowanceTarget = null;
+  if (sellTokenAddress !== NATIVE_PLACEHOLDER_PROVIDER) {
+    // signatureData is an array of JSON-encoded STRINGS (confirmed in
+    // OKX's own response example), not objects — approveContract is
+    // the real spender; tx.to is a fallback only if that's somehow
+    // missing, never the primary source (see this function's own
+    // comment above on why they differ).
+    try {
+      allowanceTarget = JSON.parse(tx.signatureData?.[0] ?? "{}").approveContract ?? tx.to;
+    } catch {
+      allowanceTarget = tx.to;
+    }
+  }
+  return {
+    to: tx.to,
+    data: tx.data,
+    value: tx.value ?? "0",
+    // OKX's own docs note on this exact field: "estimated amount of
+    // the gas limit, increase this value by 50%" — applied here rather
+    // than left to the caller, since every other provider's own `gas`
+    // field is already meant to be used as-is.
+    gas: tx.gas ? String(Math.ceil(Number(tx.gas) * 1.5)) : null,
+    buyAmount: tx.minReceiveAmount ?? result?.routerResult?.toTokenAmount ?? null,
+    allowanceTarget,
+    feeCollectedInline: feeBps > 0 && !!feeWallet,
+  };
+}
+
 // Odos and ParaSwap were requested alongside 0x/1inch/KyberSwap but
 // are deliberately still NOT wired — for real, specific reasons found
 // once actually researched, not just "no live docs access":
@@ -306,6 +422,7 @@ async function quoteFromKyberSwap({ chainId, sellToken, buyToken, sellAmount, ta
 // request/response shape to build against — same shape as the
 // providers above.
 const PROVIDERS = {
+  okx: quoteFromOKX,
   "1inch": quoteFrom1inch,
   "0x": quoteFrom0x,
   kyberswap: quoteFromKyberSwap,
