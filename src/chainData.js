@@ -89,17 +89,32 @@ export const TOKEN_ADDRESSES = {
     //   ink: Circle's own "Now Available: USDC & CCTP V2 on Ink" post +
     //   two independent explorers (Blockscout, OKLink) agreeing on the
     //   same address.
-    // Abstract was checked too and deliberately left out — no
-    // independently-confirmed native USDC contract found for it, so
-    // this file's own rule (don't guess) still applies there.
     bnb: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
     hyperevm: "0xb88339cb7199b77e23db6e890353e22632ba630f",
     ink: "0x2d270e6886d130d724215a266106e6832161eaed",
+    // Added after a systematic audit pulled Relay's own live /chains
+    // response directly (the actual routing provider this app quotes
+    // through) rather than relying on a block explorer's token name.
+    // Relay's own data lists this address as "USDC" with
+    // supportsBridging:true for Abstract — previously left out because
+    // Abscan's own token page labels it "Bridged USDC (Stargate)
+    // (USDC.e)", not native Circle USDC, and no independent native-USDC
+    // deployment could be found. Circle apparently hasn't deployed
+    // native USDC on Abstract at all; this bridged representation is
+    // what Relay itself treats as the real, bridgeable USDC there, so
+    // refusing to add it was blocking a route Relay actually supports,
+    // not protecting against a fake one.
+    abstract: "0x84A71ccD554Cc1b02749b35d22F684CC8ec987e1",
   },
   USDT: {
     ethereum: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     bnb: "0x55d398326f99059fF775485246999027B3197955",
     base: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
+    // Both added the same way as Abstract's USDC above — read directly
+    // from Relay's own live /chains response, not guessed or found via
+    // a third-party token list.
+    arbitrum: "0xFd086bc7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+    solana: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
   },
   WBTC: {
     ethereum: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
@@ -117,6 +132,16 @@ export const TOKEN_ADDRESSES = {
     // file has had, given USDT0 specifically has a documented history
     // of lookalike/scam contracts showing up in ordinary searches.
     plasma: "0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb",
+    // Found via the same systematic audit as the USDC/USDT entries
+    // above (Relay's own live /chains response) — USDT0 is a LayerZero
+    // omnichain token (OFT), and HyperEVM's deployment happens to share
+    // the exact same address as Plasma's above (a real, common pattern
+    // for deterministically-deployed OFTs, not a copy/paste error).
+    hyperevm: "0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb",
+    // Ink's own separate USDT0 deployment — a genuinely different
+    // address from the Plasma/HyperEVM one above, confirmed directly
+    // from the same Relay /chains response.
+    ink: "0x0200c29006150606b650577bbe7b6248f58470c1",
   },
   USDG: {
     ethereum: "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
@@ -236,7 +261,14 @@ export const ASSET_ONCHAIN_DECIMALS = {
 // address verification.
 const ASSET_ONCHAIN_DECIMALS_BY_CHAIN = {
   bnb: { USDT: 18, USDC: 18 },
+  // Same 6-decimal exception as Plasma's own USDT0 above — HyperEVM's
+  // and Ink's own USDT0 deployments (TOKEN_ADDRESSES.USDT0.hyperevm/
+  // .ink) are also 6 decimals, not the global 18. Confirmed directly
+  // from Relay's own live /chains response (the actual routing
+  // provider), same systematic audit that surfaced these two entries.
   plasma: { USDT0: 6 },
+  hyperevm: { USDT0: 6 },
+  ink: { USDT0: 6 },
 };
 
 export function assetDecimalsForChain(chainKey, assetSymbol) {
