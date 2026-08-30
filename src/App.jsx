@@ -75,7 +75,7 @@ import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithd
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
 import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
-import { tryFallbackProviders, hasFallbackRoute } from "./fallbackDex.js";
+import { tryFallbackProviders, checkFallbackRoute } from "./fallbackDex.js";
 import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
 import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL, WALLET_ONLY_EVM_CHAINS } from "./wallet/walletChains.js";
@@ -739,10 +739,19 @@ function HandDrawnAssetGlyph({ symbol, size, color }) {
       </svg>
     );
   } else {
+    // A genuinely unrecognized symbol (no hand-drawn glyph above, and —
+    // for a custom token specifically — every real logo source
+    // CustomTokenIcon tried also came up empty). The token's own first
+    // letter reads as a deliberate, on-brand placeholder; a bare "?"
+    // read as broken/an error state, which live feedback confirmed
+    // ("token icon logo" flagged as something to fix) — same letter-
+    // avatar treatment mango-mobile's own TokenIcon.tsx already uses
+    // for this exact case.
+    const letter = (symbol?.trim()?.[0] || "?").toUpperCase();
     glyph = (
       <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
         <circle cx="12" cy="12" r="9" fill="currentColor" opacity="0.16" />
-        <text x="12" y="16.5" fontSize="12" fontWeight="700" textAnchor="middle" fill="currentColor">?</text>
+        <text x="12" y="16.5" fontSize="12" fontWeight="700" textAnchor="middle" fill="currentColor">{letter}</text>
       </svg>
     );
   }
@@ -847,20 +856,90 @@ function customTokenLogoUrl(chainId, address) {
   const normalized = chainId === "solana" ? address : address.toLowerCase();
   return `https://dd.dexscreener.com/ds-data/tokens/${slug}/${normalized}.png`;
 }
+
+// Second-tier logo source, tried only once the static-guess CDN URL
+// above 404s (a chain missing from CUSTOM_TOKEN_CHAIN_SLUG entirely, or
+// one whose slug is right but DexScreener just never published an image
+// at that exact static path) — same real API mango-mobile's own
+// assetMetadata.js already uses (fetchDexScreenerLogoUrl), ported here
+// rather than guessed fresh. Queries by address ALONE, no chain slug
+// needed, and returns whatever DexScreener's own token-pairs data
+// actually has on file — a real, live-verified image, not another
+// guessed URL pattern. Live-reported gap this closes: a token search-
+// added on Robinhood Chain (already in CUSTOM_TOKEN_CHAIN_SLUG from an
+// earlier fix) still fell to the plain "?" glyph — the static-guess URL
+// 404'd for that specific token, and until now nothing else was ever
+// tried.
+const dexScreenerImageCache = new Map();
+function fetchDexScreenerTokenImage(address) {
+  const key = String(address).toLowerCase();
+  if (dexScreenerImageCache.has(key)) return dexScreenerImageCache.get(key);
+  const promise = (async () => {
+    try {
+      const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(address)}`);
+      if (!res.ok) return null;
+      const body = await res.json();
+      const pairs = Array.isArray(body?.pairs) ? body.pairs : [];
+      for (const pair of pairs) {
+        const imageUrl = pair?.info?.imageUrl;
+        if (typeof imageUrl === "string" && imageUrl.length > 0) return imageUrl;
+      }
+      return null;
+    } catch {
+      // Best-effort — the hand-drawn fallback below is always there, so
+      // a network failure here is never user-visible as anything worse
+      // than "shows a letter instead of a logo."
+      return null;
+    }
+  })();
+  dexScreenerImageCache.set(key, promise);
+  return promise;
+}
+
 function CustomTokenIcon({ size, chainId, address, fallback }) {
-  const [failed, setFailed] = useState(false);
-  const url = customTokenLogoUrl(chainId, address);
-  if (!url || failed) return fallback;
-  return (
-    <img
-      src={url}
-      alt=""
-      width={size}
-      height={size}
-      style={{ width: size, height: size, objectFit: "contain", borderRadius: "9999px" }}
-      onError={() => setFailed(true)}
-    />
-  );
+  const [staticFailed, setStaticFailed] = useState(false);
+  const staticUrl = customTokenLogoUrl(chainId, address);
+  // undefined = not fetched yet, null = fetched, nothing found, string = a real image URL
+  const [apiUrl, setApiUrl] = useState(undefined);
+  const [apiFailed, setApiFailed] = useState(false);
+  const needsApiTier = !staticUrl || staticFailed;
+
+  useEffect(() => {
+    if (!needsApiTier || !address || apiUrl !== undefined) return;
+    let cancelled = false;
+    fetchDexScreenerTokenImage(address).then((url) => {
+      if (!cancelled) setApiUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [needsApiTier, address, apiUrl]);
+
+  if (staticUrl && !staticFailed) {
+    return (
+      <img
+        src={staticUrl}
+        alt=""
+        width={size}
+        height={size}
+        style={{ width: size, height: size, objectFit: "contain", borderRadius: "9999px" }}
+        onError={() => setStaticFailed(true)}
+      />
+    );
+  }
+  if (apiUrl && !apiFailed) {
+    return (
+      <img
+        src={apiUrl}
+        alt=""
+        width={size}
+        height={size}
+        style={{ width: size, height: size, objectFit: "contain", borderRadius: "9999px" }}
+        onError={() => setApiFailed(true)}
+      />
+    );
+  }
+  return fallback;
 }
 
 // A logo URL discovered from Relay's own live quote responses
@@ -1755,12 +1834,10 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           } catch {
             // Both Relay attempts failed — a genuine route gap, not a
             // fee-margin problem. Real second-source fallback
-            // (fallbackDex.js): 0x/1inch call Uniswap/PancakeSwap/etc.
-            // directly, real liquidity Relay might not have indexed
-            // yet. Its own failure throws firstErr (Relay's ORIGINAL
-            // error, the most informative one), never the fallback's
-            // own error, which would just be noise on top of the real
-            // reason.
+            // (fallbackDex.js): 0x/1inch/OKX/KyberSwap call
+            // Uniswap/PancakeSwap/etc. directly, real liquidity Relay
+            // might not have indexed yet.
+            let fallbackErr;
             try {
               const sellTokenAddress = fromCustom ? fromCustom.address : resolveCurrency(from, asset);
               const buyTokenAddress = toCustom ? toCustom.address : resolveCurrency(to, toAsset);
@@ -1772,8 +1849,21 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                 takerAddress: account,
                 originAmountUsd,
               });
-            } catch {
-              throw firstErr;
+            } catch (err) {
+              fallbackErr = err;
+            }
+            if (!fallbackResult) {
+              // Real bug fix, live-reported: this used to throw ONLY
+              // firstErr (Relay's own original error) — tryFallbackProviders'
+              // own aggregate message (each of 1inch/0x/OKX/KyberSwap's
+              // own specific failure reason) was silently discarded, so
+              // a genuine Relay AMOUNT_TOO_LOW gave zero visibility into
+              // whether the fallback providers were even reachable for
+              // this chain/pair, let alone why each one failed. Relay's
+              // error stays first (still the most informative single
+              // reason a same-chain swap failed), with the fallback
+              // detail appended rather than replacing it.
+              throw new Error(fallbackErr?.message ? `${firstErr.message} Also tried 1inch/0x/OKX/KyberSwap: ${fallbackErr.message}` : firstErr.message);
             }
           }
         }
@@ -3544,9 +3634,9 @@ export default function MangoBridge() {
       // discarded — see summarizeQuote's own comment. The quote itself
       // is kept here so the fee/ETA/received preview below can show
       // Relay's real numbers instead of a static estimate.
-      function applyOkQuote(quote) {
+      function applyOkQuote(quote, fallbackQuote) {
         if (cancelled) return;
-        setRouteCheck({ status: "ok", quote });
+        setRouteCheck({ status: "ok", quote, fallbackQuote: fallbackQuote ?? null });
         if (!quote) return;
         const logoUpdates = extractLogoUpdates(quote);
         if (Object.keys(logoUpdates).length > 0) {
@@ -3619,7 +3709,7 @@ export default function MangoBridge() {
           try {
             const sellTokenAddress = fromAsset.custom ? fromAsset.address : resolveCurrency(from, fromAsset.symbol);
             const buyTokenAddress = toAsset.custom ? toAsset.address : resolveCurrency(to, toAsset.symbol);
-            const available = await hasFallbackRoute({
+            const fallbackQuote = await checkFallbackRoute({
               chainId: resolveChainId(from),
               sellToken: sellTokenAddress,
               buyToken: buyTokenAddress,
@@ -3627,14 +3717,16 @@ export default function MangoBridge() {
               takerAddress: activeAccount,
               originAmountUsd,
             });
-            if (available) {
-              // No Relay-shaped quote to show — the fee/ETA/received
-              // preview below already falls back to its own static
-              // per-chain estimate whenever routeCheck has no live
-              // quote (see its own comment), which is exactly right
-              // here: a route DOES exist, just not one this preview can
-              // show real numbers for without actually executing it.
-              applyOkQuote(null);
+            if (fallbackQuote) {
+              // No Relay-shaped quote to show, but checkFallbackRoute's
+              // own real, provider-quoted buyAmount is — the "received"
+              // calc below now reads routeCheck.fallbackQuote directly
+              // instead of leaving this blank. Real gap this closes,
+              // live-reported: the preview used to show "No price
+              // estimate yet" even when a fallback route (with a real
+              // quoted output amount) was exactly what unlocked the
+              // button.
+              applyOkQuote(null, fallbackQuote);
               return;
             }
           } catch {
@@ -3655,6 +3747,22 @@ export default function MangoBridge() {
   // below are a static per-chain/per-asset estimate that never reflects
   // Relay at all, live route or not.
   const liveQuoteSummary = routeCheck.status === "ok" && routeCheck.quote ? summarizeQuote(routeCheck.quote, onchainDecimalsForAsset(toAsset)) : null;
+  // A fallback-provider quote (1inch/0x/OKX/KyberSwap — see
+  // checkFallbackRoute's own comment) isn't Relay-shaped, so
+  // summarizeQuote can't parse it, but its own buyAmount is real,
+  // provider-quoted data in the buy token's own on-chain decimals —
+  // formatted here rather than left blank. Guarded the same way every
+  // other decimals lookup in this file already is: a symbol
+  // onchainDecimalsForAsset doesn't know throws, which just means no
+  // preview number rather than a wrong one.
+  let fallbackReceivedAmount = null;
+  if (routeCheck.status === "ok" && !routeCheck.quote && routeCheck.fallbackQuote?.buyAmount) {
+    try {
+      fallbackReceivedAmount = Number(formatUnits(BigInt(routeCheck.fallbackQuote.buyAmount), onchainDecimalsForAsset(toAsset)));
+    } catch {
+      fallbackReceivedAmount = null;
+    }
+  }
   // A same-chain swap is one transaction, not two — charging both
   // "source gas" and "destination gas" for the same chain would double
   // count it. Bridge (from !== to) keeps paying for both legs. Falls
@@ -3689,7 +3797,7 @@ export default function MangoBridge() {
   // no wallet connected yet).
   const knownPrice = fromAsset.price > 0 && toAsset.price > 0;
   const amtNumUsdValue = knownPrice ? (amtNum - devFeeAmount) * fromAsset.price - fee : null;
-  const received = liveQuoteSummary?.receivedAmount ?? (amtNumUsdValue !== null ? Math.max(amtNumUsdValue / toAsset.price, 0) : null);
+  const received = liveQuoteSummary?.receivedAmount ?? fallbackReceivedAmount ?? (amtNumUsdValue !== null ? Math.max(amtNumUsdValue / toAsset.price, 0) : null);
   const availableBalance = !usingLiveBalance
     ? null
     : isFromSolana

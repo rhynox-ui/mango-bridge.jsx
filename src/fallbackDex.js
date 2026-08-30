@@ -123,19 +123,28 @@ async function executeFallbackQuote({ chainId, account, sellTokenAddress, quote 
  * pair — so the button only stays disabled when NO route exists
  * anywhere, not just when Relay's own normal-fee quote happens to fail
  * first.
+ *
+ * Returns the winning quote's own {provider, buyAmount}, not just a
+ * boolean — real gap this closes, live-reported: the preview's own
+ * "You receive" number stayed blank ("No price estimate yet") even
+ * when this exact check found a real, working fallback route, because
+ * the quote it found was being discarded right after confirming it
+ * existed. buyAmount is real, provider-quoted data (raw base units in
+ * the buy token's own decimals) — the caller formats it, never
+ * fabricates it.
  */
-export async function hasFallbackRoute({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd }) {
+export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd }) {
   for (const provider of FALLBACK_PROVIDERS) {
     try {
-      await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
-      return true;
+      const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
+      return { provider, buyAmount: quote.buyAmount ?? null };
     } catch {
       // Try the next provider — same "no route from this one, not
       // necessarily no route at all" reasoning tryFallbackProviders
       // itself already uses.
     }
   }
-  return false;
+  return null;
 }
 
 /**
