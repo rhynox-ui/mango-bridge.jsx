@@ -81,7 +81,15 @@ async function quoteFrom1inch({ chainId, sellToken, buyToken, sellAmount, takerA
     slippage: "1",
     disableEstimate: "true",
   });
-  const res = await fetch(`https://api.1inch.dev/swap/v6.0/${chainId}/swap?${params.toString()}`, {
+  // api.1inch.com, not api.1inch.dev — confirmed directly from the real
+  // 1inch Business portal's own Authentication docs (the user's own
+  // account is on Business, not the older free-tier Developer Portal,
+  // and its docs' own curl example uses this domain for a real Swap
+  // API path). The exact /swap/v6.0/{chainId}/swap path below is still
+  // the one from this file's original research, not independently
+  // re-confirmed against this account's own "Classic Swap" doc page —
+  // flagged for a real test once a key exists.
+  const res = await fetch(`https://api.1inch.com/swap/v6.0/${chainId}/swap?${params.toString()}`, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
   });
   if (!res.ok) {
