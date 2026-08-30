@@ -85,7 +85,7 @@ import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SY
 import { isMainnet, getWagmiChain } from "./networkMode.js";
 import { LaunchpadTab } from "./Launchpad.jsx";
 import { MangoWalletTab } from "./MangoWallet.jsx";
-import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
+import { PALETTE, fmt, timeAgo } from "./theme.js";
 import { AdminReferralsPage } from "./AdminReferralsPage.jsx";
 
 // ---------------------------------------------------------------------------
@@ -622,7 +622,7 @@ function ChainDropdown({ value, exclude, onChange, P, chainOrder = CHAIN_ORDER }
               <button key={id} onClick={() => { onChange(id); setOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-left" style={{ background: "transparent" }}>
                 <ChainBadge id={id} size={18} />
                 <span className="text-[13px]" style={{ color: P.textPrimary }}>{cc.name}</span>
-                {id === value && <Check size={13} color={LIME} className="ml-auto" />}
+                {id === value && <Check size={13} color={P.ctaBg} className="ml-auto" />}
               </button>
             );
           })}
@@ -1454,7 +1454,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                         <span className="text-[11px] font-mono" style={{ color: P.textMuted }}>{trimmedQuery.slice(0, 6)}…{trimmedQuery.slice(-4)}</span>
                       </div>
                     </div>
-                    <span className="text-[16px] font-semibold" style={{ color: LIME_DEEP }}>+</span>
+                    <span className="text-[16px] font-semibold" style={{ color: P.ctaBg }}>+</span>
                   </button>
                 ) : alreadyKnownToken ? (
                   <button onClick={handleSelectAlreadyKnown} className="w-full flex items-center justify-between gap-2.5">
@@ -1491,7 +1491,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                       onClick={handleAddSplToken}
                       disabled={!splSymbolInput.trim()}
                       className="w-full py-2 rounded-lg text-[12.5px] font-semibold"
-                      style={{ background: splSymbolInput.trim() ? `${LIME}1A` : P.pillBg, color: splSymbolInput.trim() ? LIME_DEEP : P.textMuted }}
+                      style={{ background: splSymbolInput.trim() ? `${P.ctaBg}1A` : P.pillBg, color: splSymbolInput.trim() ? P.ctaBg : P.textMuted }}
                     >
                       Add token
                     </button>
@@ -1508,10 +1508,10 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   );
 }
 
-function StatusPill({ status }) {
+function StatusPill({ status, P }) {
   const done = status === "complete";
   return (
-    <span className="text-[10.5px] font-medium px-2 py-0.5 rounded-full" style={{ background: done ? `${LIME}1A` : "#F0B84D1A", border: `1px solid ${done ? LIME : "#F0B84D"}40`, color: done ? LIME : "#F0B84D" }}>
+    <span className="text-[10.5px] font-medium px-2 py-0.5 rounded-full" style={{ background: done ? `${P.ctaBg}1A` : P.warningBg, border: `1px solid ${done ? P.ctaBg + "40" : P.warningBorder}`, color: done ? P.ctaBg : P.warningText }}>
       {done ? "Complete" : "Pending"}
     </span>
   );
@@ -1645,7 +1645,7 @@ function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
   return "relay";
 }
 
-function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, receivedRoundsToZero, devFeeAmount, originAmountUsd, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated, onPendingHash }) {
+function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, receivedRoundsToZero, devFeeAmount, originAmountUsd, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated, onPendingHash, P }) {
   const kind = getTransferKind(from, to, asset, toAsset);
   const isReal = kind !== "simulated";
   // Which OP Stack chain this op-deposit/op-withdraw actually targets —
@@ -2063,57 +2063,57 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.75)", backdropFilter: "blur(4px)" }}>
-      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: "#14171D", border: "1px solid #262C36" }}>
+      <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
         <div className="flex items-center justify-between mb-4">
-          <span className="font-mono text-[11px] tracking-wide" style={{ color: "#5B6472" }}>
+          <span className="font-mono text-[11px] tracking-wide" style={{ color: P.textSecondary }}>
             {phase === "review" ? (isReal ? "real transfer" : displayHash) : displayHash.slice(0, 18)}
           </span>
           {phase === "progress" ? (
             <div className="flex items-center gap-2.5">
-              <span className="text-[11px] uppercase tracking-wider" style={{ color: LIME }}>In progress</span>
+              <span className="text-[11px] uppercase tracking-wider" style={{ color: P.ctaBg }}>In progress</span>
               <button onClick={onClose} title="Go back — your transaction keeps running in the background">
-                <ArrowLeft size={15} color="#5B6472" />
+                <ArrowLeft size={15} color={P.textSecondary} />
               </button>
             </div>
           ) : (
-            <button onClick={onClose}><X size={16} color="#5B6472" /></button>
+            <button onClick={onClose}><X size={16} color={P.textSecondary} /></button>
           )}
         </div>
 
         {phase === "progress" && (
-          <div className="text-[11px] mb-3 -mt-2" style={{ color: "#4A515D" }}>
+          <div className="text-[11px] mb-3 -mt-2" style={{ color: P.textMuted }}>
             You can go back — this keeps running in the background.
           </div>
         )}
 
         <div className="flex items-center justify-center gap-3 mb-5">
           <ChainBadge id={from} size={22} />
-          <ArrowUpRight size={13} color="#4A515D" />
+          <ArrowUpRight size={13} color={P.textMuted} />
           <ChainBadge id={to} size={22} />
         </div>
 
-        <div className="text-center mb-5 py-3 rounded-xl" style={{ background: "#0E1116", border: "1px solid #1E232B" }}>
-          <div className="font-display text-2xl font-semibold" style={{ color: "#F2F4F7" }}>{amount || "0"} {asset}</div>
-          <div className="text-[12px] mt-0.5" style={{ color: "#5B6472" }}>{a.name} → {b.name}</div>
-          {destination && <div className="text-[11px] mt-1 font-mono" style={{ color: "#4A515D" }}>to {destination}</div>}
+        <div className="text-center mb-5 py-3 rounded-xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <div className="font-display text-2xl font-semibold" style={{ color: P.textPrimary }}>{amount || "0"} {asset}</div>
+          <div className="text-[12px] mt-0.5" style={{ color: P.textSecondary }}>{a.name} → {b.name}</div>
+          {destination && <div className="text-[11px] mt-1 font-mono" style={{ color: P.textMuted }}>to {destination}</div>}
         </div>
 
         {phase === "review" && (
           <>
             <div className="flex flex-col gap-2.5 mb-5">
-              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Network fee</span><span className="font-mono" style={{ color: "#D7DBE2" }}>${fmt(fee, 2)}</span></div>
-              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Protocol fee ({formatFeePct(DEV_FEE_PCT)}%)</span><span className="font-mono" style={{ color: "#D7DBE2" }}>{fmt(devFeeAmount, 4)} {asset}</span></div>
-              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Estimated time</span><span style={{ color: "#D7DBE2" }}>{kind === "op-withdraw" || kind === "arb-withdraw" ? "~7 days to finalize" : etaLabel}</span></div>
-              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>You receive</span><span className="font-mono font-medium" style={{ color: "#F2F4F7" }}>{received !== null ? `${fmt(received, 4)} ${toAsset}${asset !== toAsset ? " (estimate)" : ""}` : "Set by Relay's live quote"}</span></div>
+              <div className="flex items-center justify-between text-[13px]"><span style={{ color: P.textSecondary }}>Network fee</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(fee, 2)}</span></div>
+              <div className="flex items-center justify-between text-[13px]"><span style={{ color: P.textSecondary }}>Protocol fee ({formatFeePct(DEV_FEE_PCT)}%)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmt(devFeeAmount, 4)} {asset}</span></div>
+              <div className="flex items-center justify-between text-[13px]"><span style={{ color: P.textSecondary }}>Estimated time</span><span style={{ color: P.textPrimary }}>{kind === "op-withdraw" || kind === "arb-withdraw" ? "~7 days to finalize" : etaLabel}</span></div>
+              <div className="flex items-center justify-between text-[13px]"><span style={{ color: P.textSecondary }}>You receive</span><span className="font-mono font-medium" style={{ color: P.textPrimary }}>{received !== null ? `${fmt(received, 4)} ${toAsset}${asset !== toAsset ? " (estimate)" : ""}` : "Set by Relay's live quote"}</span></div>
             </div>
             {receivedRoundsToZero && (
-              <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: "#F0B84D14", border: "1px solid #F0B84D40", color: "#F0B84D" }}>
-                <AlertTriangle size={14} className="shrink-0 mt-0.5" color="#F0B84D" />
+              <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: P.warningBg, border: `1px solid ${P.warningBorder}`, color: P.warningText }}>
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" color={P.warningText} />
                 This amount would return next to nothing at the current rate — you're likely to lose most of what you send. Consider a larger amount, or check that this token/pair actually has a working route before confirming.
               </div>
             )}
-            <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: isReal ? `${LIME}14` : "#1C212A", border: `1px solid ${isReal ? LIME + "40" : "#262C36"}`, color: isReal ? LIME : "#8B95A1" }}>
-              <AlertTriangle size={14} className="shrink-0 mt-0.5" color={isReal ? LIME : "#F0B84D"} />
+            <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: isReal ? `${P.ctaBg}14` : P.pillBg, border: `1px solid ${isReal ? P.ctaBg + "40" : P.panelBorder}`, color: isReal ? P.ctaBg : P.textSecondary }}>
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" color={isReal ? P.ctaBg : P.warningText} />
               {kind === "cctp" && "Real testnet transfer via Circle's CCTP. You'll be asked to approve and sign transactions."}
               {kind === "op-deposit" && `Real testnet deposit via ${CHAINS[opL2Key].name}'s official bridge contract. One transaction to sign.`}
               {kind === "op-withdraw" && `This only starts a real withdrawal. ${CHAINS[opL2Key].name} requires a 7-day challenge period — you'll need to come back later to prove and finalize it from the Withdrawals tab.`}
@@ -2127,11 +2127,11 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
               {kind === "simulated" && "Simulated route — real transfers aren't wired up for this chain/asset pair yet."}
             </div>
             {(kind === "op-deposit" || kind === "arb-deposit") && (
-              <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[11.5px]" style={{ background: "#1C212A", border: "1px solid #262C36", color: "#8B95A1" }}>
+              <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[11.5px]" style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, color: P.textSecondary }}>
                 📝 Deposits like this are fast, but heads up — if you ever bridge this back the other way, that withdrawal takes a real 7-day challenge period, not minutes.
               </div>
             )}
-            <button onClick={handleConfirm} className="w-full py-3 rounded-xl font-display font-semibold text-[14.5px]" style={{ background: `linear-gradient(135deg, ${LIME}, ${LIME_DEEP})`, color: "#10130A" }}>
+            <button onClick={handleConfirm} className="w-full py-3 rounded-xl font-display font-semibold text-[14.5px]" style={{ background: P.ctaBg, color: P.ctaText }}>
               {kind === "op-withdraw" || kind === "arb-withdraw" ? "Start withdrawal" : from === to ? "Confirm swap" : "Confirm bridge"}
             </button>
           </>
@@ -2139,11 +2139,11 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
 
         {phase === "error" && (
           <div className="flex flex-col gap-3">
-            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-[12.5px] font-mono" style={{ background: "#2A1414", border: "1px solid #4A1E1E", color: "#E5726B" }}>
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-[12.5px] font-mono" style={{ background: P.dangerBg, border: `1px solid ${P.dangerBorder}`, color: P.dangerText }}>
               {errorMessage}
             </div>
             {isReal && realBurnHash && (
-              <div className="flex flex-col gap-2 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: `${LIME}14`, border: `1px solid ${LIME}40`, color: LIME }}>
+              <div className="flex flex-col gap-2 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: `${P.ctaBg}14`, border: `1px solid ${P.ctaBg}40`, color: P.ctaBg }}>
                 <span>Your transaction likely succeeded on-chain — this error happened after. Hash: <span className="font-mono">{realBurnHash.slice(0, 10)}…{realBurnHash.slice(-6)}</span></span>
                 {(kind === "op-withdraw" || kind === "arb-withdraw") && <span>Go to the Withdrawals tab and use "Track by hash" with the full hash to recover it.</span>}
                 {(kind === "wormhole" || kind === "wormhole-reverse") && <span>Your ETH is locked/burned on {kind === "wormhole" ? CHAINS.ethereum.name : CHAINS.bnb.name} — nothing is lost. Wait a bit for the guardians to finish, then tap Resume below.</span>}
@@ -2174,12 +2174,12 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                   }
                 }}
                 className="w-full py-3 rounded-xl font-display font-semibold text-[14.5px]"
-                style={{ background: `linear-gradient(135deg, ${LIME}, ${LIME_DEEP})`, color: "#10130A" }}
+                style={{ background: P.ctaBg, color: P.ctaText }}
               >
                 Resume Wormhole transfer
               </button>
             )}
-            <button onClick={onClose} className="w-full py-2.5 rounded-lg text-[13.5px] font-medium" style={{ background: "#1C212A", color: "#B6BEC9", border: "1px solid #262C36" }}>
+            <button onClick={onClose} className="w-full py-2.5 rounded-lg text-[13.5px] font-medium" style={{ background: P.pillBg, color: P.textSecondary, border: `1px solid ${P.panelBorder}` }}>
               Close
             </button>
           </div>
@@ -2191,35 +2191,35 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
               const state = i < stepIndex ? "done" : i === stepIndex && phase === "progress" ? "active" : phase !== "progress" ? "done" : "pending";
               return (
                 <div key={s.key} className="flex items-center gap-3">
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0" style={{ background: state === "done" ? `${LIME}22` : state === "active" ? `${LIME}22` : "#181C24", border: state === "done" ? `1px solid ${LIME}` : state === "active" ? `1px solid ${LIME}` : "1px solid #262C36" }}>
-                    {state === "done" && <Check size={11} color={LIME} />}
-                    {state === "active" && <Loader2 size={11} color={LIME} className="animate-spin" />}
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0" style={{ background: state === "done" ? `${P.ctaBg}22` : state === "active" ? `${P.ctaBg}22` : P.pillBg, border: state === "done" ? `1px solid ${P.ctaBg}` : state === "active" ? `1px solid ${P.ctaBg}` : `1px solid ${P.panelBorder}` }}>
+                    {state === "done" && <Check size={11} color={P.ctaBg} />}
+                    {state === "active" && <Loader2 size={11} color={P.ctaBg} className="animate-spin" />}
                   </div>
-                  <span className="text-[13.5px]" style={{ color: state === "pending" ? "#4A515D" : "#D7DBE2" }}>{s.label}</span>
+                  <span className="text-[13.5px]" style={{ color: state === "pending" ? P.textMuted : P.textPrimary }}>{s.label}</span>
                 </div>
               );
             })}
 
             {phase === "withdrawal-initiated" && (
               <div className="mt-2 flex flex-col gap-2">
-                <div className="flex items-center gap-2 text-[13px] px-3 py-2.5 rounded-lg" style={{ background: `${LIME}14`, border: `1px solid ${LIME}40`, color: LIME }}>
+                <div className="flex items-center gap-2 text-[13px] px-3 py-2.5 rounded-lg" style={{ background: `${P.ctaBg}14`, border: `1px solid ${P.ctaBg}40`, color: P.ctaBg }}>
                   <Check size={14} /> Withdrawal started
                 </div>
-                <div className="text-[12px] px-1" style={{ color: "#8B95A1" }}>
+                <div className="text-[12px] px-1" style={{ color: P.textSecondary }}>
                   {kind === "op-withdraw"
                     ? "Check the Withdrawals tab in about an hour to prove it, then again in ~7 days to finalize."
                     : "Check the Withdrawals tab in ~7 days to finalize it."}
                 </div>
-                <a href={`${a.explorer}${realBurnHash}`} target="_blank" rel="noopener noreferrer" className="w-full py-2.5 rounded-lg text-[13.5px] font-medium flex items-center justify-center gap-1.5" style={{ background: "#1C212A", color: "#B6BEC9", border: "1px solid #262C36" }}>
+                <a href={`${a.explorer}${realBurnHash}`} target="_blank" rel="noopener noreferrer" className="w-full py-2.5 rounded-lg text-[13.5px] font-medium flex items-center justify-center gap-1.5" style={{ background: P.pillBg, color: P.textSecondary, border: `1px solid ${P.panelBorder}` }}>
                   View tx on {a.name} <ExternalLink size={13} />
                 </a>
-                <button onClick={onClose} className="w-full py-2 text-[12.5px]" style={{ color: "#5B6472" }}>Close</button>
+                <button onClick={onClose} className="w-full py-2 text-[12.5px]" style={{ color: P.textSecondary }}>Close</button>
               </div>
             )}
 
             {phase === "done" && (
               <div className="mt-2 flex flex-col gap-2">
-                <div className="flex items-center gap-2 text-[13px] px-3 py-2.5 rounded-lg" style={{ background: `${LIME}14`, border: `1px solid ${LIME}40`, color: LIME }}>
+                <div className="flex items-center gap-2 text-[13px] px-3 py-2.5 rounded-lg" style={{ background: `${P.ctaBg}14`, border: `1px solid ${P.ctaBg}40`, color: P.ctaBg }}>
                   <Check size={14} /> {from === to ? "Swap complete" : "Bridge complete"}
                 </div>
                 {isReal ? (
@@ -2229,7 +2229,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                       target="_blank"
                       rel="noopener noreferrer"
                       className="w-full py-2.5 rounded-lg text-[13.5px] font-medium flex items-center justify-center gap-1.5"
-                      style={{ background: "#1C212A", color: "#B6BEC9", border: "1px solid #262C36" }}
+                      style={{ background: P.pillBg, color: P.textSecondary, border: `1px solid ${P.panelBorder}` }}
                     >
                       View {kind === "op-deposit" || kind === "arb-deposit" ? "L1" : kind === "wormhole" ? "lock" : "burn"} tx on {a.name} <ExternalLink size={13} />
                     </a>
@@ -2239,28 +2239,28 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                         target="_blank"
                         rel="noopener noreferrer"
                         className="w-full py-2.5 rounded-lg text-[13.5px] font-medium flex items-center justify-center gap-1.5"
-                        style={{ background: "#1C212A", color: "#B6BEC9", border: "1px solid #262C36" }}
+                        style={{ background: P.pillBg, color: P.textSecondary, border: `1px solid ${P.panelBorder}` }}
                       >
                         View {kind === "op-deposit" ? "L2" : "mint"} tx on {b.name} <ExternalLink size={13} />
                       </a>
                     )}
                     {!realMintHash && (kind === "arb-deposit") && (
-                      <div className="w-full py-2 text-[11.5px] text-center" style={{ color: "#4A515D" }}>
+                      <div className="w-full py-2 text-[11.5px] text-center" style={{ color: P.textMuted }}>
                         Funds typically arrive on {b.name} within a few minutes — check your balance there.
                       </div>
                     )}
                     {!realMintHash && kind === "relay" && (
-                      <div className="w-full py-2 text-[11.5px] text-center" style={{ color: "#4A515D" }}>
+                      <div className="w-full py-2 text-[11.5px] text-center" style={{ color: P.textMuted }}>
                         Relay's solver completes the transfer on {b.name} using its own wallet, not yours — there's no destination hash tied to your address to show. Check your balance there in a minute or two.
                       </div>
                     )}
                   </>
                 ) : (
-                  <div className="w-full py-2.5 rounded-lg text-[12.5px] text-center" style={{ background: "#161A20", color: "#4A515D", border: "1px solid #1E232B" }}>
+                  <div className="w-full py-2.5 rounded-lg text-[12.5px] text-center" style={{ background: P.panel, color: P.textMuted, border: `1px solid ${P.panelBorder}` }}>
                     Simulated transfer — no real explorer record exists
                   </div>
                 )}
-                <button onClick={onClose} className="w-full py-2 text-[12.5px]" style={{ color: "#5B6472" }}>
+                <button onClick={onClose} className="w-full py-2 text-[12.5px]" style={{ color: P.textSecondary }}>
                   Close
                 </button>
               </div>
@@ -2276,18 +2276,18 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
 // History
 // ---------------------------------------------------------------------------
 
-function HistoryTab({ history, onReset }) {
+function HistoryTab({ history, onReset, P }) {
   if (history.length === 0) {
     return (
-      <div className="rounded-2xl p-8 flex flex-col items-center text-center gap-2" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
-        <HistoryIcon size={22} color="#333A44" />
-        <div className="text-[13.5px]" style={{ color: "#8B95A1" }}>No bridges yet</div>
-        <div className="text-[12px]" style={{ color: "#4A515D" }}>Your transfers will show up here as soon as they broadcast — including still-pending ones.</div>
+      <div className="rounded-2xl p-8 flex flex-col items-center text-center gap-2" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <HistoryIcon size={22} color={P.textMuted} />
+        <div className="text-[13.5px]" style={{ color: P.textSecondary }}>No bridges yet</div>
+        <div className="text-[12px]" style={{ color: P.textMuted }}>Your transfers will show up here as soon as they broadcast — including still-pending ones.</div>
       </div>
     );
   }
   return (
-    <div className="rounded-2xl overflow-hidden" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
+    <div className="rounded-2xl overflow-hidden" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
       {history.map((tx, i) => {
         // Real gap this closes: every row showed its own real,
         // already-known hash as plain, unclickable text — no way to
@@ -2303,26 +2303,26 @@ function HistoryTab({ history, onReset }) {
         const explorerBase = CHAINS[tx.from]?.explorer;
         const explorerUrl = explorerBase && tx.hash ? `${explorerBase}${tx.hash}` : null;
         return (
-          <div key={tx.id} className="flex items-center gap-3 px-4 py-3.5" style={{ borderTop: i === 0 ? "none" : "1px solid #1A1E26" }}>
+          <div key={tx.id} className="flex items-center gap-3 px-4 py-3.5" style={{ borderTop: i === 0 ? "none" : `1px solid ${P.divider}` }}>
             <div className="flex items-center -space-x-1.5">
               <ChainBadge id={tx.from} size={22} />
               <ChainBadge id={tx.to} size={22} />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 text-[13.5px] font-medium" style={{ color: "#F2F4F7" }}>{fmt(tx.amount, 2)} {tx.symbol}<ArrowUpRight size={11} color="#4A515D" /></div>
+              <div className="flex items-center gap-1.5 text-[13.5px] font-medium" style={{ color: P.textPrimary }}>{fmt(tx.amount, 2)} {tx.symbol}<ArrowUpRight size={11} color={P.textMuted} /></div>
               {explorerUrl ? (
-                <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="text-[11.5px] font-mono underline decoration-dotted underline-offset-2 hover:opacity-80" style={{ color: "#4A515D" }}>
+                <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="text-[11.5px] font-mono underline decoration-dotted underline-offset-2 hover:opacity-80" style={{ color: P.textMuted }}>
                   {tx.hash} · {timeAgo(tx.timestamp)}
                 </a>
               ) : (
-                <div className="text-[11.5px] font-mono" style={{ color: "#4A515D" }}>{tx.hash} · {timeAgo(tx.timestamp)}</div>
+                <div className="text-[11.5px] font-mono" style={{ color: P.textMuted }}>{tx.hash} · {timeAgo(tx.timestamp)}</div>
               )}
             </div>
-            <StatusPill status={tx.status} />
+            <StatusPill status={tx.status} P={P} />
           </div>
         );
       })}
-      <button onClick={onReset} className="w-full flex items-center justify-center gap-1.5 py-2.5 text-[12px]" style={{ color: "#4A515D", borderTop: "1px solid #1A1E26" }}>
+      <button onClick={onReset} className="w-full flex items-center justify-center gap-1.5 py-2.5 text-[12px]" style={{ color: P.textMuted, borderTop: `1px solid ${P.divider}` }}>
         <RotateCcw size={12} /> Clear history
       </button>
     </div>
@@ -2352,7 +2352,7 @@ function opStackWithdrawalLabel(l2Key) {
 }
 const CHAIN_TYPE_LABEL = { arb: "Robinhood Chain → Ethereum" };
 
-function WithdrawalRow({ w, onUpdate }) {
+function WithdrawalRow({ w, onUpdate, P }) {
   const [checking, setChecking] = useState(false);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState("");
@@ -2405,27 +2405,27 @@ function WithdrawalRow({ w, onUpdate }) {
   const daysLeft = w.etaSeconds ? Math.ceil(w.etaSeconds / 86400) : null;
 
   return (
-    <div className="px-4 py-3.5" style={{ borderTop: "1px solid #1A1E26" }}>
+    <div className="px-4 py-3.5" style={{ borderTop: `1px solid ${P.divider}` }}>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[13.5px] font-medium" style={{ color: "#F2F4F7" }}>{w.amount} ETH — {isArb ? CHAIN_TYPE_LABEL.arb : opStackWithdrawalLabel(l2Key)}</span>
-        <span className="text-[11px]" style={{ color: "#4A515D" }}>{timeAgo(w.initiatedAt)}</span>
+        <span className="text-[13.5px] font-medium" style={{ color: P.textPrimary }}>{w.amount} ETH — {isArb ? CHAIN_TYPE_LABEL.arb : opStackWithdrawalLabel(l2Key)}</span>
+        <span className="text-[11px]" style={{ color: P.textMuted }}>{timeAgo(w.initiatedAt)}</span>
       </div>
-      <div className="text-[12px] mb-2.5" style={{ color: "#8B95A1" }}>
+      <div className="text-[12px] mb-2.5" style={{ color: P.textSecondary }}>
         {w.status ? WITHDRAWAL_STATUS_LABEL[w.status] || w.status : "Status unknown — tap Check status"}
         {daysLeft ? ` (~${daysLeft}d left)` : ""}
       </div>
-      {error && <div className="text-[11px] font-mono mb-2" style={{ color: "#E5726B" }}>{error}</div>}
+      {error && <div className="text-[11px] font-mono mb-2" style={{ color: P.dangerText }}>{error}</div>}
       <div className="flex gap-2">
-        <button onClick={checkStatus} disabled={checking || acting} className="flex-1 py-2 rounded-lg text-[12px] font-medium" style={{ background: "#1C212A", color: "#B6BEC9", border: "1px solid #262C36" }}>
+        <button onClick={checkStatus} disabled={checking || acting} className="flex-1 py-2 rounded-lg text-[12px] font-medium" style={{ background: P.pillBg, color: P.textSecondary, border: `1px solid ${P.panelBorder}` }}>
           {checking ? "Checking…" : "Check status"}
         </button>
         {!isArb && w.status === "ready-to-prove" && (
-          <button onClick={prove} disabled={acting} className="flex-1 py-2 rounded-lg text-[12px] font-semibold" style={{ background: LIME, color: "#10130A" }}>
+          <button onClick={prove} disabled={acting} className="flex-1 py-2 rounded-lg text-[12px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
             {acting ? "Proving…" : "Prove"}
           </button>
         )}
         {w.status === "ready-to-finalize" && (
-          <button onClick={finalize} disabled={acting} className="flex-1 py-2 rounded-lg text-[12px] font-semibold" style={{ background: LIME, color: "#10130A" }}>
+          <button onClick={finalize} disabled={acting} className="flex-1 py-2 rounded-lg text-[12px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
             {acting ? "Finalizing…" : "Finalize"}
           </button>
         )}
@@ -2434,7 +2434,7 @@ function WithdrawalRow({ w, onUpdate }) {
   );
 }
 
-function TrackByHashForm({ onTracked }) {
+function TrackByHashForm({ onTracked, P }) {
   const [hash, setHash] = useState("");
   // "arb" for Robinhood Chain, otherwise this IS the l2Key directly
   // (base/ink/unichain) — trackWithdrawalByHash needs to know which OP
@@ -2463,13 +2463,13 @@ function TrackByHashForm({ onTracked }) {
   }
 
   return (
-    <div className="rounded-2xl p-4 mb-3" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
-      <div className="text-[12.5px] font-medium mb-2" style={{ color: "#8B95A1" }}>
+    <div className="rounded-2xl p-4 mb-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+      <div className="text-[12.5px] font-medium mb-2" style={{ color: P.textSecondary }}>
         Had a withdrawal succeed on-chain but not show up here? Track it by hash:
       </div>
-      <div className="flex gap-1 mb-2 p-1 rounded-lg w-fit flex-wrap" style={{ background: "#0E1116" }}>
+      <div className="flex gap-1 mb-2 p-1 rounded-lg w-fit flex-wrap" style={{ background: P.input }}>
         {[{ id: "base", label: "Base" }, { id: "ink", label: "Ink" }, { id: "unichain", label: "Unichain" }, { id: "arb", label: "Robinhood Chain" }].map((c) => (
-          <button key={c.id} onClick={() => setChainType(c.id)} className="px-3 py-1 rounded-md text-[11.5px] font-medium" style={{ background: chainType === c.id ? "#1E232B" : "transparent", color: chainType === c.id ? "#F2F4F7" : "#5B6472" }}>
+          <button key={c.id} onClick={() => setChainType(c.id)} className="px-3 py-1 rounded-md text-[11.5px] font-medium" style={{ background: chainType === c.id ? P.panelBorder : "transparent", color: chainType === c.id ? P.textPrimary : P.textSecondary }}>
             {c.label}
           </button>
         ))}
@@ -2480,31 +2480,31 @@ function TrackByHashForm({ onTracked }) {
           onChange={(e) => setHash(e.target.value)}
           placeholder="0x… L2 transaction hash"
           className="flex-1 px-3 py-2 rounded-lg text-[12.5px] font-mono"
-          style={{ background: "#0E1116", border: "1px solid #1E232B", color: "#F2F4F7" }}
+          style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
         />
-        <button onClick={handleTrack} disabled={loading || !hash.trim()} className="px-4 py-2 rounded-lg text-[12.5px] font-semibold" style={{ background: LIME, color: "#10130A" }}>
+        <button onClick={handleTrack} disabled={loading || !hash.trim()} className="px-4 py-2 rounded-lg text-[12.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
           {loading ? "Checking…" : "Track"}
         </button>
       </div>
-      {error && <div className="text-[11px] font-mono mt-2" style={{ color: "#E5726B" }}>{error}</div>}
+      {error && <div className="text-[11px] font-mono mt-2" style={{ color: P.dangerText }}>{error}</div>}
     </div>
   );
 }
 
-function WithdrawalsTab({ withdrawals, onUpdate, onTrack }) {
+function WithdrawalsTab({ withdrawals, onUpdate, onTrack, P }) {
   return (
     <>
-      <TrackByHashForm onTracked={onTrack} />
+      <TrackByHashForm onTracked={onTrack} P={P} />
       {withdrawals.length === 0 ? (
-        <div className="rounded-2xl p-8 flex flex-col items-center text-center gap-2" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
-          <HistoryIcon size={22} color="#333A44" />
-          <div className="text-[13.5px]" style={{ color: "#8B95A1" }}>No pending withdrawals</div>
-          <div className="text-[12px]" style={{ color: "#4A515D" }}>Start a {CHAINS.base.name} → {CHAINS.ethereum.name} ETH transfer to see it tracked here.</div>
+        <div className="rounded-2xl p-8 flex flex-col items-center text-center gap-2" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <HistoryIcon size={22} color={P.textMuted} />
+          <div className="text-[13.5px]" style={{ color: P.textSecondary }}>No pending withdrawals</div>
+          <div className="text-[12px]" style={{ color: P.textMuted }}>Start a {CHAINS.base.name} → {CHAINS.ethereum.name} ETH transfer to see it tracked here.</div>
         </div>
       ) : (
-        <div className="rounded-2xl overflow-hidden" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
+        <div className="rounded-2xl overflow-hidden" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           {withdrawals.map((w) => (
-            <WithdrawalRow key={w.id} w={w} onUpdate={onUpdate} />
+            <WithdrawalRow key={w.id} w={w} onUpdate={onUpdate} P={P} />
           ))}
         </div>
       )}
@@ -2641,7 +2641,7 @@ function NetworkSelectorModal({ onClose, P, tab, launchpadNetwork, setLaunchpadN
                   <ChainBadge id={chain.id} size={26} />
                   <span className="text-[13.5px] font-medium" style={{ color: P.textPrimary }}>{chain.name}</span>
                 </div>
-                {isActive && <Check size={15} color={LIME_DEEP} />}
+                {isActive && <Check size={15} color={P.ctaBg} />}
               </button>
             );
           })}
@@ -2803,8 +2803,8 @@ function DocLink({ P, onClick, children }) {
 
 function DocCallout({ P, children }) {
   return (
-    <div className="flex items-start gap-2 rounded-xl px-3.5 py-3 text-[12.5px] leading-relaxed" style={{ background: `${LIME}14`, border: `1px solid ${LIME}40`, color: P.textPrimary }}>
-      <span className="shrink-0 mt-0.5" style={{ color: LIME_DEEP }}>●</span>
+    <div className="flex items-start gap-2 rounded-xl px-3.5 py-3 text-[12.5px] leading-relaxed" style={{ background: `${P.ctaBg}14`, border: `1px solid ${P.ctaBg}40`, color: P.textPrimary }}>
+      <span className="shrink-0 mt-0.5" style={{ color: P.ctaBg }}>●</span>
       <span>{children}</span>
     </div>
   );
@@ -4371,7 +4371,7 @@ export default function MangoBridge() {
                 if (solanaWallet.address) { solanaWallet.disconnect(); } else { disconnectAppKit({ namespace: "solana" }); }
               }}
               className="flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-full text-[12px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
-              <span className="w-1.5 h-1.5 rounded-full" style={{ background: LIME }} />
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: P.ctaText }} />
               {activeAccount ? `${activeAccount.slice(0, 5)}…${activeAccount.slice(-3)}` : ""}
             </button>
           ) : (
@@ -4414,9 +4414,9 @@ export default function MangoBridge() {
 
           {tab === "history" ? (
             historySubTab === "withdrawals" ? (
-              <WithdrawalsTab withdrawals={withdrawals} onUpdate={handleWithdrawalUpdate} onTrack={handleWithdrawalTracked} />
+              <WithdrawalsTab withdrawals={withdrawals} onUpdate={handleWithdrawalUpdate} onTrack={handleWithdrawalTracked} P={P} />
             ) : (
-              <HistoryTab history={history} onReset={resetHistory} />
+              <HistoryTab history={history} onReset={resetHistory} P={P} />
             )
           ) : tab === "portfolio" ? (
             <PortfolioTab address={address} connected={connected} P={P} />
@@ -4457,7 +4457,7 @@ export default function MangoBridge() {
                     className="font-display bg-transparent text-[24px] font-semibold w-full"
                     style={{ color: P.textPrimary }}
                   />
-                  <button onClick={setMax} disabled={availableBalance === null} className="text-[10.5px] font-bold px-2 py-1 rounded-md mr-2 shrink-0" style={{ background: availableBalance === null ? P.pillBg : `${LIME}1A`, color: availableBalance === null ? P.textMuted : LIME_DEEP, opacity: availableBalance === null ? 0.6 : 1 }}>MAX</button>
+                  <button onClick={setMax} disabled={availableBalance === null} className="text-[10.5px] font-bold px-2 py-1 rounded-md mr-2 shrink-0" style={{ background: availableBalance === null ? P.pillBg : `${P.ctaBg}1A`, color: availableBalance === null ? P.textMuted : P.ctaBg, opacity: availableBalance === null ? 0.6 : 1 }}>MAX</button>
                   <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} allowCustomToken={isSwapTab} discoveredLogos={discoveredAssetLogos} />
                 </div>
                 {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>Insufficient balance on {CHAINS[from].name}</div>}
@@ -4512,8 +4512,8 @@ export default function MangoBridge() {
 
               {/* ETA / details collapsible */}
               <button onClick={() => setDetailsOpen((o) => !o)} className="w-full flex items-center justify-between mt-3 px-4 py-2.5 rounded-xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-                <span className="text-[12.5px] font-medium flex items-center gap-1.5" style={{ color: LIME_DEEP }}>
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: LIME }} /> Fee ${fmt(fee, 2)}
+                <span className="text-[12.5px] font-medium flex items-center gap-1.5" style={{ color: P.ctaBg }}>
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: P.ctaBg }} /> Fee ${fmt(fee, 2)}
                 </span>
                 <span className="flex items-center gap-1.5 text-[12.5px]" style={{ color: P.textSecondary }}>
                   ETA: {etaLabel}
@@ -4604,7 +4604,7 @@ export default function MangoBridge() {
               {!isSwapTab && (
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <label className="flex items-center gap-2.5 cursor-pointer">
-                    <input type="checkbox" checked={sendToOther} onChange={(e) => setSendToOther(e.target.checked)} className="w-4 h-4 rounded" style={{ accentColor: LIME }} />
+                    <input type="checkbox" checked={sendToOther} onChange={(e) => setSendToOther(e.target.checked)} className="w-4 h-4 rounded" style={{ accentColor: P.ctaBg }} />
                     <span className="text-[12.5px] font-medium" style={{ color: P.textPrimary }}>Send to another address</span>
                   </label>
                   {sendToOther && (
@@ -4729,6 +4729,7 @@ export default function MangoBridge() {
           onComplete={handleComplete}
           onWithdrawalInitiated={handleWithdrawalInitiated}
           onPendingHash={handlePendingHash}
+          P={P}
         />
       )}
       {showDocs && <DocsModal onClose={() => setShowDocs(false)} P={P} />}

@@ -30,7 +30,7 @@
 // URL rather than leaving that to chance again.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
+import { PALETTE, fmt } from "./theme.js";
 
 const SECRET_STORAGE_KEY = "mango_admin_secret";
 const API_URL = "https://www.mangoprotocol.site/api/v1/referral/admin-export";
@@ -189,7 +189,7 @@ export function AdminReferralsPage({ onClose }) {
               type="submit"
               disabled={loading || !secretInput.trim()}
               className="w-full py-3 rounded-xl text-[13px] font-semibold"
-              style={{ background: loading || !secretInput.trim() ? P.pillBg : LIME, color: loading || !secretInput.trim() ? P.textMuted : "#0A0A0B" }}
+              style={{ background: loading || !secretInput.trim() ? P.pillBg : P.ctaBg, color: loading || !secretInput.trim() ? P.textMuted : P.ctaText }}
             >
               {loading ? "Checking…" : "View data"}
             </button>
@@ -228,7 +228,7 @@ export function AdminReferralsPage({ onClose }) {
                   onClick={() => records && downloadCsv(records)}
                   disabled={!records || records.length === 0}
                   className="px-3.5 py-2 rounded-lg text-[12.5px] font-semibold"
-                  style={{ background: `${LIME}1A`, color: LIME_DEEP }}
+                  style={{ background: `${P.ctaBg}1A`, color: P.ctaBg }}
                 >
                   Download CSV
                 </button>
@@ -271,7 +271,7 @@ export function AdminReferralsPage({ onClose }) {
                         <td className="px-3.5 py-2.5 font-mono whitespace-nowrap" style={{ color: P.textPrimary }}>
                           {r.address.slice(0, 8)}…{r.address.slice(-6)}
                         </td>
-                        <td className="px-3.5 py-2.5 font-semibold" style={{ color: LIME_DEEP }}>
+                        <td className="px-3.5 py-2.5 font-semibold" style={{ color: P.ctaBg }}>
                           {fmt(r.points, 0)}
                         </td>
                         <td className="px-3.5 py-2.5" style={{ color: P.textSecondary }}>

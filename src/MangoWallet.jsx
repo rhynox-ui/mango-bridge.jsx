@@ -84,7 +84,7 @@ import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, 
 import { isAddress, parseUnits } from "viem";
 import { PublicKey } from "@solana/web3.js";
 import jsQR from "jsqr";
-import { PALETTE, LIME, LIME_DEEP, fmt } from "./theme.js";
+import { PALETTE, fmt } from "./theme.js";
 import { ChainBadge } from "./chainBadges.jsx";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
 import { generateMnemonic, isValidMnemonic, deriveAccountAtIndex, normalizeMnemonic, suggestBip39Words } from "./wallet/keys.js";
@@ -531,8 +531,8 @@ function WelcomeScreen({ onCreate, onImport, P }) {
 
   return (
     <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
-        <Wallet size={19} color={LIME_DEEP} />
+      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${P.ctaBg}1A` }}>
+        <Wallet size={19} color={P.ctaBg} />
       </div>
       <div>
         <div className="font-display text-[16px] font-semibold mb-1" style={{ color: P.textPrimary }}>Mango Wallet</div>
@@ -542,7 +542,7 @@ function WelcomeScreen({ onCreate, onImport, P }) {
       </div>
       <div className="w-full flex flex-col gap-2 mt-2">
         {extensionInstalled && (
-          <div className="flex items-center justify-center gap-1.5 text-[11.5px] mb-1" style={{ color: LIME_DEEP }}>
+          <div className="flex items-center justify-center gap-1.5 text-[11.5px] mb-1" style={{ color: P.ctaBg }}>
             <Check size={12} /> Browser extension detected
           </div>
         )}
@@ -590,7 +590,7 @@ function CreateRevealStep({ mnemonic, onNext, onBack, P }) {
         )}
       </div>
       <label className="flex items-start gap-2.5 cursor-pointer mb-4">
-        <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} className="w-4 h-4 rounded mt-0.5" style={{ accentColor: LIME }} />
+        <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} className="w-4 h-4 rounded mt-0.5" style={{ accentColor: P.ctaBg }} />
         <span className="text-[12px]" style={{ color: P.textSecondary }}>I've written down my recovery phrase and understand it's the only way to recover this wallet.</span>
       </label>
       <PrimaryButton onClick={onNext} disabled={!revealed || !acked} P={P}>Continue</PrimaryButton>
@@ -1050,7 +1050,7 @@ function ChangePasswordModal({ onClose, P }) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
         <div className="w-full max-w-sm rounded-2xl p-5 flex flex-col items-center text-center gap-2" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
-          <Check size={22} color={LIME_DEEP} />
+          <Check size={22} color={P.ctaBg} />
           <span className="font-display text-[15px] font-semibold" style={{ color: P.textPrimary }}>Password changed</span>
           <div className="w-full mt-2"><PrimaryButton onClick={onClose} P={P}>Done</PrimaryButton></div>
         </div>
@@ -1346,7 +1346,7 @@ function SendChainPicker({ value, onChange, chains, P }) {
             <button key={key} onClick={() => { onChange(key); setOpen(false); }} className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left">
               <WalletChainBadge id={key} size={18} />
               <span className="text-[13px]" style={{ color: P.textPrimary }}>{CHAIN_LABEL[key]}</span>
-              {key === value && <Check size={13} color={LIME} className="ml-auto" />}
+              {key === value && <Check size={13} color={P.ctaBg} className="ml-auto" />}
             </button>
           ))}
         </div>
@@ -1599,8 +1599,8 @@ function SendScreen({ session, onBack, P, initialChainKey, initialAssetSymbol })
     return (
       <ScreenShell title="Sent" onBack={onBack} P={P}>
         <div className="flex flex-col items-center text-center gap-2 py-4">
-          <span className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
-            <Check size={19} color={LIME_DEEP} />
+          <span className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${P.ctaBg}1A` }}>
+            <Check size={19} color={P.ctaBg} />
           </span>
           <div className="text-[13.5px]" style={{ color: P.textPrimary }}>{amount} {assetLabel} sent</div>
           {explorerUrl && (
@@ -1776,7 +1776,7 @@ function AccountSwitcher({
                         <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{label}</span>
                         <span className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{acc.evm.address.slice(0, 6)}…{acc.evm.address.slice(-4)}</span>
                       </div>
-                      {keysEqual(key, activeKey) && <Check size={14} color={LIME} />}
+                      {keysEqual(key, activeKey) && <Check size={14} color={P.ctaBg} />}
                     </button>
                     <button onClick={() => setRenaming({ currentLabel: label, onSave: (newLabel) => onRenameAccount(key, newLabel) })} className="shrink-0" style={{ color: P.textMuted }}>
                       <Pencil size={13} />
@@ -1805,7 +1805,7 @@ function AccountSwitcher({
                     <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{k.label}</span>
                     <span className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{k.address.slice(0, 6)}…{k.address.slice(-4)}</span>
                   </div>
-                  {keysEqual(key, activeKey) && <Check size={14} color={LIME} />}
+                  {keysEqual(key, activeKey) && <Check size={14} color={P.ctaBg} />}
                 </button>
                 <button onClick={() => setRenaming({ currentLabel: k.label, onSave: (newLabel) => onRenameAccount(key, newLabel) })} className="shrink-0" style={{ color: P.textMuted }}>
                   <Pencil size={13} />
@@ -2103,7 +2103,7 @@ function SettingsScreen({ session, activeKey, onBack, onLock, onReset, theme, on
           {!isImportedAccount && <SettingsIconAction icon={Lock} label="Password" onClick={() => setShowChangePassword(true)} P={P} />}
         </div>
         <SettingsRow icon={Clock} label="Auto-lock" value={formatAutoLockLabel(autoLockMinutes)} onClick={() => setShowAutoLock(true)} P={P} />
-        <SettingsRow label="Lock wallet" onClick={onLock} color={LIME_DEEP} P={P} last />
+        <SettingsRow label="Lock wallet" onClick={onLock} color={P.ctaBg} P={P} last />
       </div>
       <div className="rounded-2xl overflow-hidden mb-5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
         <SettingsRow icon={Trash2} label="Remove wallet from this browser" onClick={() => setShowReset(true)} color="#D92D20" P={P} last />
@@ -2781,8 +2781,8 @@ function isExtensionPage() {
 function OpenExtensionPrompt({ P }) {
   return (
     <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
-        <Check size={19} color={LIME_DEEP} />
+      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${P.ctaBg}1A` }}>
+        <Check size={19} color={P.ctaBg} />
       </div>
       <div>
         <div className="font-display text-[16px] font-semibold mb-1" style={{ color: P.textPrimary }}>Extension detected</div>
@@ -2798,7 +2798,7 @@ function InstallExtensionGate({ P }) {
   const [showExtension, setShowExtension] = useState(false);
   return (
     <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${LIME}1A` }}>
+      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${P.ctaBg}1A` }}>
         <MangoLogo size={20} color={P.textPrimary} />
       </div>
       <div>

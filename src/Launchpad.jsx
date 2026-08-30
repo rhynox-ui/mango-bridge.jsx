@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { isAddress } from "viem";
 import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
 import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2 } from "lucide-react";
-import { PALETTE, LIME, LIME_DEEP, fmt, timeAgo } from "./theme.js";
+import { PALETTE, GAIN, GAIN_DEEP, fmt, timeAgo } from "./theme.js";
 import { ChainBadge } from "./chainBadges.jsx";
 import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getLaunchStats, getProtocolStats, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
 
@@ -26,7 +26,7 @@ function CopyableAddress({ address, P, label }) {
     <button onClick={handleCopy} className="inline-flex items-center gap-1 text-[11px] font-mono" style={{ color: P.textMuted }}>
       {label && <span>{label}: </span>}
       <span>{short}</span>
-      {copied ? <Check size={11} color={LIME_DEEP} /> : <Copy size={11} />}
+      {copied ? <Check size={11} color={P.ctaBg} /> : <Copy size={11} />}
     </button>
   );
 }
@@ -45,7 +45,7 @@ function ShareTokenButton({ tokenAddress, P }) {
   }
   return (
     <button onClick={handleShare} className="flex items-center gap-1.5 text-[12.5px]" style={{ color: P.textSecondary }}>
-      {copied ? <Check size={14} color={LIME_DEEP} /> : <Share2 size={14} />}
+      {copied ? <Check size={14} color={P.ctaBg} /> : <Share2 size={14} />}
       {copied ? "Link copied" : "Share"}
     </button>
   );
@@ -133,7 +133,7 @@ function TokenCard({ token, onClick, P }) {
         </div>
       </div>
       <div className="flex flex-col justify-center items-end p-3" style={{ flex: 0.8, borderLeft: `1px solid ${P.panelBorder}` }}>
-        <span className="text-[12px] font-mono font-semibold" style={{ color: token.priceChange24h >= 0 ? LIME_DEEP : "#D92D20" }}>
+        <span className="text-[12px] font-mono font-semibold" style={{ color: token.priceChange24h >= 0 ? GAIN_DEEP : "#D92D20" }}>
           {token.priceChange24h >= 0 ? "+" : ""}{fmt(token.priceChange24h, 1)}%
         </span>
         <span className="text-[9.5px]" style={{ color: P.textMuted }}>24h</span>
@@ -318,7 +318,7 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
               <div className="mt-1.5 text-[11px]" style={{ color: P.textMuted }}>Uploading real artwork…</div>
             )}
             {uploadedLogoUrl && !uploadingImage && (
-              <div className="mt-1.5 text-[11px]" style={{ color: LIME_DEEP }}>Uploaded — this real image will show once your token launches.</div>
+              <div className="mt-1.5 text-[11px]" style={{ color: P.ctaBg }}>Uploaded — this real image will show once your token launches.</div>
             )}
             {uploadError && (
               <div className="mt-1.5 text-[11px]" style={{ color: "#D92D20" }}>Upload failed: {uploadError}</div>
@@ -365,7 +365,7 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
           </div>
 
           {!showAdvanced ? (
-            <button onClick={() => setShowAdvanced(true)} className="text-[12px] text-left" style={{ color: LIME_DEEP }}>▸ Advanced</button>
+            <button onClick={() => setShowAdvanced(true)} className="text-[12px] text-left" style={{ color: P.ctaBg }}>▸ Advanced</button>
           ) : (
             <div>
               <label className="text-[12px] font-medium mb-1 block" style={{ color: P.textPrimary }}>Creator wallet</label>
@@ -385,7 +385,7 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
         <div className="rounded-xl p-3.5 mb-4" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           <div className="flex justify-between text-[12px] py-1"><span style={{ color: P.textMuted }}>Launch fee</span><span className="font-mono" style={{ color: P.textPrimary }}>$5</span></div>
           <div className="flex justify-between text-[12px] py-1"><span style={{ color: P.textMuted }}>Graduate at</span><span className="font-mono" style={{ color: P.textPrimary }}>$30,000</span></div>
-          <div className="flex justify-between text-[12px] py-1"><span style={{ color: P.textMuted }}>Creator fee share</span><span className="font-mono" style={{ color: LIME_DEEP }}>70%</span></div>
+          <div className="flex justify-between text-[12px] py-1"><span style={{ color: P.textMuted }}>Creator fee share</span><span className="font-mono" style={{ color: P.ctaBg }}>70%</span></div>
           <div className="flex justify-between text-[12px] py-1"><span style={{ color: P.textMuted }}>Liquidity</span><span className="font-mono" style={{ color: P.textPrimary }}>Uniswap</span></div>
         </div>
 
@@ -421,7 +421,7 @@ function CreateLaunchModal({ onClose, onLaunchSuccess, P }) {
           </div>
         )}
         {launchResult && (
-          <div className="mt-2 rounded-lg p-3 text-[11.5px]" style={{ background: `${LIME}15`, border: `1px solid ${LIME}40`, color: LIME_DEEP }}>
+          <div className="mt-2 rounded-lg p-3 text-[11.5px]" style={{ background: `${P.ctaBg}15`, border: `1px solid ${P.ctaBg}40`, color: P.ctaBg }}>
             <div className="font-medium mb-0.5">Transaction confirmed</div>
             <div className="font-mono break-all">{launchResult.hash}</div>
           </div>
@@ -456,8 +456,8 @@ function TradeRowSkeleton({ P }) {
 // (wrong-network banners) rather than inventing a new one.
 function HolderConcentrationBar({ holders, P }) {
   const top10Pct = holders.slice(0, 10).reduce((sum, h) => sum + (h.percentOfSupply || 0), 0);
-  const color = top10Pct > 50 ? "#D92D20" : top10Pct > 20 ? "#8A5A00" : LIME_DEEP;
-  const trackColor = top10Pct > 50 ? "#D92D2015" : top10Pct > 20 ? "#FCEFD9" : `${LIME}1A`;
+  const color = top10Pct > 50 ? "#D92D20" : top10Pct > 20 ? "#8A5A00" : GAIN_DEEP;
+  const trackColor = top10Pct > 50 ? "#D92D2015" : top10Pct > 20 ? "#FCEFD9" : `${GAIN}1A`;
   return (
     <div className="mb-2.5 pb-2.5" style={{ borderBottom: `1px solid ${P.panelBorder}` }}>
       <div className="flex items-center justify-between mb-1.5">
@@ -584,7 +584,7 @@ function TokenActivityPanel({ token, P }) {
               >
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span style={{ color: t.isBuy ? LIME_DEEP : "#D92D20" }}>{t.isBuy ? "↗" : "↘"}</span>
+                    <span style={{ color: t.isBuy ? GAIN_DEEP : "#D92D20" }}>{t.isBuy ? "↗" : "↘"}</span>
                     <span className="text-[13px] font-bold font-mono" style={{ color: P.textPrimary }}>{fmt(t.tokenAmount, 0)} {token.symbol}</span>
                   </div>
                   <div className="text-[10.5px] font-mono" style={{ color: P.textMuted }}>{t.trader.slice(0, 6)}...{t.trader.slice(-4)}</div>
@@ -851,14 +851,14 @@ function TokenDetailView({ token, onBack, P, theme }) {
           </div>
           <div className="text-right shrink-0">
             <div className="text-[9.5px]" style={{ color: P.textMuted }}>24h</div>
-            <div className="text-[12px] font-mono font-semibold" style={{ color: token.priceChange24h >= 0 ? LIME_DEEP : "#D92D20" }}>
+            <div className="text-[12px] font-mono font-semibold" style={{ color: token.priceChange24h >= 0 ? GAIN_DEEP : "#D92D20" }}>
               {token.priceChange24h >= 0 ? "+" : ""}{fmt(token.priceChange24h, 1)}%
             </div>
           </div>
         </div>
 
         {logoUpdateStep && (
-          <div className="rounded-lg p-2.5 mt-2.5 text-[11.5px] font-medium" style={{ background: `${LIME}15`, border: `1px solid ${LIME}40`, color: LIME_DEEP }}>
+          <div className="rounded-lg p-2.5 mt-2.5 text-[11.5px] font-medium" style={{ background: `${P.ctaBg}15`, border: `1px solid ${P.ctaBg}40`, color: P.ctaBg }}>
             {logoUpdateStep}
           </div>
         )}
@@ -1044,7 +1044,7 @@ function TokenDetailView({ token, onBack, P, theme }) {
           </div>
         )}
         {tradeResult && (
-          <div className="mt-2 rounded-lg p-3 text-[11.5px]" style={{ background: `${LIME}15`, border: `1px solid ${LIME}40`, color: LIME_DEEP }}>
+          <div className="mt-2 rounded-lg p-3 text-[11.5px]" style={{ background: `${P.ctaBg}15`, border: `1px solid ${P.ctaBg}40`, color: P.ctaBg }}>
             <div className="font-medium mb-0.5">Trade confirmed</div>
             <div className="font-mono break-all">{tradeResult.hash}</div>
           </div>

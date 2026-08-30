@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App.jsx";
 import SolanaConnectTest from "./SolanaConnect.jsx";
 import { SolanaWalletProvider } from "./SolanaWalletContext.jsx";
+import { LIME } from "./theme.js";
 import { config } from "./wagmi.js";
 import "./appkit.js";
 import "./index.css";
@@ -73,7 +74,7 @@ class ErrorBoundary extends React.Component {
               marginTop: "8px",
               padding: "10px 20px",
               borderRadius: "10px",
-              background: "#D6FA3C",
+              background: LIME,
               color: "#10130A",
               fontWeight: 600,
               border: "none",
