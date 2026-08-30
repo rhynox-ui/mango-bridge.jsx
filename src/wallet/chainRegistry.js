@@ -48,10 +48,21 @@ export const RPC_FALLBACKS = {
   250: ["https://rpcapi.fantom.network", "https://fantom-rpc.publicnode.com"],
 };
 
+// Real bug fix: rank:true starts an infinite self-recursing background
+// poll loop the moment a chain's client is created (viem's own
+// rankTransports() in node_modules/viem/_esm/clients/transports/
+// fallback.js — pings every listed URL again every ~4s forever,
+// independent of app usage) — see walletRpc.js's own copy of this same
+// fix for the full story and the live-confirmed production impact this
+// had once applied across every chain the wallet dashboard covers.
+// This file's own consumer (the extension's rpc.js) reads balances
+// across the same broad chain list, so the same reasoning applies:
+// fallback()'s plain retry-next-on-error already handles failover
+// without a permanent background loop per chain.
 export function transportFor(chainId) {
   const urls = (RPC_FALLBACKS[chainId] || []).filter(Boolean);
   if (urls.length === 0) return http();
-  return fallback(urls.map((url) => http(url)), { rank: true });
+  return fallback(urls.map((url) => http(url)));
 }
 
 // Robinhood Chain and Stable aren't in viem's own maintained chain list —

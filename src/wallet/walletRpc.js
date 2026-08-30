@@ -88,11 +88,31 @@ export function getWalletChain(chainKey) {
   throw new Error(`No mainnet chain configured for key "${chainKey}"`);
 }
 
+// Real bug fix: rank:true doesn't just reorder on failure — viem's own
+// rankTransports() (node_modules/viem/_esm/clients/transports/fallback.js)
+// starts an infinite self-recursing loop the moment a chain's client is
+// created, pinging every listed URL again every ~4s FOREVER, independent
+// of whether the app ever reads from that chain again. getWalletPublicClient
+// below caches one client per chain, and this file builds one for every
+// chain the wallet dashboard covers (80+, once WalletHome renders) — so
+// ranking here meant 80+ concurrent forever-loops running in the
+// background for the rest of the session, live-confirmed as a real
+// contributor to the RPC-provider floods hit in production (not just
+// Base's — every chain listed here paid this same continuous tax).
+// Basic fallback-on-error needs none of that: fallback()'s own fetch()
+// already retries the next URL on any failure regardless of rank, so
+// dropping ranking here costs nothing but the "always current fastest"
+// optimization, which isn't worth a permanent background loop per chain
+// for a balance dashboard where a slightly-slower-but-not-actively-
+// unhealthy read is a non-issue. wagmi.js's own transportFor() keeps
+// rank:true — only a handful of chains are ever actively connected
+// there at once (the one the user is bridging/swapping on), a real,
+// bounded cost instead of a wallet-dashboard-wide one.
 function getWalletTransport(chain) {
   const bridgeUrls = (RPC_FALLBACKS[chain.id] || []).filter(Boolean);
   if (bridgeUrls.length > 0) {
     const reversedPriority = [...bridgeUrls].reverse(); // opposite of wagmi.js's transportFor()
-    return fallback(reversedPriority.map((url) => http(url)), { rank: true });
+    return fallback(reversedPriority.map((url) => http(url)));
   }
   const extraUrl = extraFallbackUrl(chain.id);
   if (extraUrl) {
@@ -100,7 +120,7 @@ function getWalletTransport(chain) {
     // aren't in the Bridge's own list at all) — just the chain's own
     // wagmi/chains default plus the real second endpoint sourced in
     // walletChains.js.
-    return fallback([http(), http(extraUrl)], { rank: true });
+    return fallback([http(), http(extraUrl)]);
   }
   return http(); // no second verified endpoint documented for this chain (Monad, Sei) — its own default only
 }
