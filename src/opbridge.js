@@ -11,9 +11,13 @@ import {
 } from "viem/op-stack";
 import { config } from "./wagmi.js";
 import { isMainnet } from "./networkMode.js";
+import { DEV_FEE_PCT } from "./devFeeWallets.js";
 
 const DEV_FEE_WALLET = "0xf07becc2401a646fff10d10b969ef18b03582e88";
-const DEV_FEE_PCT = 0.01;
+// No $50 cap here (unlike cctp.js's USDC path or Relay's own appFees) —
+// this fee is denominated in ETH itself and this file has no live
+// ETH/USD price feed to size a cap against; never fabricate one.
+const DEV_FEE_BPS = BigInt(Math.round(DEV_FEE_PCT * 10000));
 
 // Base, Ink, and Unichain are all first-class OP Stack chains in viem — each
 // ships with its own real l1StandardBridge/portal/disputeGameFactory
@@ -62,7 +66,7 @@ async function l2Wallet(l2Key) {
  */
 export async function runOpDeposit({ account, amountHuman, onStep, l2Key = "base" }) {
   const totalValue = parseEther(amountHuman);
-  const feeValue = totalValue / 100n; // 1%
+  const feeValue = (totalValue * DEV_FEE_BPS) / 10000n;
   const value = totalValue - feeValue;
 
   onStep?.("fee");
@@ -113,7 +117,7 @@ async function getBlockWithRetry(client, blockNumber, attempts = 6, delayMs = 20
  */
 export async function initiateOpWithdrawal({ account, amountHuman, onStep, l2Key = "base" }) {
   const totalValue = parseEther(amountHuman);
-  const feeValue = totalValue / 100n; // 1%
+  const feeValue = (totalValue * DEV_FEE_BPS) / 10000n;
   const value = totalValue - feeValue;
 
   onStep?.("fee");

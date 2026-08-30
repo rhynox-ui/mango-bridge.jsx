@@ -67,6 +67,10 @@ import {
   Download,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
+/** "0.25" not "0.25000", "1" not "1.00" — used everywhere this file displays the real Bridge/Swap protocol fee rate, so a rate change (devFeeWallets.js) can't leave stale "1%" text behind the way a hardcoded literal already had. Not used for Launchpad's own, separate trading-fee text (a different fee schedule entirely — see hookConfig's own "1% buy, 4% sell" copy). */
+function formatFeePct(rate) {
+  return (rate * 100).toFixed(2).replace(/\.?0+$/, "");
+}
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
@@ -468,7 +472,7 @@ const STEPS = [
 
 const CCTP_STEPS = [
   { key: "approve", label: "Approving USDC spend" },
-  { key: "fee", label: "Sending 1% dev fee" },
+  { key: "fee", label: `Sending ${formatFeePct(DEV_FEE_PCT)}% dev fee` },
   { key: "burn", label: "Burning USDC on source chain" },
   { key: "attest", label: "Waiting for Circle's attestation" },
   { key: "mint", label: "Minting USDC on destination chain" },
@@ -1520,7 +1524,7 @@ function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
   return "relay";
 }
 
-function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, devFeeAmount, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated }) {
+function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, devFeeAmount, originAmountUsd, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated }) {
   const kind = getTransferKind(from, to, asset, toAsset);
   const isReal = kind !== "simulated";
   // Which OP Stack chain this op-deposit/op-withdraw actually targets —
@@ -1712,6 +1716,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           destinationCurrency: toCustom ? toCustom.address : (isWalletOnlyChain(to) ? resolveCurrency(to, toAsset) : undefined),
           amountBaseUnits: totalBaseUnits.toString(), userAddress: account,
           recipientAddress: destination || defaultRecipient,
+          originAmountUsd,
         });
         const result = await executeRelayQuote({
           quote,
@@ -1784,7 +1789,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           <>
             <div className="flex flex-col gap-2.5 mb-5">
               <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Network fee</span><span className="font-mono" style={{ color: "#D7DBE2" }}>${fmt(fee, 2)}</span></div>
-              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Protocol fee (1%)</span><span className="font-mono" style={{ color: "#D7DBE2" }}>{fmt(devFeeAmount, 4)} {asset}</span></div>
+              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Protocol fee ({formatFeePct(DEV_FEE_PCT)}%)</span><span className="font-mono" style={{ color: "#D7DBE2" }}>{fmt(devFeeAmount, 4)} {asset}</span></div>
               <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Estimated time</span><span style={{ color: "#D7DBE2" }}>{kind === "op-withdraw" || kind === "arb-withdraw" ? "~7 days to finalize" : etaLabel}</span></div>
               <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>You receive</span><span className="font-mono font-medium" style={{ color: "#F2F4F7" }}>{received !== null ? `${fmt(received, 4)} ${toAsset}${asset !== toAsset ? " (estimate)" : ""}` : "Set by Relay's live quote"}</span></div>
             </div>
@@ -2478,7 +2483,7 @@ const DOC_CONTENT = {
       <div className="grid grid-cols-1 gap-2.5 mb-4">
         <DocFactCard P={P} title="Never in custody">Bridge transfers and swaps settle through the underlying protocol's own contracts — Circle's, Optimism's, Arbitrum's, Wormhole's, or Relay's. Mango's role is routing and fee collection, not holding funds. See <DocLink P={P} onClick={() => goTo("custody")}>Custody →</DocLink></DocFactCard>
         <DocFactCard P={P} title="Live routes, checked before you confirm">An unsupported chain/asset combination is never guessed at or faked as a success — the app checks for a real, live route first and tells you plainly if one doesn't exist.</DocFactCard>
-        <DocFactCard P={P} title="One visible fee, always">A 1% protocol fee applies to real transfers and swaps, shown before you confirm and never bundled invisibly into another transaction.</DocFactCard>
+        <DocFactCard P={P} title="One visible fee, always">A {formatFeePct(DEV_FEE_PCT)}% protocol fee applies to real transfers and swaps, shown before you confirm and never bundled invisibly into another transaction.</DocFactCard>
       </div>
       <p className="mb-1.5 font-medium" style={{ color: P.textPrimary }}>What's here</p>
       <ul className="list-disc ml-5 flex flex-col gap-1">
@@ -2512,7 +2517,7 @@ const DOC_CONTENT = {
         <li><span className="font-medium" style={{ color: P.textPrimary }}>Wormhole</span> for ETH between Ethereum and BNB Chain, both directions</li>
         <li><span className="font-medium" style={{ color: P.textPrimary }}>Relay Protocol</span> for everything else with a verified contract on both sides — cross-asset swaps, any pair without a canonical bridge, and every Solana-involving route (both directions, with its own separate wallet requirement — see <DocLink P={P} onClick={() => goTo("bridge-solana")}>Solana support →</DocLink>)</li>
       </ul>
-      <p>A 1% protocol fee applies to real transfers, sent as its own visible transaction. The app checks for a live route before you're ever asked to confirm — an unsupported pair is never silently faked as a success.</p>
+      <p>A {formatFeePct(DEV_FEE_PCT)}% protocol fee applies to real transfers, sent as its own visible transaction. The app checks for a live route before you're ever asked to confirm — an unsupported pair is never silently faked as a success.</p>
     </>
   ),
   "bridge-networks": (P, goTo) => (
@@ -2650,7 +2655,7 @@ const DOC_CONTENT = {
       <ul className="list-disc ml-5 mb-2 flex flex-col gap-0.5">
         <li>Source chain gas fee</li>
         <li>Destination chain gas fee (where applicable)</li>
-        <li>A 1% Mango protocol fee, sent as its own separate, visible on-chain transaction — never bundled invisibly into another transfer</li>
+        <li>A {formatFeePct(DEV_FEE_PCT)}% Mango protocol fee, sent as its own separate, visible on-chain transaction — never bundled invisibly into another transfer</li>
         <li>Relay solver fee, where the route uses Relay</li>
       </ul>
       <p>Mango displays all estimated fees before confirmation.</p>
@@ -2681,7 +2686,7 @@ const DOC_CONTENT = {
       <p className="mb-3">Under the hood this is the exact same Relay solver network the Bridge tab uses for anything without a canonical bridge (see <DocLink P={P} onClick={() => goTo("bridge-protocols")}>Relay Protocol →</DocLink>) — just with the origin and destination chain set to the same chain. A live route check runs before you're ever asked to confirm, the same way it does for a cross-chain transfer.</p>
       <ul className="list-disc ml-5 mb-3 flex flex-col gap-0.5">
         <li>Available on any chain Mango Bridge supports (see <DocLink P={P} onClick={() => goTo("bridge-networks")}>Supported networks →</DocLink>), and any two of that chain's supported assets that Relay currently has a live route between.</li>
-        <li>The same 1% protocol fee as Bridge applies, deducted from what you receive — not carved out of what you pay in.</li>
+        <li>The same {formatFeePct(DEV_FEE_PCT)}% protocol fee as Bridge applies, deducted from what you receive — not carved out of what you pay in.</li>
         <li>Gas is estimated once, not twice — a same-chain swap is a single transaction, not a source leg and a destination leg.</li>
         <li>Not on the built-in list? Paste a contract address (or, on Solana, a mint address) directly into the asset picker to add and trade any token, verified live on-chain before it's offered.</li>
       </ul>
@@ -3499,6 +3504,13 @@ export default function MangoBridge() {
           // address as the recipient, not whichever wallet happens to
           // be the "account" for the source side.
           recipientAddress: sendToOther ? destAddress : (CHAINS[to]?.isSolana ? activeSolanaAddress : (isFromSolana ? address : activeAccount)),
+          // Real, verified USD estimate — same reasoning as BridgeModal's
+          // own originAmountUsd prop above (fromAsset.price > 0 only for
+          // a built-in, real-priced asset; 0 is this file's own cosmetic
+          // sentinel for a custom token). Lets appFeeBps (devFeeWallets.js)
+          // apply the $50 fee cap on a real large trade in this preview
+          // quote too, not just at actual execution time.
+          originAmountUsd: fromAsset.price > 0 ? amtNum * fromAsset.price : undefined,
         });
         // Real fix: this used to be a bare await with the response
         // discarded — see summarizeQuote's own comment. The quote
@@ -3855,7 +3867,7 @@ export default function MangoBridge() {
                       <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Destination gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[to].baseFee, 2)}</span></div>
                     </>
                   )}
-                  <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Protocol fee (1%)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmt(devFeeAmount, fromAsset.decimals)} {fromAsset.symbol}</span></div>
+                  <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Protocol fee ({formatFeePct(DEV_FEE_PCT)}%)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmt(devFeeAmount, fromAsset.decimals)} {fromAsset.symbol}</span></div>
                 </div>
               )}
 
@@ -3999,6 +4011,15 @@ export default function MangoBridge() {
         <BridgeModal
           from={from} to={to} amount={amount} asset={fromAsset.symbol} toAsset={toAsset.symbol} fromCustom={fromCustomToken} toCustom={toCustomToken} fee={fee} etaLabel={etaLabel} received={received}
           devFeeAmount={devFeeAmount}
+          // Real, verified USD estimate of what's being sent — only for
+          // a built-in asset with a real price (fromAsset.price > 0;
+          // 0 is this file's own cosmetic-only sentinel for a custom
+          // token, see fromAsset's own comment). Lets getRelayQuote's
+          // appFeeBps (devFeeWallets.js) apply the $50 fee cap on a
+          // real large transfer; omitted entirely for an unpriced
+          // custom token, same "never fabricate a number" rule this
+          // file already follows elsewhere for custom-token pricing.
+          originAmountUsd={fromAsset.price > 0 ? amtNum * fromAsset.price : undefined}
           // isSwapTab-gated even though the "Send to another address"
           // section itself is already hidden on the swap tab: sendToOther/
           // destAddress are shared state with the Bridge tab, so a user

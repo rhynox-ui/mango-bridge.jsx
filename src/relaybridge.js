@@ -2,7 +2,7 @@ import { getAccount, switchChain, sendTransaction, waitForTransactionReceipt } f
 import { config } from "./wagmi.js";
 export { MAINNET_CHAIN_IDS, NATIVE_SYMBOL, TOKEN_ADDRESSES, currencyAddress, canRelayHandle, ASSET_ONCHAIN_DECIMALS } from "./chainData.js";
 import { MAINNET_CHAIN_IDS, currencyAddress } from "./chainData.js";
-import { DEV_FEE_WALLET, DEV_FEE_PCT } from "./devFeeWallets.js";
+import { DEV_FEE_WALLET, DEV_FEE_PCT, appFeeBps } from "./devFeeWallets.js";
 export { DEV_FEE_WALLET, DEV_FEE_PCT };
 
 // Real fix for a real problem the previous "send a standalone fee
@@ -139,7 +139,7 @@ async function postRelayQuote(body) {
  * placeholder address directly, rather than asking currencyAddress() to
  * resolve a chainKey it has no verified data for.
  */
-export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress, originChainId, originCurrency, destinationChainId, destinationCurrency }) {
+export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress, originChainId, originCurrency, destinationChainId, destinationCurrency, originAmountUsd }) {
   const resolvedDestinationChainId = destinationChainId ?? MAINNET_CHAIN_IDS[toChainKey];
   const body = {
     user: userAddress,
@@ -159,7 +159,7 @@ export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAss
     destinationCurrency: destinationCurrency ?? currencyAddress(toChainKey, toAsset),
     amount: amountBaseUnits,
     tradeType: "EXACT_INPUT",
-    appFees: [{ recipient: feeRecipientForChainId(), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
+    appFees: [{ recipient: feeRecipientForChainId(), fee: appFeeBps(originAmountUsd) }],
   };
   const res = await postRelayQuote(body);
   if (!res.ok) {
