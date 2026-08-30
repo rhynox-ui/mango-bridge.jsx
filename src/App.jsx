@@ -1797,7 +1797,20 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           // connected; evmAddress is that second, EVM-side connection,
           // and the only valid default recipient here when no custom
           // destination is set.
-          recipient: destination || evmAddress,
+          //
+          // Real bug fix, live-reported and reproduced: the fix above
+          // was only ever correct for a Solana → EVM destination — it
+          // unconditionally used evmAddress even for a Solana → Solana
+          // same-chain swap, which live-confirmed sent the connected EVM
+          // wallet's own address as the recipient for a Solana-chain
+          // quote (Relay's own error: "Invalid recipient address
+          // 0x88917d... for chain 792703809" — 792703809 is Relay's own
+          // internal Solana chain id). `account` is already the
+          // connected Solana address in this isFromSolana branch (same
+          // fact the comment above already establishes) — genuinely the
+          // right default here, not evmAddress, whenever the
+          // DESTINATION is also Solana.
+          recipient: destination || (CHAINS[to]?.isSolana ? account : evmAddress),
           onProgress: ({ currentStep, txHashes }) => {
             if (txHashes?.length) setRealBurnHash(txHashes[0]);
           },
