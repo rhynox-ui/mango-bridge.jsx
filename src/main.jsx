@@ -20,8 +20,27 @@ class ErrorBoundary extends React.Component {
     return { hasError: true, error };
   }
   componentDidCatch(error, info) {
-    // In production, wire this up to a real error-tracking service (Sentry, etc.)
     console.error("Mango Bridge crashed:", error, info);
+    // Real, minimal crash reporting (api/v1/client-error.js) — before
+    // this, a crash here was only ever visible in the crashing user's
+    // OWN browser console, invisible to anyone else. Fire-and-forget:
+    // never awaited, never lets a reporting failure make an already-bad
+    // moment worse for the person looking at this screen.
+    try {
+      fetch("/api/v1/client-error", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: error?.message || String(error),
+          stack: error?.stack,
+          componentStack: info?.componentStack,
+          url: window.location.href,
+          userAgent: navigator.userAgent,
+        }),
+      }).catch(() => {});
+    } catch {
+      // Reporting itself failing is never a reason to make this worse.
+    }
   }
   render() {
     if (this.state.hasError) {
