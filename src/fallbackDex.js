@@ -33,6 +33,7 @@
 
 import { readContract, writeContract, sendTransaction, waitForTransactionReceipt } from "wagmi/actions";
 import { config } from "./wagmi.js";
+import { appFeeBps, DEV_FEE_WALLET } from "./devFeeWallets.js";
 
 const FALLBACK_QUOTE_URL = "/api/v1/bridge/fallback-quote";
 
@@ -47,11 +48,18 @@ const ERC20_ALLOWANCE_ABI = [
   { type: "function", name: "approve", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }], stateMutability: "nonpayable" },
 ];
 
-async function fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress }) {
+async function fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd }) {
+  // Same appFeeBps() every other quote path already uses (Relay's own,
+  // via relaybridge.js) — the backend proxy doesn't compute the rate
+  // itself, it only forwards whatever this client already decided (see
+  // fallback-quote.js's own header). bps -> percent: 1inch's `fee`
+  // param is "in percent" (min 0, max 3), appFeeBps returns basis
+  // points (1/100 of a percent).
+  const feePct = Number(appFeeBps(originAmountUsd)) / 100;
   const res = await fetch(FALLBACK_QUOTE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress }),
+    body: JSON.stringify({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, feePct, feeWallet: DEV_FEE_WALLET }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -101,18 +109,18 @@ async function executeFallbackQuote({ chainId, account, sellTokenAddress, quote 
  * ORIGINAL Relay error to show instead, since this whole path only
  * ever runs after that one failed first.
  */
-export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress }) {
+export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd }) {
   const failures = [];
   for (const provider of FALLBACK_PROVIDERS) {
     try {
-      const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress });
+      const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
       const result = await executeFallbackQuote({
         chainId,
         account: takerAddress,
         sellTokenAddress: sellToken,
         quote: { ...quote, sellAmount },
       });
-      return { provider, hash: result.hash, buyAmount: quote.buyAmount };
+      return { provider, hash: result.hash, buyAmount: quote.buyAmount, feeCollectedInline: !!quote.feeCollectedInline };
     } catch (err) {
       failures.push(`${provider}: ${err?.message ?? String(err)}`);
     }

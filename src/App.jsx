@@ -1760,6 +1760,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                 buyToken: buyTokenAddress,
                 sellAmount: totalBaseUnits.toString(),
                 takerAddress: account,
+                originAmountUsd,
               });
             } catch {
               throw firstErr;

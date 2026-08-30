@@ -44,16 +44,26 @@
 //     appFees-inclusive same-chain self-execution does), null when
 //     selling the chain's native asset (no approval ever needed there).
 //
-// Deliberately NOT passed to either provider: an affiliate/referrer
-// fee parameter. Both support one (1inch's `fee`+`referrer`, 0x's own
-// swapFeeBps+swapFeeRecipient), but this endpoint has no way to verify
-// either provider's exact fee semantics against real, live docs from
-// this sandbox (network-blocked) or a real API key (none provisioned
-// yet) — same "never fabricate a number" rule this codebase already
-// follows for custom-token pricing. Mango's own cut is collected
-// separately, client-side, only after a fallback swap has actually
-// succeeded (mango-mobile's own settleFallbackFeeFromNativeBalance) —
-// same guarantee the Relay 0%-fee-retry path already established.
+// 1inch's own Classic Swap docs (verified directly against the real
+// account's own reference page, not a search snippet) confirm a
+// `fee`+`referrer` param pair — "Partner fee in percent. min: 0; max:
+// 3" plus "The address that will receive the partner fee ... Required
+// when 'fee' is set." feePct/feeWallet below come from the SAME
+// client-side appFeeBps() every other quote path already uses (see
+// devFeeWallets.js), passed straight through here exactly like
+// relay-quote.js already passes Relay's own appFees through — this
+// endpoint doesn't compute the rate itself, it only forwards it.
+// quoteFrom1inch reports back feeCollectedInline: true so callers know
+// NOT to also run their own post-success fee sweep for this swap.
+//
+// 0x's own swapFeeBps+swapFeeRecipient is still NOT wired — its exact
+// semantics haven't been verified against live docs the way 1inch's
+// just were (same "never fabricate a number" rule), so quoteFrom0x
+// still reports feeCollectedInline: false and Mango's cut on a
+// 0x-routed fallback still only comes from the existing separate,
+// post-success collection (mango-mobile's own
+// settleFallbackFeeFromNativeBalance; the site collects nothing on a
+// 0x-routed fallback, same documented asymmetry as before).
 
 import { checkRateLimit } from "../../rateLimit.js";
 
@@ -68,7 +78,7 @@ function toProviderAddress(address) {
   return address?.toLowerCase() === NATIVE_PLACEHOLDER_ZERO ? NATIVE_PLACEHOLDER_PROVIDER : address;
 }
 
-async function quoteFrom1inch({ chainId, sellToken, buyToken, sellAmount, takerAddress }) {
+async function quoteFrom1inch({ chainId, sellToken, buyToken, sellAmount, takerAddress, feePct, feeWallet }) {
   const apiKey = process.env.ONEINCH_API_KEY;
   if (!apiKey) {
     throw new Error("1inch fallback isn't configured yet (missing ONEINCH_API_KEY).");
@@ -78,18 +88,29 @@ async function quoteFrom1inch({ chainId, sellToken, buyToken, sellAmount, takerA
     dst: toProviderAddress(buyToken),
     amount: sellAmount,
     from: takerAddress,
+    // Required — "An EOA address that initiates the transaction."
+    // Confirmed directly against the real Classic Swap reference page;
+    // omitting it (this endpoint's original state) would 400 on every
+    // real call. Same address as `from` for this app: there's no
+    // separate relayer/router account initiating on the user's behalf.
+    origin: takerAddress,
     slippage: "1",
     disableEstimate: "true",
   });
-  // api.1inch.com, not api.1inch.dev — confirmed directly from the real
-  // 1inch Business portal's own Authentication docs (the user's own
-  // account is on Business, not the older free-tier Developer Portal,
-  // and its docs' own curl example uses this domain for a real Swap
-  // API path). The exact /swap/v6.0/{chainId}/swap path below is still
-  // the one from this file's original research, not independently
-  // re-confirmed against this account's own "Classic Swap" doc page —
-  // flagged for a real test once a key exists.
-  const res = await fetch(`https://api.1inch.com/swap/v6.0/${chainId}/swap?${params.toString()}`, {
+  // Partner fee — confirmed directly against the real Classic Swap
+  // reference page ("Partner fee in percent. min: 0; max: 3"). Only
+  // sent when the caller actually computed a positive rate; feeWallet
+  // ("referrer") is required by 1inch whenever fee is set, so both or
+  // neither.
+  if (feePct > 0 && feeWallet) {
+    params.set("fee", String(feePct));
+    params.set("referrer", feeWallet);
+  }
+  // api.1inch.com, not api.1inch.dev, and v6.1, not v6.0 — both
+  // confirmed directly against the real 1inch Business portal's own
+  // Classic Swap reference page (GET https://api.1inch.com/swap/v6.1/{chain}/swap),
+  // not a search snippet.
+  const res = await fetch(`https://api.1inch.com/swap/v6.1/${chainId}/swap?${params.toString()}`, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
   });
   if (!res.ok) {
@@ -110,6 +131,11 @@ async function quoteFrom1inch({ chainId, sellToken, buyToken, sellAmount, takerA
     // allowance for — confirmed directly against its own swap-flow
     // docs, no separate allowance-target field in the /swap response.
     allowanceTarget: toProviderAddress(sellToken) === NATIVE_PLACEHOLDER_PROVIDER ? null : data.tx.to,
+    // Tells the caller Mango's cut already rode along inside this same
+    // transaction (1inch's own partner-fee mechanism) — a caller that
+    // also runs its own post-success fee sweep must skip it here, or
+    // the user gets billed twice for one swap.
+    feeCollectedInline: feePct > 0 && !!feeWallet,
   };
 }
 
@@ -150,6 +176,10 @@ async function quoteFrom0x({ chainId, sellToken, buyToken, sellAmount, takerAddr
       toProviderAddress(sellToken) === NATIVE_PLACEHOLDER_PROVIDER
         ? null
         : data.allowanceTarget ?? data.issues?.allowance?.spender ?? null,
+    // 0x's own swapFeeBps+swapFeeRecipient isn't wired yet (see this
+    // file's header) — always false here, never inline for this
+    // provider until that's verified.
+    feeCollectedInline: false,
   };
 }
 
@@ -177,7 +207,7 @@ export default async function handler(request, response) {
 
   if (!(await checkRateLimit(request, response, { name: "bridge-fallback-quote", limit: 20 }))) return;
 
-  const { provider, chainId, sellToken, buyToken, sellAmount, takerAddress } = request.body || {};
+  const { provider, chainId, sellToken, buyToken, sellAmount, takerAddress, feePct, feeWallet } = request.body || {};
 
   const quoteFn = PROVIDERS[provider];
   if (!quoteFn) {
@@ -188,7 +218,11 @@ export default async function handler(request, response) {
   }
 
   try {
-    const quote = await quoteFn({ chainId, sellToken, buyToken, sellAmount, takerAddress });
+    // feePct/feeWallet are optional and only ever meaningful to
+    // quoteFrom1inch right now (see its own comment) — quoteFrom0x
+    // just ignores them, same "extra keys are fine" shape every other
+    // per-provider function in this file already assumes.
+    const quote = await quoteFn({ chainId, sellToken, buyToken, sellAmount, takerAddress, feePct, feeWallet });
     return response.status(200).json({ data: quote });
   } catch (err) {
     return response.status(502).json({ error: err?.message || "Fallback quote failed." });
