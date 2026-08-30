@@ -205,8 +205,18 @@ export const ASSET_ONCHAIN_DECIMALS = {
 // a *token* symbol (not a chain's own native asset) must go through
 // assetDecimalsForChain(chainKey, symbol) below, never index
 // ASSET_ONCHAIN_DECIMALS directly by symbol alone.
+//
+// Same exception for BNB's own USDC deployment
+// (0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d, the address
+// TOKEN_ADDRESSES.USDC.bnb points at) — also 18 decimals, not the 6
+// every other verified USDC deployment here uses. Confirmed
+// independently against BscScan's own token page and a second,
+// separate token-data source (coinwatch.finance) before being added —
+// caught live, right after the address itself was added, specifically
+// because Binance-Peg tokens on BNB Chain have a documented history of
+// this exact 18-vs-6 mismatch (USDT already needed the same fix above).
 const ASSET_ONCHAIN_DECIMALS_BY_CHAIN = {
-  bnb: { USDT: 18 },
+  bnb: { USDT: 18, USDC: 18 },
 };
 
 export function assetDecimalsForChain(chainKey, assetSymbol) {

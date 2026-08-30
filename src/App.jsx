@@ -76,7 +76,7 @@ function formatFeePct(rate) {
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
-import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
+import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, assetDecimalsForChain } from "./relaybridge.js";
 import { tryFallbackProviders, checkFallbackRoute } from "./fallbackDex.js";
 import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
@@ -260,8 +260,19 @@ function resolveCurrencyForAsset(chainKey, assetObj) {
 // comment on why a symbol-only decimals lookup is never safe to reuse
 // for this). A custom token's real decimals were read live off its own
 // contract (fetchErc20TokenMetadata) when it was added, not guessed.
-function onchainDecimalsForAsset(assetObj) {
-  return assetObj?.custom ? assetObj.onchainDecimals : ASSET_ONCHAIN_DECIMALS[assetObj.symbol];
+function onchainDecimalsForAsset(assetObj, chainKey) {
+  // Real bug fix, caught live while adding a new chain-specific decimals
+  // override (chainData.js's own ASSET_ONCHAIN_DECIMALS_BY_CHAIN, e.g.
+  // BNB Chain's USDT/USDC both being 18 decimals instead of the usual
+  // 6): this function's own comment already explained why a symbol-only
+  // lookup is unsafe, but the code right below it did exactly that
+  // anyway, silently ignoring every chain-specific override that
+  // existed — a real amount-math bug for BNB-USDT already live in
+  // production before this fix, not just the BNB-USDC entry that
+  // exposed it. Now actually goes through assetDecimalsForChain
+  // (chainData.js), same as automation-worker.js's own backend copy of
+  // this same amount math already correctly does.
+  return assetObj?.custom ? assetObj.onchainDecimals : assetDecimalsForChain(chainKey, assetObj?.symbol);
 }
 
 // Real bug fix: the "You receive"/"Fee"/"ETA" preview below was ALWAYS
@@ -1754,7 +1765,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // Real, separate execution path for Solana-sourced transfers —
         // see relaySdkSolanaExecution.js for why this can't share the
         // EVM path below (wagmi has no concept of Solana chains at all).
-        const decimals = fromCustom ? fromCustom.decimals : ASSET_ONCHAIN_DECIMALS[asset];
+        const decimals = fromCustom ? fromCustom.decimals : assetDecimalsForChain(from, asset);
         const totalBaseUnits = parseUnits(amount, decimals);
 
         // Real fix for a real bug: the fee used to be sent as a standalone
@@ -1795,7 +1806,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         setPhase("done");
         onComplete(result?.txHashes?.[0] || "");
       } else if (kind === "relay") {
-        const decimals = fromCustom ? fromCustom.decimals : ASSET_ONCHAIN_DECIMALS[asset];
+        const decimals = fromCustom ? fromCustom.decimals : assetDecimalsForChain(from, asset);
         const totalBaseUnits = parseUnits(amount, decimals);
 
         // Real root cause, found by tracing why "buy succeeds, sell
@@ -1917,7 +1928,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // already found a genuinely better fallback-provider route —
         // this function runs its own fresh quote independently of
         // whatever the preview displayed.
-        const execToDecimals = toCustom ? toCustom.decimals : ASSET_ONCHAIN_DECIMALS[toAsset];
+        const execToDecimals = toCustom ? toCustom.decimals : assetDecimalsForChain(to, toAsset);
         const execAmtNum = Math.max(0, parseFloat(amount) || 0);
         function execQuoteRoundsToZero(q) {
           try {
@@ -3801,7 +3812,7 @@ export default function MangoBridge() {
 
       let firstErr;
       try {
-        const decimals = onchainDecimalsForAsset(fromAsset);
+        const decimals = onchainDecimalsForAsset(fromAsset, from);
         if (!decimals) throw new Error(`No decimals known for ${fromAsset.symbol} — can't safely build an amount.`);
         const amountBaseUnitsBig = parseUnits(amount, decimals);
         const amountBaseUnits = amountBaseUnitsBig.toString();
@@ -3873,7 +3884,7 @@ export default function MangoBridge() {
           // could even start. Same-chain only (from === to) — Bridge
           // always has from !== to and has no same-chain DEX aggregator
           // to fall back to anyway.
-          const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset)).receivedAmount;
+          const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
           const relayRoundsToZero = from === to && relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
           if (!relayRoundsToZero) {
             applyOkQuote(quote);
@@ -3897,7 +3908,7 @@ export default function MangoBridge() {
         if (from === to) {
           try {
             const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
-            const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset)).receivedAmount;
+            const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
             const roundsToZero = relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
             if (!roundsToZero) {
               applyOkQuote(quote);
@@ -3935,7 +3946,7 @@ export default function MangoBridge() {
               // below rather than presenting a 0.0000 trade as tappable.
               let fallbackRoundsToZero = false;
               try {
-                const fallbackAmt = Number(formatUnits(BigInt(fallbackQuote.buyAmount), onchainDecimalsForAsset(toAsset)));
+                const fallbackAmt = Number(formatUnits(BigInt(fallbackQuote.buyAmount), onchainDecimalsForAsset(toAsset, to)));
                 fallbackRoundsToZero = amtNum > 0 && Number(fallbackAmt.toFixed(4)) === 0;
               } catch {
                 // Unparseable buyAmount — treat as not-zero, same as
@@ -3963,7 +3974,7 @@ export default function MangoBridge() {
   // own comment on why this matters: without it, fee/etaLabel/received
   // below are a static per-chain/per-asset estimate that never reflects
   // Relay at all, live route or not.
-  const liveQuoteSummary = routeCheck.status === "ok" && routeCheck.quote ? summarizeQuote(routeCheck.quote, onchainDecimalsForAsset(toAsset)) : null;
+  const liveQuoteSummary = routeCheck.status === "ok" && routeCheck.quote ? summarizeQuote(routeCheck.quote, onchainDecimalsForAsset(toAsset, to)) : null;
   // A fallback-provider quote (1inch/0x/OKX/KyberSwap — see
   // checkFallbackRoute's own comment) isn't Relay-shaped, so
   // summarizeQuote can't parse it, but its own buyAmount is real,
@@ -3975,7 +3986,7 @@ export default function MangoBridge() {
   let fallbackReceivedAmount = null;
   if (routeCheck.status === "ok" && !routeCheck.quote && routeCheck.fallbackQuote?.buyAmount) {
     try {
-      fallbackReceivedAmount = Number(formatUnits(BigInt(routeCheck.fallbackQuote.buyAmount), onchainDecimalsForAsset(toAsset)));
+      fallbackReceivedAmount = Number(formatUnits(BigInt(routeCheck.fallbackQuote.buyAmount), onchainDecimalsForAsset(toAsset, to)));
     } catch {
       fallbackReceivedAmount = null;
     }
