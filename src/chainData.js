@@ -76,6 +76,25 @@ export const TOKEN_ADDRESSES = {
     // always failed with "not safe to guess one" — a real gap, not a
     // deliberate omission.
     solana: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    // Added live in response to real user-reported "No verified mainnet
+    // contract address for USDC" failures on chains where Relay/the
+    // fallback aggregators actually do support USDC — the registry was
+    // just behind. Each cross-checked two independent sources before
+    // being added, same bar as every entry above:
+    //   bnb: Circle's own multi-chain USDC docs + BscScan, labeled
+    //   "Circle: USDC Token" (the canonical BEP-20 USDC, not a random
+    //   bridged wrapper).
+    //   hyperevm: circle.com/multi-chain-usdc/hyperevm + HyperEVMScan,
+    //   same "Circle: USDC Token" label.
+    //   ink: Circle's own "Now Available: USDC & CCTP V2 on Ink" post +
+    //   two independent explorers (Blockscout, OKLink) agreeing on the
+    //   same address.
+    // Abstract was checked too and deliberately left out — no
+    // independently-confirmed native USDC contract found for it, so
+    // this file's own rule (don't guess) still applies there.
+    bnb: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+    hyperevm: "0xb88339cb7199b77e23db6e890353e22632ba630f",
+    ink: "0x2d270e6886d130d724215a266106e6832161eaed",
   },
   USDT: {
     ethereum: "0xdAC17F958D2ee523a2206206994597C13D831ec7",

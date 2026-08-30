@@ -69,7 +69,16 @@ export const RPC_FALLBACKS = {
   9745: ["https://rpc.plasma.to", alchemyUrl("plasma-mainnet")], // Plasma — official + Alchemy (verified real endpoint)
   130: ["https://mainnet.unichain.org", "https://unichain.publicnode.com"], // Unichain — official (Uniswap Labs) + PublicNode
   196: ["https://xlayerrpc.okx.com", "https://rpc.xlayer.tech"], // X Layer — both OKX-operated (no independent 3rd-party endpoint is documented), but genuinely two separate documented URLs
-  4663: ["https://rpc.mainnet.chain.robinhood.com", "https://robinhood-rpc.publicnode.com"], // Robinhood Chain — official + PublicNode (third-party; Robinhood's own docs only list the one URL)
+  // Robinhood Chain — official + PublicNode + Alchemy. Added the Alchemy
+  // tier live, in response to a real, reproducible "Couldn't verify this
+  // token" failure on the wallet's custom-token add flow: both free-tier
+  // endpoints above are documented (by Robinhood's own RPC provider
+  // comparisons) as shared and rate-limited, "felt exactly when you least
+  // want them — during activity spikes", and this chain logged a record
+  // 11.6M daily transactions the same month this was hit. Alchemy natively
+  // supports Robinhood Chain mainnet/testnet (own announcement + API docs)
+  // — same verified-key pattern as every other Alchemy tier in this file.
+  4663: ["https://rpc.mainnet.chain.robinhood.com", "https://robinhood-rpc.publicnode.com", alchemyUrl("robinhood-mainnet")],
   988: ["https://rpc.stable.xyz", alchemyUrl("stable-mainnet")], // Stable — official (the only one Stable's own docs list) + Alchemy (verified real endpoint)
   // Fantom — not a Bridge chain, but wagmi/chains' own default RPC for it
   // IS Thirdweb-operated (250.rpc.thirdweb.com), same violation this list

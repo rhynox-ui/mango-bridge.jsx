@@ -68,6 +68,7 @@ import {
   Download,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
+import { appFeeBps } from "./devFeeWallets.js";
 /** "0.25" not "0.25000", "1" not "1.00" — used everywhere this file displays the real Bridge/Swap protocol fee rate, so a rate change (devFeeWallets.js) can't leave stale "1%" text behind the way a hardcoded literal already had. Not used for Launchpad's own, separate trading-fee text (a different fee schedule entirely — see hookConfig's own "1% buy, 4% sell" copy). */
 function formatFeePct(rate) {
   return (rate * 100).toFixed(2).replace(/\.?0+$/, "");
@@ -3922,7 +3923,15 @@ export default function MangoBridge() {
   // like a CCTP/op-withdraw/arb-withdraw special case, which never has
   // one).
   const fee = liveQuoteSummary?.totalFeeUsd ?? (isSwapTab ? CHAINS[from].baseFee : CHAINS[from].baseFee + CHAINS[to].baseFee);
-  const devFeeAmount = amtNum * DEV_FEE_PCT;
+  // Real bug fix, live-reported: this used to be a flat amtNum *
+  // DEV_FEE_PCT with no cap, while the actual fee sent to Relay/the
+  // fallback providers (getRelayQuote's own appFeeBps, devFeeWallets.js)
+  // has always applied a $50 maximum on large trades. That mismatch
+  // meant the confirm screen could show a bigger fee than what's
+  // actually charged — e.g. a $30k trade displaying $75 while only $50
+  // is ever collected. Now calls the exact same appFeeBps() the real
+  // quote uses, so this number can never drift from what's charged.
+  const devFeeAmount = amtNum * (Number(appFeeBps(fromAsset.price > 0 ? amtNum * fromAsset.price : undefined)) / 10000);
   const seconds = liveQuoteSummary?.etaSeconds ?? Math.max(CHAINS[from].baseSeconds, CHAINS[to].baseSeconds);
   const etaLabel = seconds < 60 ? `~${Math.max(1, Math.round(seconds))}s` : `~${Math.round(seconds / 60)} min`;
   // For same-asset transfers this is a direct estimate. For cross-asset swaps
