@@ -56,7 +56,7 @@ Solana isn't EVM-compatible — a genuinely different blockchain architecture, n
 
 ## Fees
 
-A 1% protocol fee is collected on every real transfer, across every protocol above — sent as its own separate, visible on-chain transaction — never bundled invisibly into another transfer.
+A 0.25% protocol fee applies to every real transfer, capped at $50 on a large trade once its USD value is actually known (an unpriced/custom token just pays the flat rate, uncapped). For Relay-routed transfers (Bridge and Swap) it's deducted atomically as part of the same settlement, via Relay's own app-fee mechanism — never a separate pre-transaction, so a failed transfer never collects anything. CCTP and the native OP Stack/Arbitrum bridges still send it as its own separate, visible on-chain transaction.
 
 ---
 
