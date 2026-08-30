@@ -1181,6 +1181,18 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   }
 
   const upperQuery = trimmedQuery.toUpperCase();
+  // Real bug fix: when the pasted/typed text neither matches a known
+  // symbol NOR parses as a real address (isValidDestinationAddress
+  // above — a garbled paste, a truncated address, or just a typo), the
+  // dropdown used to render nothing at all below the search box — no
+  // result, no error, no loading state. Reported live as "doesn't do
+  // anything." matchingAssetCount/matchingCustomTokenCount let the
+  // empty-state message below know when that's actually happened,
+  // rather than only ever being able to detect it after already
+  // rendering (and discarding) every non-matching row.
+  const matchingAssetCount = !looksLikeAddress ? ASSETS.filter((a) => !upperQuery || a.symbol.includes(upperQuery)).length : 0;
+  const matchingCustomTokenCount =
+    !looksLikeAddress && supportsCustomTokens ? customTokensForChain.filter((t) => !upperQuery || t.symbol.toUpperCase().includes(upperQuery)).length : 0;
 
   return (
     <div className="relative shrink-0" ref={ref}>
@@ -1242,6 +1254,13 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                 </button>
               );
             })}
+            {trimmedQuery && !looksLikeAddress && matchingAssetCount === 0 && matchingCustomTokenCount === 0 && (
+              <div className="px-3 py-3 text-[11.5px]" style={{ color: P.textMuted }}>
+                {supportsCustomTokens
+                  ? `No matching token — paste a full ${isSolanaChain ? "mint" : "contract"} address to add a new one.`
+                  : "No matching token."}
+              </div>
+            )}
             {looksLikeAddress && (
               <div className="px-3 py-3">
                 {fetching ? (
