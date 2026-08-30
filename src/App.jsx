@@ -1668,7 +1668,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
               <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Network fee</span><span className="font-mono" style={{ color: "#D7DBE2" }}>${fmt(fee, 2)}</span></div>
               <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Protocol fee (1%)</span><span className="font-mono" style={{ color: "#D7DBE2" }}>{fmt(devFeeAmount, 4)} {asset}</span></div>
               <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Estimated time</span><span style={{ color: "#D7DBE2" }}>{kind === "op-withdraw" || kind === "arb-withdraw" ? "~7 days to finalize" : etaLabel}</span></div>
-              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>You receive</span><span className="font-mono font-medium" style={{ color: "#F2F4F7" }}>{fmt(received, 4)} {toAsset}{asset !== toAsset ? " (estimate)" : ""}</span></div>
+              <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>You receive</span><span className="font-mono font-medium" style={{ color: "#F2F4F7" }}>{received !== null ? `${fmt(received, 4)} ${toAsset}${asset !== toAsset ? " (estimate)" : ""}` : "Set by Relay's live quote"}</span></div>
             </div>
             <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: isReal ? `${LIME}14` : "#1C212A", border: `1px solid ${isReal ? LIME + "40" : "#262C36"}`, color: isReal ? LIME : "#8B95A1" }}>
               <AlertTriangle size={14} className="shrink-0 mt-0.5" color={isReal ? LIME : "#F0B84D"} />
@@ -3351,8 +3351,24 @@ export default function MangoBridge() {
   // time and can differ meaningfully from this number, especially for
   // volatile assets. Never treat this as authoritative for a swap. Used only
   // as a fallback below, while the real quote isn't available yet.
-  const amtNumUsdValue = (amtNum - devFeeAmount) * (fromAsset.price || 1) - fee;
-  const received = liveQuoteSummary?.receivedAmount ?? Math.max(amtNumUsdValue / (toAsset.price || 1), 0);
+  //
+  // Real bug fix: a custom token's price is deliberately 0 above — this
+  // file's own "cosmetic-only placeholder, never used for real math"
+  // sentinel — but `(fromAsset.price || 1)`/`(toAsset.price || 1)`
+  // treated that 0 exactly like a genuine $1 price, silently pricing
+  // every custom token as if it were a dollar stablecoin. That's not a
+  // rough estimate, it's a fabricated number: a token actually worth a
+  // fraction of a cent showed a "You receive" preview built as though
+  // it were worth $1 each. Now null (no estimate at all) whenever
+  // either side's price is genuinely unknown, rather than a specific,
+  // confident-looking wrong one — this can happen even with a real,
+  // liquid custom token, any time the live Relay quote above hasn't
+  // resolved yet (still checking, or the route-check gate skipped it
+  // entirely — see its own comment — because a Solana destination has
+  // no wallet connected yet).
+  const knownPrice = fromAsset.price > 0 && toAsset.price > 0;
+  const amtNumUsdValue = knownPrice ? (amtNum - devFeeAmount) * fromAsset.price - fee : null;
+  const received = liveQuoteSummary?.receivedAmount ?? (amtNumUsdValue !== null ? Math.max(amtNumUsdValue / toAsset.price, 0) : null);
   const availableBalance = !usingLiveBalance
     ? null
     : isFromSolana
@@ -3402,9 +3418,15 @@ export default function MangoBridge() {
     // chain entry (not the stale original `balances`) keeps both the
     // debit and the credit when they land on the same chain.
     const fromChainBalances = { ...balances[from], [fromAsset.symbol]: Math.max(0, (balances[from][fromAsset.symbol] || 0) - amtNum) };
+    // received can now be null (no reliable price estimate — see its
+    // own comment above); this optimistic local credit is cosmetic
+    // bookkeeping only, corrected by the next real balance fetch either
+    // way, so 0 here (no credit shown yet) beats letting a null
+    // propagate into NaN and corrupt the stored balance entirely.
+    const receivedForBalance = received ?? 0;
     const toChainBalances = from === to
-      ? { ...fromChainBalances, [toAsset.symbol]: (fromChainBalances[toAsset.symbol] || 0) + received }
-      : { ...balances[to], [toAsset.symbol]: (balances[to][toAsset.symbol] || 0) + received };
+      ? { ...fromChainBalances, [toAsset.symbol]: (fromChainBalances[toAsset.symbol] || 0) + receivedForBalance }
+      : { ...balances[to], [toAsset.symbol]: (balances[to][toAsset.symbol] || 0) + receivedForBalance };
     const newBalances = {
       ...balances,
       [from]: fromChainBalances,
@@ -3604,9 +3626,16 @@ export default function MangoBridge() {
                   </div>
                 )}
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
-                  <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 ? P.textPrimary : P.textMuted }}>{amtNum > 0 ? fmt(received, 4) : "0"}</span>
+                  <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 && received !== null ? P.textPrimary : P.textMuted }}>
+                    {amtNum > 0 ? (received !== null ? fmt(received, 4) : "—") : "0"}
+                  </span>
                   <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken={isSwapTab} discoveredLogos={discoveredAssetLogos} />
                 </div>
+                {amtNum > 0 && received === null && (
+                  <div className="text-[11.5px] mt-1.5" style={{ color: P.textMuted }}>
+                    No price estimate yet for {fromAsset.custom ? fromAsset.symbol : toAsset.symbol} — the real amount is set by Relay's live quote.
+                  </div>
+                )}
               </div>
 
               {/* ETA / details collapsible */}
