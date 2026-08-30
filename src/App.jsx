@@ -584,7 +584,7 @@ function ChainDropdown({ value, exclude, onChange, P, chainOrder = CHAIN_ORDER }
         // walletChains.js's 25 wallet-only chains Relay's live data
         // currently supports, which can run well past what fits on
         // screen without this.
-        <div className="absolute left-0 z-30 mt-2 w-44 max-h-80 overflow-y-auto rounded-xl shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        <div className="absolute left-0 z-50 mt-2 w-44 max-h-80 overflow-y-auto rounded-xl shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           {chainOrder.filter((id) => id !== exclude).map((id) => {
             const cc = CHAINS[id];
             return (
@@ -1076,13 +1076,23 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     setCustomTokensForChain(isSolanaChain ? loaded.map((t) => ({ ...t, address: t.mint })) : loaded);
   }, [open, chainId, supportsCustomTokens, isSolanaChain]);
 
-  // Real fix for the dropdown getting hidden behind the fixed bottom nav:
-  // measure actual available space below the trigger every time it opens,
-  // rather than always opening downward and hoping there's room. ~140px
-  // covers the bottom nav's real height plus a small safety margin — if
-  // less than that remains below the button, flip the menu to open
-  // upward instead, so every asset stays reachable regardless of where
-  // this dropdown sits on the page.
+  // Flip-up heuristic for the dropdown running out of room below the
+  // trigger: measure actual available space every time it opens, rather
+  // than always opening downward and hoping there's room. ~140px covers
+  // the bottom nav's real height plus a small safety margin.
+  //
+  // This alone did NOT fix tokens rendering hidden/cut off under the
+  // bottom nav, though — live-reported and reproduced: the real cause is
+  // that this panel's z-30 sits BELOW the fixed bottom nav's own z-40
+  // (see its own "Bottom nav" block further down this file), so whenever
+  // the panel's scrollable list extends into the nav's fixed screen
+  // region (its own semi-transparent gradient background painting on
+  // top), the last rows read as faded/cut off even though they're still
+  // there and still scrollable — nothing was ever actually missing from
+  // the list, it was only ever a stacking-order problem. z-50 here (and
+  // on the chain-picker dropdown below, same underlying pattern) fixes
+  // the actual cause; the flip-up logic below is still worth keeping as
+  // a secondary "prefer not to need it at all" heuristic.
   function handleToggle() {
     if (!open && ref.current) {
       const rect = ref.current.getBoundingClientRect();
@@ -1260,7 +1270,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
       </button>
       {open && (
         <div
-          className={`absolute right-0 z-30 w-64 rounded-xl shadow-2xl flex flex-col ${openUpward ? "bottom-full mb-2" : "top-full mt-2"}`}
+          className={`absolute right-0 z-50 w-64 rounded-xl shadow-2xl flex flex-col ${openUpward ? "bottom-full mb-2" : "top-full mt-2"}`}
           style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, maxHeight: "min(60vh, 380px)" }}
         >
           {supportsCustomTokens && (
