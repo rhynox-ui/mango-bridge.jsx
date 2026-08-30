@@ -2,7 +2,7 @@ import { getAccount, switchChain, sendTransaction, waitForTransactionReceipt } f
 import { config } from "./wagmi.js";
 export { MAINNET_CHAIN_IDS, NATIVE_SYMBOL, TOKEN_ADDRESSES, currencyAddress, canRelayHandle, ASSET_ONCHAIN_DECIMALS } from "./chainData.js";
 import { MAINNET_CHAIN_IDS, currencyAddress } from "./chainData.js";
-import { DEV_FEE_WALLET, DEV_FEE_WALLET_SOLANA, DEV_FEE_PCT } from "./devFeeWallets.js";
+import { DEV_FEE_WALLET, DEV_FEE_PCT } from "./devFeeWallets.js";
 export { DEV_FEE_WALLET, DEV_FEE_PCT };
 
 // Real fix for a real problem the previous "send a standalone fee
@@ -24,13 +24,24 @@ export { DEV_FEE_WALLET, DEV_FEE_PCT };
 // if the transfer actually succeeds, and the full requested amount goes
 // into the quote with nothing carved out beforehand.
 //
-// Fee recipient depends on the quote's DESTINATION chain — an EVM
-// destination pays DEV_FEE_WALLET, a Solana destination pays
-// DEV_FEE_WALLET_SOLANA (an EVM address can't receive SOL) — matching
-// how Relay's own appFees settle: out of what's actually delivered on
-// the destination side, not what's deposited on the origin side.
-function feeRecipientForChainId(chainId) {
-  return chainId === MAINNET_CHAIN_IDS.solana ? DEV_FEE_WALLET_SOLANA : DEV_FEE_WALLET;
+// Real bug fix, live-confirmed: this used to switch to
+// DEV_FEE_WALLET_SOLANA for a Solana destination, on the assumption
+// appFees settle out of whatever's actually delivered there (an EVM
+// address "can't receive SOL"). That assumption was wrong — Relay's
+// own docs (docs.relay.link/features/app-fees) are explicit that the
+// appFees recipient must ALWAYS be an EVM address, for every chain,
+// because app fees never settle on the swap's own chain at all: they
+// accrue off-chain, denominated in USDC, claimable later on Base. A
+// same-chain Solana swap (SOL -> a custom SPL token, both on Solana)
+// hit exactly this: Relay's quote API rejected the Solana wallet with
+// "App Fee recipient must be a valid EVM address" — a real 400,
+// reproduced live, not a hypothetical. DEV_FEE_WALLET_SOLANA is a
+// real, still-used wallet (solanaLaunchpadProgram.js's own on-chain
+// Launchpad fee collection, a genuinely different, direct-transfer
+// mechanism with nothing to do with Relay's appFees) — just never the
+// right value for THIS parameter, on any chain.
+function feeRecipientForChainId() {
+  return DEV_FEE_WALLET;
 }
 
 // Relay Protocol — confirmed independently across three sources: Relay's own
@@ -148,7 +159,7 @@ export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAss
     destinationCurrency: destinationCurrency ?? currencyAddress(toChainKey, toAsset),
     amount: amountBaseUnits,
     tradeType: "EXACT_INPUT",
-    appFees: [{ recipient: feeRecipientForChainId(resolvedDestinationChainId), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
+    appFees: [{ recipient: feeRecipientForChainId(), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
   };
   const res = await postRelayQuote(body);
   if (!res.ok) {
