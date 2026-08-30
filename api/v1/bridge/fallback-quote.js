@@ -1,7 +1,7 @@
 // api/v1/bridge/fallback-quote.js
 //
 // POST /api/v1/bridge/fallback-quote
-// Body: { provider: '0x' | '1inch', chainId, sellToken, buyToken, sellAmount, takerAddress }
+// Body: { provider: '0x' | '1inch' | 'kyberswap', chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps?, feeWallet? }
 //
 // Second-source same-chain swap quoting, tried only when Relay itself
 // has no route at all (relaybridge.js's own getRelayQuote, even at 0%
@@ -12,11 +12,11 @@
 // deBridge, Jupiter) were left out on request — the first conflicts
 // with this app's own non-custodial-only design (see README's "Never
 // in custody"), the second doesn't apply to same-chain Swap at all,
-// which is where the reported failure actually happened. 0x and 1inch
-// both call Uniswap/PancakeSwap/Balancer/Curve/etc. DIRECTLY in one
-// on-chain transaction they build — real, additional liquidity sources
-// Relay's own solver network might not have indexed yet, not a
-// re-hosted version of the same routing.
+// which is where the reported failure actually happened. 0x, 1inch,
+// and KyberSwap each call Uniswap/PancakeSwap/Balancer/Curve/etc.
+// DIRECTLY in one on-chain transaction they build — real, additional
+// liquidity sources Relay's own solver network might not have indexed
+// yet, not a re-hosted version of the same routing.
 //
 // Server-side proxy for the SAME two real reasons relay-quote.js
 // already documents: (1) a browser fetch() straight to api.1inch.dev/
@@ -44,26 +44,23 @@
 //     appFees-inclusive same-chain self-execution does), null when
 //     selling the chain's native asset (no approval ever needed there).
 //
-// 1inch's own Classic Swap docs (verified directly against the real
-// account's own reference page, not a search snippet) confirm a
-// `fee`+`referrer` param pair — "Partner fee in percent. min: 0; max:
-// 3" plus "The address that will receive the partner fee ... Required
-// when 'fee' is set." feePct/feeWallet below come from the SAME
-// client-side appFeeBps() every other quote path already uses (see
-// devFeeWallets.js), passed straight through here exactly like
-// relay-quote.js already passes Relay's own appFees through — this
-// endpoint doesn't compute the rate itself, it only forwards it.
-// quoteFrom1inch reports back feeCollectedInline: true so callers know
-// NOT to also run their own post-success fee sweep for this swap.
-//
-// 0x's own swapFeeBps+swapFeeRecipient is still NOT wired — its exact
-// semantics haven't been verified against live docs the way 1inch's
-// just were (same "never fabricate a number" rule), so quoteFrom0x
-// still reports feeCollectedInline: false and Mango's cut on a
-// 0x-routed fallback still only comes from the existing separate,
-// post-success collection (mango-mobile's own
-// settleFallbackFeeFromNativeBalance; the site collects nothing on a
-// 0x-routed fallback, same documented asymmetry as before).
+// Both providers now collect Mango's own cut atomically inside the
+// swap transaction itself, via each one's own real, documented
+// partner-fee mechanism (verified against live docs, not guessed):
+//   1inch Classic Swap — `fee` (percent, min 0 max 3) + `referrer`,
+//     confirmed directly against the real account's own reference page.
+//   0x Swap API v2 (allowance-holder/quote) — `swapFeeBps` (0-1000) +
+//     `swapFeeRecipient` + `swapFeeToken` (must be the sell or buy
+//     token address), confirmed against 0x's own published docs.
+// feeBps/feeWallet below come from the SAME client-side appFeeBps()
+// every other quote path already uses (see devFeeWallets.js), passed
+// straight through here exactly like relay-quote.js already passes
+// Relay's own appFees through — this endpoint doesn't compute the
+// rate itself, it only forwards it (1inch's own param is a PERCENT,
+// not bps, so quoteFrom1inch converts; 0x's is bps already, passed
+// straight through). Both report back feeCollectedInline: true so
+// callers know NOT to also run their own post-success fee sweep for
+// that swap — see mango-mobile's own settleFallbackFeeFromNativeBalance.
 
 import { checkRateLimit } from "../../rateLimit.js";
 
@@ -78,11 +75,16 @@ function toProviderAddress(address) {
   return address?.toLowerCase() === NATIVE_PLACEHOLDER_ZERO ? NATIVE_PLACEHOLDER_PROVIDER : address;
 }
 
-async function quoteFrom1inch({ chainId, sellToken, buyToken, sellAmount, takerAddress, feePct, feeWallet }) {
+async function quoteFrom1inch({ chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps, feeWallet }) {
   const apiKey = process.env.ONEINCH_API_KEY;
   if (!apiKey) {
     throw new Error("1inch fallback isn't configured yet (missing ONEINCH_API_KEY).");
   }
+  // 1inch's own `fee` param is a PERCENT (min 0, max 3) — feeBps is
+  // basis points (1/100 of a percent), same unit Relay's own appFees
+  // already uses, so convert here rather than push the conversion onto
+  // every caller.
+  const feePct = feeBps ? Number(feeBps) / 100 : 0;
   const params = new URLSearchParams({
     src: toProviderAddress(sellToken),
     dst: toProviderAddress(buyToken),
@@ -139,18 +141,31 @@ async function quoteFrom1inch({ chainId, sellToken, buyToken, sellAmount, takerA
   };
 }
 
-async function quoteFrom0x({ chainId, sellToken, buyToken, sellAmount, takerAddress }) {
+async function quoteFrom0x({ chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps, feeWallet }) {
   const apiKey = process.env.ZEROX_API_KEY;
   if (!apiKey) {
     throw new Error("0x fallback isn't configured yet (missing ZEROX_API_KEY).");
   }
+  const sellTokenAddress = toProviderAddress(sellToken);
   const params = new URLSearchParams({
     chainId: String(chainId),
-    sellToken: toProviderAddress(sellToken),
+    sellToken: sellTokenAddress,
     buyToken: toProviderAddress(buyToken),
     sellAmount,
     taker: takerAddress,
   });
+  // Partner fee — confirmed against 0x's own published Swap API v2
+  // docs: swapFeeBps (0-1000, already the same basis-point unit
+  // appFeeBps returns — no conversion needed, unlike 1inch's percent
+  // param), swapFeeRecipient, and swapFeeToken (must be either the
+  // sell or buy token address — using the sell side, consistent with
+  // Relay's own appFees, which accrue "in the currency sent to the
+  // solver"). All three or none.
+  if (feeBps > 0 && feeWallet) {
+    params.set("swapFeeBps", String(feeBps));
+    params.set("swapFeeRecipient", feeWallet);
+    params.set("swapFeeToken", sellTokenAddress);
+  }
   // allowance-holder, not permit2: a standard single-signature
   // approve-then-swap flow (same shape as every other DEX this app
   // already interacts with), not 0x's newer double-signature Permit2
@@ -173,28 +188,127 @@ async function quoteFrom0x({ chainId, sellToken, buyToken, sellAmount, takerAddr
     gas: data.transaction.gas ?? null,
     buyAmount: data.buyAmount ?? null,
     allowanceTarget:
-      toProviderAddress(sellToken) === NATIVE_PLACEHOLDER_PROVIDER
-        ? null
-        : data.allowanceTarget ?? data.issues?.allowance?.spender ?? null,
-    // 0x's own swapFeeBps+swapFeeRecipient isn't wired yet (see this
-    // file's header) — always false here, never inline for this
-    // provider until that's verified.
-    feeCollectedInline: false,
+      sellTokenAddress === NATIVE_PLACEHOLDER_PROVIDER ? null : data.allowanceTarget ?? data.issues?.allowance?.spender ?? null,
+    // Tells the caller Mango's cut already rode along inside this same
+    // transaction (0x's own swapFeeBps mechanism) — a caller that also
+    // runs its own post-success fee sweep must skip it here, or the
+    // user gets billed twice for one swap.
+    feeCollectedInline: feeBps > 0 && !!feeWallet,
   };
 }
 
-// Odos/KyberSwap/ParaSwap were requested alongside 0x/1inch but aren't
-// wired up yet — same real reason as everywhere else in this file:
-// building a quote+execute integration against a provider's API
-// without live access to its actual docs (this sandbox's network
-// egress blocked every one of these vendor doc sites directly) risks
-// shipping something subtly wrong against real user funds. Adding one
-// is a small, contained change once there's a verified request/
-// response shape to build against — a new `quoteFromX` function above
-// plus one more `case` below, same shape as the two real ones.
+// KyberSwap Aggregator API — no API key needed for the free tier (just
+// an X-Client-Id header identifying the caller), verified against
+// KyberSwap's own current docs. Two-step like the others: GET /routes
+// for a routeSummary, POST /route/build to turn it into a ready-to-sign
+// transaction. Fee params (feeAmount/isInBps/chargeFeeBy/feeReceiver)
+// go on the GET /routes request, which echoes them into
+// routeSummary.extraFee — that same routeSummary is then passed
+// straight through to /route/build unmodified, so the fee rides along
+// automatically, same idea as 1inch/0x's own inline fee params.
+//
+// Only wired for chains independently confirmed in KyberSwap's own
+// chain list (KYBERSWAP_CHAIN_SLUG below) — same "never fabricate a
+// number" rule as everywhere else in this file: a wrong slug 404s
+// instead of quietly routing to the wrong chain, so an unconfirmed
+// chain throws a clear error instead of guessing one.
+const KYBERSWAP_CHAIN_SLUG = {
+  1: "ethereum",
+  56: "bsc",
+  137: "polygon",
+  10: "optimism",
+  42161: "arbitrum",
+  43114: "avalanche",
+  8453: "base",
+  59144: "linea",
+};
+
+async function quoteFromKyberSwap({ chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps, feeWallet }) {
+  const chainSlug = KYBERSWAP_CHAIN_SLUG[Number(chainId)];
+  if (!chainSlug) {
+    throw new Error(`KyberSwap fallback doesn't support chain ${chainId} yet.`);
+  }
+  const clientId = "MangoProtocol";
+  const sellTokenAddress = toProviderAddress(sellToken);
+  const routeParams = new URLSearchParams({
+    tokenIn: sellTokenAddress,
+    tokenOut: toProviderAddress(buyToken),
+    amountIn: sellAmount,
+  });
+  if (feeBps > 0 && feeWallet) {
+    routeParams.set("feeAmount", String(feeBps));
+    routeParams.set("isInBps", "true");
+    routeParams.set("chargeFeeBy", "currency_in");
+    routeParams.set("feeReceiver", feeWallet);
+  }
+  const routeRes = await fetch(`https://aggregator-api.kyberswap.com/${chainSlug}/api/v1/routes?${routeParams.toString()}`, {
+    headers: { "X-Client-Id": clientId, Accept: "application/json" },
+  });
+  if (!routeRes.ok) {
+    const text = await routeRes.text().catch(() => "");
+    throw new Error(`KyberSwap route failed (${routeRes.status}): ${text || routeRes.statusText}`);
+  }
+  const routeData = await routeRes.json();
+  const routeSummary = routeData?.data?.routeSummary;
+  if (!routeSummary) {
+    throw new Error("KyberSwap returned no route for this pair.");
+  }
+  const buildRes = await fetch(`https://aggregator-api.kyberswap.com/${chainSlug}/api/v1/route/build`, {
+    method: "POST",
+    headers: { "X-Client-Id": clientId, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      routeSummary,
+      sender: takerAddress,
+      recipient: takerAddress,
+      // 1% — same convention as 1inch's own slippage: "1" elsewhere in
+      // this file, expressed here in KyberSwap's own bps unit (100bps).
+      slippageTolerance: 100,
+      deadline: Math.floor(Date.now() / 1000) + 20 * 60,
+    }),
+  });
+  if (!buildRes.ok) {
+    const text = await buildRes.text().catch(() => "");
+    throw new Error(`KyberSwap build failed (${buildRes.status}): ${text || buildRes.statusText}`);
+  }
+  const buildData = await buildRes.json();
+  const built = buildData?.data;
+  if (!built?.routerAddress || !built?.callData) {
+    throw new Error("KyberSwap returned no executable transaction for this pair.");
+  }
+  return {
+    to: built.routerAddress,
+    data: built.callData,
+    value: built.value ?? (sellTokenAddress === NATIVE_PLACEHOLDER_PROVIDER ? sellAmount : "0"),
+    gas: built.gas ?? null,
+    buyAmount: built.amountOut ?? routeSummary.amountOut ?? null,
+    allowanceTarget: sellTokenAddress === NATIVE_PLACEHOLDER_PROVIDER ? null : built.routerAddress,
+    feeCollectedInline: feeBps > 0 && !!feeWallet,
+  };
+}
+
+// Odos and ParaSwap were requested alongside 0x/1inch/KyberSwap but
+// are deliberately still NOT wired — for real, specific reasons found
+// once actually researched, not just "no live docs access":
+//   Odos: its own docs say API v2 (the /sor/quote/v2 + /sor/assemble
+//     shape originally researched for this) is being RETIRED — every
+//     partner must migrate to v3, which also has a different fee model
+//     (v3's free tier bakes in its own 3bps protocol fee on top of
+//     whatever Mango's own fee would add). Building against v2 now
+//     would ship something already scheduled to break; v3's exact
+//     request/response shape hasn't been independently confirmed.
+//   ParaSwap: rebranded to Velora in 2025 — new token (VLR), and a
+//     genuinely different intents-based execution model ("Delta v2.5",
+//     multiple agents competing for price execution) replacing the
+//     simple REST quote-then-build flow this file's other providers
+//     use. Whether apiv5.paraswap.io still serves the classic flow, or
+//     what Velora's own current endpoint looks like, isn't confirmed.
+// Both are a small, contained addition once each has a verified
+// request/response shape to build against — same shape as the
+// providers above.
 const PROVIDERS = {
   "1inch": quoteFrom1inch,
   "0x": quoteFrom0x,
+  kyberswap: quoteFromKyberSwap,
 };
 
 export default async function handler(request, response) {
@@ -207,7 +321,7 @@ export default async function handler(request, response) {
 
   if (!(await checkRateLimit(request, response, { name: "bridge-fallback-quote", limit: 20 }))) return;
 
-  const { provider, chainId, sellToken, buyToken, sellAmount, takerAddress, feePct, feeWallet } = request.body || {};
+  const { provider, chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps, feeWallet } = request.body || {};
 
   const quoteFn = PROVIDERS[provider];
   if (!quoteFn) {
@@ -218,11 +332,9 @@ export default async function handler(request, response) {
   }
 
   try {
-    // feePct/feeWallet are optional and only ever meaningful to
-    // quoteFrom1inch right now (see its own comment) — quoteFrom0x
-    // just ignores them, same "extra keys are fine" shape every other
-    // per-provider function in this file already assumes.
-    const quote = await quoteFn({ chainId, sellToken, buyToken, sellAmount, takerAddress, feePct, feeWallet });
+    // feeBps/feeWallet are optional — both real providers now use them
+    // (see each quoteFn's own comment for how each interprets feeBps).
+    const quote = await quoteFn({ chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps, feeWallet });
     return response.status(200).json({ data: quote });
   } catch (err) {
     return response.status(502).json({ error: err?.message || "Fallback quote failed." });
