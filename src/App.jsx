@@ -1007,6 +1007,21 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
   // user types one same as before this auto-fetch existed.
   const [splDecimals, setSplDecimals] = useState(null);
   const [splSymbolInput, setSplSymbolInput] = useState("");
+  // Real bug fix, live-confirmed: pasting an address that's already a
+  // known built-in asset or already-added custom token used to just
+  // `return` from the verification effect below with nothing else set
+  // — fetching/fetchedToken/fetchError all stayed at their reset
+  // values, so the dropdown rendered completely empty for that address:
+  // no card, no error, no spinner, nothing. Reported live as "works the
+  // first time [add a new token], then next time [re-pasting the same
+  // address] it won't show" — exactly this case, since adding a token
+  // persists it to localStorage (customTokens.js), so re-pasting the
+  // same address in the same browser session (or any later one, until
+  // the token is removed or a different browser's empty localStorage is
+  // used) always hits this silent path. Tracks which already-known
+  // entry matched so the UI can offer to just select it instead of
+  // going silent.
+  const [alreadyKnownToken, setAlreadyKnownToken] = useState(null);
   const [fetchError, setFetchError] = useState("");
   const ref = useRef(null);
   const asset = customToken || ASSETS[assetIdx];
@@ -1064,6 +1079,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
       setSplDecimals(null);
       setSplSymbolInput("");
       setFetchError("");
+      setAlreadyKnownToken(null);
     }
     setOpen((o) => !o);
   }
@@ -1076,19 +1092,29 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     setSplDecimals(null);
     setSplSymbolInput("");
     setFetchError("");
+    setAlreadyKnownToken(null);
     if (!open || !looksLikeAddress) return;
     // Already a known built-in or already-added custom token at this
-    // exact address/mint — nothing new to verify or offer adding again.
-    // A Solana mint is case-sensitive base58, unlike an EVM address, so
-    // this only lowercases for the comparison on EVM chains — matches
+    // exact address/mint — nothing new to verify or offer adding again,
+    // but (real bug fix, see alreadyKnownToken's own comment above) the
+    // UI still needs to show *something* rather than going silent —
+    // offer to just select the existing entry. A Solana mint is
+    // case-sensitive base58, unlike an EVM address, so this only
+    // lowercases for the comparison on EVM chains — matches
     // customTokenLogoUrl's own reasoning above.
     const sameAddress = (a, b) => (isSolanaChain ? a === b : a.toLowerCase() === b.toLowerCase());
-    const already =
-      customTokensForChain.some((t) => sameAddress(t.address, trimmedQuery)) ||
-      ASSETS.some((a) => {
-        try { return sameAddress(currencyAddress(chainId, a.symbol), trimmedQuery); } catch { return false; }
-      });
-    if (already) return;
+    const alreadyCustom = customTokensForChain.find((t) => sameAddress(t.address, trimmedQuery));
+    if (alreadyCustom) {
+      setAlreadyKnownToken({ kind: "custom", token: alreadyCustom });
+      return;
+    }
+    const alreadyBuiltInIdx = ASSETS.findIndex((a) => {
+      try { return sameAddress(currencyAddress(chainId, a.symbol), trimmedQuery); } catch { return false; }
+    });
+    if (alreadyBuiltInIdx !== -1) {
+      setAlreadyKnownToken({ kind: "builtin", asset: ASSETS[alreadyBuiltInIdx], index: alreadyBuiltInIdx });
+      return;
+    }
     let cancelled = false;
     setFetching(true);
     if (isSolanaChain) {
@@ -1148,6 +1174,18 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, chainId, trimmedQuery, looksLikeAddress, isSolanaChain]);
+
+  function handleSelectAlreadyKnown() {
+    if (!alreadyKnownToken) return;
+    if (alreadyKnownToken.kind === "custom") {
+      onCustomTokenSelect(alreadyKnownToken.token);
+    } else {
+      setAssetIdx(alreadyKnownToken.index);
+    }
+    setOpen(false);
+    setQuery("");
+    setAlreadyKnownToken(null);
+  }
 
   function handleAddFetchedToken() {
     if (!fetchedToken) return;
@@ -1278,6 +1316,23 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                       </div>
                     </div>
                     <span className="text-[16px] font-semibold" style={{ color: LIME_DEEP }}>+</span>
+                  </button>
+                ) : alreadyKnownToken ? (
+                  <button onClick={handleSelectAlreadyKnown} className="w-full flex items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <AssetIcon
+                        symbol={alreadyKnownToken.kind === "custom" ? alreadyKnownToken.token.symbol : alreadyKnownToken.asset.symbol}
+                        size={22}
+                        chainId={chainId}
+                        address={alreadyKnownToken.kind === "custom" ? alreadyKnownToken.token.address : undefined}
+                      />
+                      <div className="flex flex-col text-left">
+                        <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>
+                          Already added — select {alreadyKnownToken.kind === "custom" ? alreadyKnownToken.token.symbol : alreadyKnownToken.asset.symbol}
+                        </span>
+                        <span className="text-[11px] font-mono" style={{ color: P.textMuted }}>{trimmedQuery.slice(0, 6)}…{trimmedQuery.slice(-4)}</span>
+                      </div>
+                    </div>
                   </button>
                 ) : isSolanaChain && splDecimals !== null ? (
                   <div className="flex flex-col gap-2">

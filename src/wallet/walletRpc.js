@@ -67,18 +67,58 @@ function setCached(key, data) {
   balanceCache.set(key, { data, fetchedAt: Date.now() });
 }
 
-// Permanent, in-memory cache for on-chain token metadata (symbol/
-// decimals) — genuinely different from the balance cache above: a
-// balance changes constantly and a 15s-stale value is a real risk, but
-// a token's symbol/decimals are fixed the moment its contract/mint is
-// created and can never change afterward, so there's no TTL to expire
-// this — a cache-forever Map, not a short-lived one. EVM keys are
-// lowercased (case-insensitive addresses, same convention this file's
-// balance keys already use); Solana keys are NOT — a mint's base58
-// address is case-sensitive, and lowercasing it would silently look up
-// a different, wrong address (the exact bug AssetDropdown's own
+// Permanent cache for on-chain token metadata (symbol/decimals) —
+// genuinely different from the balance cache above: a balance changes
+// constantly and a 15s-stale value is a real risk, but a token's
+// symbol/decimals are fixed the moment its contract/mint is created and
+// can never change afterward, so there's no TTL to expire this — a
+// cache-forever Map, not a short-lived one. EVM keys are lowercased
+// (case-insensitive addresses, same convention this file's balance keys
+// already use); Solana keys are NOT — a mint's base58 address is
+// case-sensitive, and lowercasing it would silently look up a
+// different, wrong address (the exact bug AssetDropdown's own
 // customTokenLogoUrl had before this session's fix).
-const tokenMetadataCache = new Map();
+//
+// Real improvement, directly requested: this used to be a plain
+// in-memory Map, which meant every RPC/Jupiter/DexScreener lookup this
+// file ever did got thrown away on page reload — a token looked up (but
+// never added) a moment ago, or even a minute before, cost the exact
+// same RPC round-trip again the next time someone pasted the same
+// address, and again after the next reload. Since a token's decimals
+// and symbol genuinely never change (this file's own reasoning above),
+// there's no correctness cost to persisting every successful lookup to
+// localStorage and reusing it forever, the same way customTokens.js
+// already persists added tokens — this just extends that same "cache
+// forever, never revalidate" policy to lookups that were merely
+// verified but never added, closing the gap where those still paid RPC
+// on every repeat search. Backed by a small Map subclass rather than a
+// parallel bookkeeping layer, so every existing .has()/.get()/.set()
+// call site below keeps working completely unchanged.
+const TOKEN_METADATA_STORAGE_KEY = "mango_token_metadata_cache";
+
+function loadPersistedTokenMetadata() {
+  try {
+    const raw = window.localStorage.getItem(TOKEN_METADATA_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? Object.entries(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+class PersistentTokenMetadataCache extends Map {
+  set(key, value) {
+    super.set(key, value);
+    try {
+      window.localStorage.setItem(TOKEN_METADATA_STORAGE_KEY, JSON.stringify(Object.fromEntries(this)));
+    } catch {
+      // storage unavailable or full — this lookup just won't survive a reload, nothing else breaks
+    }
+    return this;
+  }
+}
+
+const tokenMetadataCache = new PersistentTokenMetadataCache(loadPersistedTokenMetadata());
 
 export function getWalletChain(chainKey) {
   const chain = ALL_WALLET_CHAINS[chainKey];
