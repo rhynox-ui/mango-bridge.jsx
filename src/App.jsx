@@ -3239,6 +3239,30 @@ export default function MangoBridge() {
   const isNativeAsset = !fromAsset.custom && fromAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[from];
   const isRealUsdcPair = !fromAsset.custom && !toAsset.custom && fromAsset.symbol === "USDC" && toAsset.symbol === "USDC" && isCctpSupportedPair(from, to);
   const usdcTokenAddress = isRealUsdcPair ? CCTP_CHAINS[from].usdc : undefined;
+  // A custom EVM token (pasted address, added via AssetDropdown) never
+  // had a live balance source at all before this fix — isNativeAsset/
+  // isRealUsdcPair are both deliberately false for one (see their own
+  // comments above), so usingLiveBalance used to be false too, meaning
+  // no "Balance: X" label, a permanently disabled MAX button, and no
+  // client-side insufficient-balance check for a token this wallet
+  // genuinely holds. Reported live: bought Basecat on Base through this
+  // exact flow, then couldn't see its balance or sell any of it back —
+  // MAX stayed disabled and typing an amount larger than the real
+  // balance sailed straight past this form's own validation into a
+  // Relay "Final transaction simulation failed" error instead of a
+  // clear "Insufficient balance" message. fetchWalletTokenBalance
+  // already does this exact fetch correctly elsewhere (the wallet
+  // dashboard's own TokenBalanceRow, mobile's DexScreen.tsx) — the
+  // fix here is the same real balanceOf read, just reusing the same
+  // useBalance(token: ...) shape the USDC case right above already
+  // established, pointed at whatever custom token is actually selected.
+  const isCustomFromToken = !!fromAsset.custom && !CHAINS[from]?.isSolana;
+  const { data: liveCustomBalance, isLoading: customBalanceLoading } = useBalance({
+    address,
+    token: isCustomFromToken ? fromAsset.address : undefined,
+    chainId: fromWagmiChain.id,
+    query: { enabled: connected && isCustomFromToken },
+  });
 
   const { data: liveUsdcBalance, isLoading: usdcBalanceLoading } = useBalance({
     address,
@@ -3255,9 +3279,12 @@ export default function MangoBridge() {
   // the exact same data AssetDropdown's own per-asset balance list
   // already shows — this just reuses it for the "Balance: X" label too
   // instead of a second, EVM-only source that was always empty here.
-  const usingLiveBalance = connected && (isNativeAsset || isRealUsdcPair);
-  const liveBalanceLoading = isFromSolana ? balancesLoading : (isNativeAsset ? balanceLoading : usdcBalanceLoading);
-  const liveBalanceValue = isFromSolana ? undefined : (isNativeAsset ? liveBalance : liveUsdcBalance);
+  // (fromChainBalances only ever covers SOL itself, not an SPL token,
+  // custom or built-in — a genuinely separate, larger gap on the
+  // Solana side than this EVM fix; not the case reported here.)
+  const usingLiveBalance = connected && (isNativeAsset || isRealUsdcPair || isCustomFromToken);
+  const liveBalanceLoading = isFromSolana ? balancesLoading : (isNativeAsset ? balanceLoading : isCustomFromToken ? customBalanceLoading : usdcBalanceLoading);
+  const liveBalanceValue = isFromSolana ? undefined : (isNativeAsset ? liveBalance : isCustomFromToken ? liveCustomBalance : liveUsdcBalance);
 
   const toWagmiChain = getWagmiChain(to);
   // Same real bug fix as isNativeAsset's own comment above — !toAsset.custom
@@ -3265,6 +3292,11 @@ export default function MangoBridge() {
   const isNativeAssetTo = !toAsset.custom && toAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[to];
   const isRealUsdcPairTo = isRealUsdcPair;
   const usdcTokenAddressTo = isRealUsdcPairTo ? CCTP_CHAINS[to].usdc : undefined;
+  // Same real fix as isCustomFromToken above, mirrored for the receive
+  // side — informational only (no MAX button there), but "Balance: X"
+  // for a custom token you already hold on the receiving side is just
+  // as real a gap as the sending side was.
+  const isCustomToToken = !!toAsset.custom && !CHAINS[to]?.isSolana;
 
   const { data: liveBalanceTo, isLoading: balanceLoadingTo } = useBalance({
     address,
@@ -3277,10 +3309,16 @@ export default function MangoBridge() {
     chainId: toWagmiChain.id,
     query: { enabled: connected && isRealUsdcPairTo && !CHAINS[to]?.isSolana },
   });
+  const { data: liveCustomBalanceTo, isLoading: customBalanceLoadingTo } = useBalance({
+    address,
+    token: isCustomToToken ? toAsset.address : undefined,
+    chainId: toWagmiChain.id,
+    query: { enabled: connected && isCustomToToken },
+  });
 
-  const usingLiveBalanceTo = connected && (isNativeAssetTo || isRealUsdcPairTo);
-  const liveBalanceLoadingTo = isNativeAssetTo ? balanceLoadingTo : usdcBalanceLoadingTo;
-  const liveBalanceValueTo = isNativeAssetTo ? liveBalanceTo : liveUsdcBalanceTo;
+  const usingLiveBalanceTo = connected && (isNativeAssetTo || isRealUsdcPairTo || isCustomToToken);
+  const liveBalanceLoadingTo = isNativeAssetTo ? balanceLoadingTo : isCustomToToken ? customBalanceLoadingTo : usdcBalanceLoadingTo;
+  const liveBalanceValueTo = isNativeAssetTo ? liveBalanceTo : isCustomToToken ? liveCustomBalanceTo : liveUsdcBalanceTo;
 
   useEffect(() => {
     // Merged against DEFAULT_BALANCES, not just loaded as-is — otherwise
