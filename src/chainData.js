@@ -107,6 +107,16 @@ export const TOKEN_ADDRESSES = {
   },
   USDT0: {
     stable: "0x779Ded0c9e1022225f8E0630b35a9b54bE713736",
+    // Added live, backed by a four-source verification package before
+    // being added — Tether's own official USDT0 ecosystem page
+    // (usdt0.to/ecosystem/plasma), Tether's own WDK docs
+    // (docs.wdk.tether.io, independently listing the same address under
+    // Plasma's eip155:9745), and two independent block explorers
+    // (PlasmaScan, Plasma Explorer) all agreeing on this exact address
+    // and its decimals — the highest-confidence bar any entry in this
+    // file has had, given USDT0 specifically has a documented history
+    // of lookalike/scam contracts showing up in ordinary searches.
+    plasma: "0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb",
   },
   USDG: {
     ethereum: "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
@@ -215,8 +225,18 @@ export const ASSET_ONCHAIN_DECIMALS = {
 // caught live, right after the address itself was added, specifically
 // because Binance-Peg tokens on BNB Chain have a documented history of
 // this exact 18-vs-6 mismatch (USDT already needed the same fix above).
+//
+// The opposite exception for Plasma's own USDT0 deployment
+// (0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb,
+// TOKEN_ADDRESSES.USDT0.plasma) — 6 decimals, not the 18 the global
+// USDT0: 18 entry above uses (that entry is correct for Stable's own
+// USDT0 deployment, the only one previously on file). Confirmed via
+// both PlasmaScan and Plasma Explorer independently reporting 6
+// decimals for this exact contract, alongside the same two sources'
+// address verification.
 const ASSET_ONCHAIN_DECIMALS_BY_CHAIN = {
   bnb: { USDT: 18, USDC: 18 },
+  plasma: { USDT0: 6 },
 };
 
 export function assetDecimalsForChain(chainKey, assetSymbol) {
