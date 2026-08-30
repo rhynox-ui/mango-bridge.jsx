@@ -34,7 +34,21 @@ export const MAINNET_CHAIN_IDS = {
 };
 
 export const NATIVE_SYMBOL = {
-  ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", solana: "SOL",
+  ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH",
+  // StableChain's own gas token is USDT0, not ETH/a typical native coin
+  // — confirmed against StableChain's own docs (it uses Tether as its
+  // universal gas asset). Already correctly reflected in App.jsx's own
+  // local NATIVE_SYMBOL_BY_CHAIN; this export (chainData.js's shared
+  // source of truth, re-exported by relaybridge.js and used directly by
+  // api/v1/bridge/chains.js and currencyAddress() below) was missing
+  // it — a real gap: currencyAddress("stable", "USDT0") fell through to
+  // the ERC-20 TOKEN_ADDRESSES branch instead of the native-placeholder
+  // one below, meaning every real Relay quote for StableChain's own
+  // native asset sent its ERC-20 contract address instead of the
+  // universal native placeholder Relay actually expects for a native
+  // spend/receive.
+  stable: "USDT0",
+  solana: "SOL",
   arbitrum: "ETH", avalanche: "AVAX", abstract: "ETH", hyperevm: "HYPE",
   ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB",
 };
@@ -86,6 +100,7 @@ const NATIVE_PLACEHOLDER_BY_CHAIN = {
   base: NATIVE_TOKEN_ADDRESS,
   bnb: NATIVE_TOKEN_ADDRESS,
   robinhood: NATIVE_TOKEN_ADDRESS,
+  stable: NATIVE_TOKEN_ADDRESS,
   // Real bug fix: this was the System Program's own address
   // (11111111111111111111111111111111), which represents "no program/
   // no token" on Solana, not "native SOL" — using it as a currency
