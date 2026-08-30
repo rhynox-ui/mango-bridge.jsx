@@ -37,11 +37,14 @@ import { appFeeBps, DEV_FEE_WALLET } from "./devFeeWallets.js";
 
 const FALLBACK_QUOTE_URL = "/api/v1/bridge/fallback-quote";
 
-// Tried in this order — both real, both fully wired; anything else
-// requested alongside these (Odos/KyberSwap/ParaSwap) is a stub on the
-// backend only, not listed here, so this list only ever tries a
-// provider that can actually return a real quote.
-export const FALLBACK_PROVIDERS = ["1inch", "0x"];
+// Tried in this order — all three real, all fully wired; 1inch and 0x
+// first since both are verified against a real account/live docs and
+// need their own API key, kyberswap last since it needs no key but its
+// exact shape is only verified against public docs, not a live
+// account. Odos/ParaSwap are still NOT listed — see
+// fallback-quote.js's own header for the real, specific reason each is
+// still deliberately unwired.
+export const FALLBACK_PROVIDERS = ["1inch", "0x", "kyberswap"];
 
 const ERC20_ALLOWANCE_ABI = [
   { type: "function", name: "allowance", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
@@ -52,14 +55,14 @@ async function fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sell
   // Same appFeeBps() every other quote path already uses (Relay's own,
   // via relaybridge.js) — the backend proxy doesn't compute the rate
   // itself, it only forwards whatever this client already decided (see
-  // fallback-quote.js's own header). bps -> percent: 1inch's `fee`
-  // param is "in percent" (min 0, max 3), appFeeBps returns basis
-  // points (1/100 of a percent).
-  const feePct = Number(appFeeBps(originAmountUsd)) / 100;
+  // fallback-quote.js's own header). Sent as basis points, the same
+  // unit Relay's own appFees already use — fallback-quote.js converts
+  // to whatever unit each provider's own API actually expects.
+  const feeBps = appFeeBps(originAmountUsd);
   const res = await fetch(FALLBACK_QUOTE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, feePct, feeWallet: DEV_FEE_WALLET }),
+    body: JSON.stringify({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps, feeWallet: DEV_FEE_WALLET }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
