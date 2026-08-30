@@ -1615,7 +1615,7 @@ function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
   return "relay";
 }
 
-function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, devFeeAmount, originAmountUsd, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated, onPendingHash }) {
+function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, receivedRoundsToZero, devFeeAmount, originAmountUsd, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated, onPendingHash }) {
   const kind = getTransferKind(from, to, asset, toAsset);
   const isReal = kind !== "simulated";
   // Which OP Stack chain this op-deposit/op-withdraw actually targets —
@@ -2038,6 +2038,12 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
               <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>Estimated time</span><span style={{ color: "#D7DBE2" }}>{kind === "op-withdraw" || kind === "arb-withdraw" ? "~7 days to finalize" : etaLabel}</span></div>
               <div className="flex items-center justify-between text-[13px]"><span style={{ color: "#5B6472" }}>You receive</span><span className="font-mono font-medium" style={{ color: "#F2F4F7" }}>{received !== null ? `${fmt(received, 4)} ${toAsset}${asset !== toAsset ? " (estimate)" : ""}` : "Set by Relay's live quote"}</span></div>
             </div>
+            {receivedRoundsToZero && (
+              <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: "#F0B84D14", border: "1px solid #F0B84D40", color: "#F0B84D" }}>
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" color="#F0B84D" />
+                This amount would return next to nothing at the current rate — you're likely to lose most of what you send. Consider a larger amount, or check that this token/pair actually has a working route before confirming.
+              </div>
+            )}
             <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: isReal ? `${LIME}14` : "#1C212A", border: `1px solid ${isReal ? LIME + "40" : "#262C36"}`, color: isReal ? LIME : "#8B95A1" }}>
               <AlertTriangle size={14} className="shrink-0 mt-0.5" color={isReal ? LIME : "#F0B84D"} />
               {kind === "cctp" && "Real testnet transfer via Circle's CCTP. You'll be asked to approve and sign transactions."}
@@ -3943,6 +3949,18 @@ export default function MangoBridge() {
   const knownPrice = fromAsset.price > 0 && toAsset.price > 0;
   const amtNumUsdValue = knownPrice ? (amtNum - devFeeAmount) * fromAsset.price - fee : null;
   const received = liveQuoteSummary?.receivedAmount ?? fallbackReceivedAmount ?? (amtNumUsdValue !== null ? Math.max(amtNumUsdValue / toAsset.price, 0) : null);
+  // Real bug fix, live-reported: a genuine (non-null) received amount
+  // that's just too small to show at 4 decimal places rendered as a
+  // bare "0.0000" — visually identical to "nothing happened" or "this
+  // is worthless," even though a real quote WAS returned. Most common
+  // for a token on an older, unindexed/unsupported Launchpad hook
+  // version (api/v1/launchpad/token.js's own "may be on an older,
+  // unverified Hook version" case): whatever route did answer (Relay
+  // or a fallback provider) may have found only degenerate liquidity
+  // for it, producing a real but economically meaningless quote. Shown
+  // as an explicit warning instead of a misleadingly bare zero either
+  // way — true regardless of why the amount is this small.
+  const receivedRoundsToZero = received !== null && amtNum > 0 && Number(received.toFixed(4)) === 0;
   const availableBalance = !usingLiveBalance
     ? null
     : isFromSolana
@@ -4256,6 +4274,11 @@ export default function MangoBridge() {
                     No price estimate yet for {fromAsset.custom ? fromAsset.symbol : toAsset.symbol} — the real amount is set by Relay's live quote.
                   </div>
                 )}
+                {receivedRoundsToZero && (
+                  <div className="text-[11.5px] mt-1.5" style={{ color: "#F0B84D" }}>
+                    This amount would return next to nothing at the current rate — try a larger amount, or this token/pair may not have a working route yet.
+                  </div>
+                )}
               </div>
 
               {/* ETA / details collapsible */}
@@ -4424,7 +4447,7 @@ export default function MangoBridge() {
 
       {showModal && (
         <BridgeModal
-          from={from} to={to} amount={amount} asset={fromAsset.symbol} toAsset={toAsset.symbol} fromCustom={fromCustomToken} toCustom={toCustomToken} fee={fee} etaLabel={etaLabel} received={received}
+          from={from} to={to} amount={amount} asset={fromAsset.symbol} toAsset={toAsset.symbol} fromCustom={fromCustomToken} toCustom={toCustomToken} fee={fee} etaLabel={etaLabel} received={received} receivedRoundsToZero={receivedRoundsToZero}
           devFeeAmount={devFeeAmount}
           // Real, verified USD estimate of what's being sent — only for
           // a built-in asset with a real price (fromAsset.price > 0;
