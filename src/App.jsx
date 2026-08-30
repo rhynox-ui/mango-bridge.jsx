@@ -29,7 +29,7 @@ import { ChainBadge } from "./chainBadges.jsx";
 import { MangoLogo } from "./MangoLogo.jsx";
 import { parseUnits, formatUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
-import { fetchErc20TokenMetadata, fetchSplMintDecimals, fetchSplTokenSymbol, fetchSplTokenMetadataJupiter } from "./wallet/walletRpc.js";
+import { fetchErc20TokenMetadata, fetchSplMintDecimals, fetchSplTokenSymbol, fetchSplTokenMetadataJupiter, fetchWalletSplTokenBalance } from "./wallet/walletRpc.js";
 import { loadCustomTokens, addCustomToken } from "./wallet/customTokens.js";
 import { getTradeQuote, buyTokenReal, sellTokenReal } from "./launchpad-contracts.js";
 import { PublicKey } from "@solana/web3.js";
@@ -80,6 +80,7 @@ import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAIN
 import { tryFallbackProviders, checkFallbackRoute } from "./fallbackDex.js";
 import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
+import { fetchOkxSupportedChainIds, CONFIRMED_FALLBACK_ONLY_CHAIN_IDS } from "./fallbackChains.js";
 import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL, WALLET_ONLY_EVM_CHAINS } from "./wallet/walletChains.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
 import { LaunchpadTab } from "./Launchpad.jsx";
@@ -456,6 +457,23 @@ const DEFAULT_BALANCES = {
   base: { USDC: 640.1, ETH: 0.42, USDT: 120, WBTC: 0 },
   bnb: { USDC: 300, ETH: 0.05, USDT: 950.5, WBTC: 0 },
   robinhood: { USDC: 75.2, ETH: 0.01, USDT: 0, WBTC: 0 },
+  // Real bug fix, live-reported (a Solana same-chain Swap that "looked
+  // successful" then crashed the whole app to the top-level
+  // ErrorBoundary, with the bought token's balance never showing):
+  // 'solana' — one of CHAIN_ORDER's own 14 primary chains — had NO
+  // entry here at all, unlike every other chain, several of which
+  // (stable, arbitrum, etc. — see their own comments below) already
+  // document this EXACT crash mechanism: handleComplete's
+  // balances[from][fromAsset.symbol] access throws
+  // "Cannot read properties of undefined" the instant a transaction
+  // into a chain with no DEFAULT_BALANCES entry completes. Solana was
+  // simply missed when that fix was made for every other chain. SOL/
+  // USDC/USDT cover every symbol TOKEN_ADDRESSES currently verifies on
+  // Solana (relaybridge.js) — a custom/pasted token still works fine
+  // without its own entry here (Math.max(0, (balances[from][symbol] ||
+  // 0) - amtNum) already treats a missing key as 0, same as every
+  // other chain's custom-token case).
+  solana: { SOL: 0, USDC: 0, USDT: 0 },
   // Real bug fix: this was missing entirely, causing a crash right after
   // any transaction into Stable completed — balances[to][toAsset.symbol]
   // needs an entry to write into. Stable only ever holds USDT0.
@@ -3348,12 +3366,42 @@ export default function MangoBridge() {
   );
   // Swap tab's single chain picker — a same-chain swap needs a chain
   // Relay supports as BOTH an origin and a destination (unlike Bridge,
-  // where the two directions can differ), so this is the intersection
-  // of the two lists above rather than either one alone.
-  const swapChainOrder = useMemo(
+  // where the two directions can differ), so this starts as the
+  // intersection of the two lists above rather than either one alone.
+  const relayBasedSwapChainOrder = useMemo(
     () => bridgeFromChainOrder.filter((key) => bridgeToChainOrder.includes(key)),
     [bridgeFromChainOrder, bridgeToChainOrder]
   );
+  // Real gap found auditing Swap coverage across all 69 wallet-only
+  // chains: the line above only ever offers a wallet-only chain in
+  // Swap if RELAY reports it live — but Swap's own execute/preview
+  // paths (routeCheck effect below, tryFallbackProviders) already fall
+  // through to fallbackDex.js's own same-chain DEX aggregators
+  // (OKX/1inch/0x/KyberSwap) whenever Relay has no route, and several
+  // wallet-only chains Relay doesn't cover at all DO have a real,
+  // working same-chain swap through one of those — meaning the picker
+  // was hiding chains the app could actually trade on. OKX's own
+  // supported-chain list is fetched live (fallbackChains.js, same
+  // pattern as fetchRelayChains above); 1inch/0x's confirmed additions
+  // are static (see that file's own comment on why). Union'd onto the
+  // Relay-based list rather than replacing it — Relay-live chains stay
+  // exactly as eligible as before even if this fetch fails closed.
+  const [okxSupportedChainIds, setOkxSupportedChainIds] = useState(() => new Set());
+  useEffect(() => {
+    let cancelled = false;
+    fetchOkxSupportedChainIds()
+      .then((ids) => { if (!cancelled) setOkxSupportedChainIds(new Set(ids)); })
+      .catch((err) => console.error("[fallbackChains] OKX supported-chain fetch failed — Swap picker stays Relay-only for wallet-only chains:", err));
+    return () => { cancelled = true; };
+  }, []);
+  const fallbackOnlySwapChainOrder = useMemo(() => {
+    const confirmedIds = new Set([...okxSupportedChainIds, ...CONFIRMED_FALLBACK_ONLY_CHAIN_IDS]);
+    return WALLET_ONLY_CHAIN_ORDER.filter((key) => confirmedIds.has(WALLET_ONLY_EVM_CHAINS[key]?.id));
+  }, [okxSupportedChainIds]);
+  const swapChainOrder = useMemo(() => {
+    const extra = fallbackOnlySwapChainOrder.filter((key) => !relayBasedSwapChainOrder.includes(key));
+    return [...relayBasedSwapChainOrder, ...extra];
+  }, [relayBasedSwapChainOrder, fallbackOnlySwapChainOrder]);
 
   const [amount, setAmount] = useState("");
   const [fromAssetIdx, setFromAssetIdxRaw] = useState(0);
@@ -3624,8 +3672,47 @@ export default function MangoBridge() {
   // (fromChainBalances only ever covers SOL itself, not an SPL token,
   // custom or built-in — a genuinely separate, larger gap on the
   // Solana side than this EVM fix; not the case reported here.)
-  const usingLiveBalance = connected && (isNativeAsset || isRealUsdcPair || isCustomFromToken);
-  const liveBalanceLoading = isFromSolana ? balancesLoading : (isNativeAsset ? balanceLoading : isCustomFromToken ? customBalanceLoading : usdcBalanceLoading);
+  // Real gap fix, live-reported (a pump.fun token purchase where the
+  // bought token's balance never showed anywhere): isCustomFromToken
+  // right above deliberately excludes Solana (`!CHAINS[from]?.isSolana`)
+  // since wagmi's useBalance is EVM-only — but fromChainBalances
+  // (fetchSolanaBalance, refreshFromChainBalances above) only ever
+  // covers SOL plus TOKEN_ADDRESSES' own verified SPL entries
+  // (USDC/USDT), never a pasted/custom mint, exactly the gap this
+  // file's own earlier "fromChainBalances only ever covers SOL itself,
+  // not an SPL token, custom or built-in" comment already flagged as
+  // real and unfixed. Mirrors isCustomFromToken's own EVM fix
+  // (useBalance(token: address)) using fetchWalletSplTokenBalance
+  // directly instead, since there's no Solana-aware equivalent hook.
+  // Bumped by handleComplete right after a swap finishes — a custom
+  // Solana token's mint/decimals don't change across a trade, so
+  // neither effect below would otherwise ever re-run post-swap, and
+  // the freshly-changed balance (the exact thing the user needs to see
+  // right after buying) would keep showing its pre-trade value until
+  // the asset was re-selected. Same "forceFresh right after a
+  // transaction" intent as refreshFromChainBalances' own forceFresh
+  // param, just as a dependency-array bump since these effects have no
+  // params to pass one through.
+  const [customSolanaBalanceRefreshKey, setCustomSolanaBalanceRefreshKey] = useState(0);
+  const isCustomFromSolanaToken = !!fromAsset.custom && !!CHAINS[from]?.isSolana;
+  const [liveCustomSolanaBalance, setLiveCustomSolanaBalance] = useState(null);
+  const [customSolanaBalanceLoading, setCustomSolanaBalanceLoading] = useState(false);
+  useEffect(() => {
+    if (!isCustomFromSolanaToken || !connected || !activeSolanaAddress) {
+      setLiveCustomSolanaBalance(null);
+      return;
+    }
+    let cancelled = false;
+    setCustomSolanaBalanceLoading(true);
+    fetchWalletSplTokenBalance(fromAsset.address, fromAsset.onchainDecimals, activeSolanaAddress, { forceFresh: customSolanaBalanceRefreshKey > 0 })
+      .then((bal) => { if (!cancelled) setLiveCustomSolanaBalance(bal); })
+      .catch(() => { if (!cancelled) setLiveCustomSolanaBalance(null); })
+      .finally(() => { if (!cancelled) setCustomSolanaBalanceLoading(false); });
+    return () => { cancelled = true; };
+  }, [isCustomFromSolanaToken, connected, activeSolanaAddress, fromAsset.address, fromAsset.onchainDecimals, customSolanaBalanceRefreshKey]);
+
+  const usingLiveBalance = connected && (isNativeAsset || isRealUsdcPair || isCustomFromToken || isCustomFromSolanaToken);
+  const liveBalanceLoading = isCustomFromSolanaToken ? customSolanaBalanceLoading : isFromSolana ? balancesLoading : (isNativeAsset ? balanceLoading : isCustomFromToken ? customBalanceLoading : usdcBalanceLoading);
   const liveBalanceValue = isFromSolana ? undefined : (isNativeAsset ? liveBalance : isCustomFromToken ? liveCustomBalance : liveUsdcBalance);
 
   const toWagmiChain = getWagmiChain(to);
@@ -3658,8 +3745,31 @@ export default function MangoBridge() {
     query: { enabled: connected && isCustomToToken },
   });
 
-  const usingLiveBalanceTo = connected && (isNativeAssetTo || isRealUsdcPairTo || isCustomToToken);
-  const liveBalanceLoadingTo = isNativeAssetTo ? balanceLoadingTo : isCustomToToken ? customBalanceLoadingTo : usdcBalanceLoadingTo;
+  // Same real gap fix as isCustomFromSolanaToken above, mirrored for the
+  // receive side — the exact case live-reported: a freshly-bought
+  // pump.fun token's balance never showed on "You receive" either,
+  // since isCustomToToken also excludes Solana and fromChainBalances
+  // (the only other Solana balance source in this component) never
+  // covers a pasted mint.
+  const isCustomToSolanaToken = !!toAsset.custom && !!CHAINS[to]?.isSolana;
+  const [liveCustomSolanaBalanceTo, setLiveCustomSolanaBalanceTo] = useState(null);
+  const [customSolanaBalanceLoadingTo, setCustomSolanaBalanceLoadingTo] = useState(false);
+  useEffect(() => {
+    if (!isCustomToSolanaToken || !connected || !activeSolanaAddress) {
+      setLiveCustomSolanaBalanceTo(null);
+      return;
+    }
+    let cancelled = false;
+    setCustomSolanaBalanceLoadingTo(true);
+    fetchWalletSplTokenBalance(toAsset.address, toAsset.onchainDecimals, activeSolanaAddress, { forceFresh: customSolanaBalanceRefreshKey > 0 })
+      .then((bal) => { if (!cancelled) setLiveCustomSolanaBalanceTo(bal); })
+      .catch(() => { if (!cancelled) setLiveCustomSolanaBalanceTo(null); })
+      .finally(() => { if (!cancelled) setCustomSolanaBalanceLoadingTo(false); });
+    return () => { cancelled = true; };
+  }, [isCustomToSolanaToken, connected, activeSolanaAddress, toAsset.address, toAsset.onchainDecimals, customSolanaBalanceRefreshKey]);
+
+  const usingLiveBalanceTo = connected && (isNativeAssetTo || isRealUsdcPairTo || isCustomToToken || isCustomToSolanaToken);
+  const liveBalanceLoadingTo = isCustomToSolanaToken ? customSolanaBalanceLoadingTo : isNativeAssetTo ? balanceLoadingTo : isCustomToToken ? customBalanceLoadingTo : usdcBalanceLoadingTo;
   const liveBalanceValueTo = isNativeAssetTo ? liveBalanceTo : isCustomToToken ? liveCustomBalanceTo : liveUsdcBalanceTo;
 
   useEffect(() => {
@@ -4076,9 +4186,11 @@ export default function MangoBridge() {
   const receivedRoundsToZero = received !== null && amtNum > 0 && Number(received.toFixed(4)) === 0;
   const availableBalance = !usingLiveBalance
     ? null
-    : isFromSolana
-      ? (fromChainBalances[fromAsset.symbol] ?? null)
-      : (liveBalanceValue ? Number(liveBalanceValue.formatted) : null);
+    : isCustomFromSolanaToken
+      ? liveCustomSolanaBalance
+      : isFromSolana
+        ? (fromChainBalances[fromAsset.symbol] ?? null)
+        : (liveBalanceValue ? Number(liveBalanceValue.formatted) : null);
   // Native assets need to keep a small amount aside for gas — MAX-ing out a
   // native balance to the exact wei is a classic way to end up unable to pay
   // for the transaction that spends it. ERC-20s don't need this (gas is paid
@@ -4171,6 +4283,10 @@ export default function MangoBridge() {
     // the short-lived cache so this reads the genuinely-updated balance,
     // not a value cached from just before the transaction.
     refreshFromChainBalances(true);
+    // Same forceFresh intent as the line above, for the two custom-
+    // Solana-token balance effects — see customSolanaBalanceRefreshKey's
+    // own comment.
+    setCustomSolanaBalanceRefreshKey((k) => k + 1);
   }
   // BridgeModal's own onPendingHash — fires the moment a flow's source-
   // side transaction genuinely broadcasts, well before it's known to
@@ -4359,7 +4475,7 @@ export default function MangoBridge() {
                 <div className="flex items-center justify-between mb-2.5">
                   <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>You receive</span>
                   <span className="text-[11.5px]" style={{ color: P.textMuted }}>
-                    {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}
+                    {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(isCustomToSolanaToken ? (liveCustomSolanaBalanceTo ?? 0) : Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}
                   </span>
                 </div>
                 {/* Real swap widgets (Uniswap, Jupiter, 1inch, PancakeSwap)
