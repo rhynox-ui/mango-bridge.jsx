@@ -3,14 +3,17 @@
 //
 // Shared chrome for every post — same brand tokens as the main site's
 // own src/theme.js (mango-bridge.jsx): LIME/LIME_DEEP accent, the
-// exact light-palette hex values, so this reads as the same product
-// rather than a visually disconnected blog bolted on.
+// exact light-palette hex values, the real MangoLogo mark and
+// favicon.png/logo.png (copied from the repo root), so this reads as
+// the same product rather than a visually disconnected blog bolted on.
 // A markdown page's `layout:` frontmatter field passes props nested
 // under `frontmatter` (plus a separate top-level `url`), not spread
 // flat onto Astro.props — confirmed against this project's own build
 // output (an earlier flat-props version rendered an empty <h1> and
 // "Invalid Date", not a caught type error, so this was worth actually
 // checking rather than assuming).
+import MangoLogo from "../components/MangoLogo.astro";
+
 export interface Props {
   frontmatter: {
     title: string;
@@ -29,8 +32,11 @@ const formattedDate = new Date(date).toLocaleDateString("en-US", { year: "numeri
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} — Mango Protocol Blog</title>
     <meta name="description" content={description} />
-    <link rel="icon" href="/favicon.svg" />
-    <link rel="alternate" type="application/rss+xml" title="Mango Protocol Blog" href="/rss.xml" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <style>
       :root {
         --bg: #ffffff;
@@ -49,32 +55,56 @@ const formattedDate = new Date(date).toLocaleDateString("en-US", { year: "numeri
         margin: 0;
         background: var(--bg);
         color: var(--text-primary);
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       }
       header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         border-bottom: 1px solid var(--panel-border);
-        padding: 20px 24px;
+        padding: 18px 24px;
       }
-      header a {
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 9px;
         color: var(--text-primary);
         text-decoration: none;
+      }
+      .brand-name {
+        font-family: "Space Grotesk", sans-serif;
         font-weight: 700;
         font-size: 15px;
+        letter-spacing: -0.01em;
+      }
+      .brand-badge {
+        font-size: 10.5px;
+        font-weight: 600;
+        color: var(--lime-deep);
+        background: rgba(255, 154, 46, 0.12);
+        border-radius: 999px;
+        padding: 3px 9px;
+        letter-spacing: 0.02em;
       }
       main {
         max-width: 680px;
         margin: 0 auto;
-        padding: 48px 24px 80px;
+        padding: 56px 24px 88px;
       }
       .post-date {
         color: var(--text-muted);
         font-size: 12.5px;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
+        font-weight: 500;
       }
       h1 {
-        font-size: 30px;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
         line-height: 1.2;
-        margin: 0 0 24px;
+        margin: 0 0 28px;
+        text-wrap: balance;
       }
       article :global(p) {
         color: var(--text-secondary);
@@ -85,8 +115,10 @@ const formattedDate = new Date(date).toLocaleDateString("en-US", { year: "numeri
         color: var(--lime-deep);
       }
       article :global(h2) {
+        font-family: "Space Grotesk", sans-serif;
         font-size: 20px;
-        margin-top: 32px;
+        font-weight: 700;
+        margin-top: 36px;
       }
       article :global(code) {
         background: var(--panel);
@@ -97,19 +129,38 @@ const formattedDate = new Date(date).toLocaleDateString("en-US", { year: "numeri
       }
       footer {
         border-top: 1px solid var(--panel-border);
-        padding: 24px;
-        text-align: center;
+        padding: 28px 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
         color: var(--text-muted);
         font-size: 12px;
       }
       footer a {
         color: var(--text-muted);
+        text-decoration: none;
+      }
+      footer a:hover {
+        color: var(--text-secondary);
+      }
+      .footer-social {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .footer-social a {
+        display: flex;
       }
     </style>
   </head>
   <body>
     <header>
-      <a href="/">🥭 Mango Protocol Blog</a>
+      <a class="brand" href="/">
+        <MangoLogo size={22} color="#0A0A0B" />
+        <span class="brand-name">Mango Protocol</span>
+      </a>
+      <span class="brand-badge">Blog</span>
     </header>
     <main>
       <article>
@@ -119,7 +170,18 @@ const formattedDate = new Date(date).toLocaleDateString("en-US", { year: "numeri
       </article>
     </main>
     <footer>
-      <a href="https://mangoprotocol.site">mangoprotocol.site</a> · <a href="/rss.xml">RSS</a>
+      <a href="https://mangoprotocol.site">mangoprotocol.site</a>
+      <div class="footer-social">
+        <a href="https://x.com/Mango_protocol" aria-label="X (Twitter)" target="_blank" rel="noopener noreferrer">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M18.9 2H22l-7.6 8.7L23.3 22h-6.8l-5.3-6.9L5 22H1.9l8.1-9.3L1 2h7l4.8 6.3L18.9 2Zm-1.2 18h1.9L7.4 4H5.4l12.3 16Z"></path></svg>
+        </a>
+        <a href="https://t.me/mango_protocol" aria-label="Telegram" target="_blank" rel="noopener noreferrer">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+        </a>
+        <a href="mailto:mango@mangoprotocol.site" aria-label="Email">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg>
+        </a>
+      </div>
     </footer>
   </body>
 </html>
