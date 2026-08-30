@@ -13,8 +13,9 @@
 import { getBalance, readContract, readContracts } from "wagmi/actions";
 import { config } from "./wagmi.js";
 import { getWagmiChain } from "./networkMode.js";
-import { TOKEN_ADDRESSES } from "./relaybridge.js";
+import { TOKEN_ADDRESSES, ASSET_ONCHAIN_DECIMALS, assetDecimalsForChain } from "./relaybridge.js";
 import { withSolanaFallback } from "./solanaRpc.js";
+import { fetchWalletSplTokenBalance } from "./wallet/walletRpc.js";
 
 const ERC20_BALANCE_ABI = [
   { type: "function", name: "balanceOf", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
@@ -147,13 +148,41 @@ export async function fetchSolanaBalance({ solanaAddress, forceFresh = false }) 
     const cached = getCached(key);
     if (cached) return cached;
   }
+  const result = {};
   try {
     const { PublicKey } = await import("@solana/web3.js");
     const lamports = await withSolanaFallback((connection) => connection.getBalance(new PublicKey(solanaAddress)));
-    const result = { SOL: lamports / 1e9 };
-    setCached(key, result);
-    return result;
+    result.SOL = lamports / 1e9;
   } catch {
-    return {};
+    // Native balance genuinely unreachable — token balances below can
+    // still succeed independently, so don't bail out of the whole
+    // function over this one failure.
   }
+  // Real bug fix, live-confirmed while auditing mango-mobile's own
+  // identical gap: this used to return ONLY the native SOL balance,
+  // with no branch at all for a Solana SPL token — even after USDC
+  // (and later USDT) got real, verified TOKEN_ADDRESSES.*.solana
+  // entries and became selectable as the Bridge's Solana-source asset.
+  // Selecting one of them showed no balance for it at all (a symbol
+  // this object never had a key for), which could read as "you have
+  // zero" for someone who actually held real funds. Mirrors
+  // fetchAllEvmBalances' own "every verified token on this chain, not
+  // just native" pattern above, reusing the same
+  // fetchWalletSplTokenBalance the Mango Wallet dashboard already relies
+  // on for this exact read.
+  const tokens = Object.entries(TOKEN_ADDRESSES)
+    .filter(([, byChain]) => byChain.solana)
+    .map(([symbol, byChain]) => ({ symbol, mint: byChain.solana }));
+  await Promise.all(
+    tokens.map(async ({ symbol, mint }) => {
+      try {
+        const decimals = assetDecimalsForChain("solana", symbol) ?? ASSET_ONCHAIN_DECIMALS[symbol];
+        result[symbol] = await fetchWalletSplTokenBalance(mint, decimals, solanaAddress, { forceFresh });
+      } catch {
+        // One token's RPC hiccup shouldn't block the others — omit just this entry.
+      }
+    })
+  );
+  setCached(key, result);
+  return result;
 }
