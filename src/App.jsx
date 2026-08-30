@@ -75,6 +75,7 @@ import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithd
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
 import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
+import { tryFallbackProviders } from "./fallbackDex.js";
 import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
 import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL, WALLET_ONLY_EVM_CHAINS } from "./wallet/walletChains.js";
@@ -1732,6 +1733,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // experience this fallback exists for. Forgoing a fee that
         // would mostly be sub-cent dust anyway is the right trade.
         let quote;
+        let fallbackResult = null;
         try {
           quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
         } catch (firstErr) {
@@ -1741,19 +1743,41 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           try {
             quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
           } catch {
-            throw firstErr;
+            // Both Relay attempts failed — a genuine route gap, not a
+            // fee-margin problem. Real second-source fallback
+            // (fallbackDex.js): 0x/1inch call Uniswap/PancakeSwap/etc.
+            // directly, real liquidity Relay might not have indexed
+            // yet. Its own failure throws firstErr (Relay's ORIGINAL
+            // error, the most informative one), never the fallback's
+            // own error, which would just be noise on top of the real
+            // reason.
+            try {
+              const sellTokenAddress = fromCustom ? fromCustom.address : resolveCurrency(from, asset);
+              const buyTokenAddress = toCustom ? toCustom.address : resolveCurrency(to, toAsset);
+              fallbackResult = await tryFallbackProviders({
+                chainId: resolveChainId(from),
+                sellToken: sellTokenAddress,
+                buyToken: buyTokenAddress,
+                sellAmount: totalBaseUnits.toString(),
+                takerAddress: account,
+              });
+            } catch {
+              throw firstErr;
+            }
           }
         }
-        const result = await executeRelayQuote({
-          quote,
-          onStep: (step) => {
-            if (typeof step === "object" && step.key === "hash-known") {
-              setRealBurnHash(step.txHash);
-              return;
-            }
-            if (step !== "done") setStepIndex(RELAY_STEP_INDEX[step] ?? 0);
-          },
-        });
+        const result = fallbackResult
+          ? { txHashes: [fallbackResult.hash] }
+          : await executeRelayQuote({
+              quote,
+              onStep: (step) => {
+                if (typeof step === "object" && step.key === "hash-known") {
+                  setRealBurnHash(step.txHash);
+                  return;
+                }
+                if (step !== "done") setStepIndex(RELAY_STEP_INDEX[step] ?? 0);
+              },
+            });
         setRealBurnHash(result.txHashes[0]);
         // Deliberately NOT setting realMintHash here: when there's only one
         // signing step (the common case), the destination-side fill is
