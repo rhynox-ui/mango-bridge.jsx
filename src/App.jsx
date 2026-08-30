@@ -817,6 +817,20 @@ const CUSTOM_TOKEN_CHAIN_SLUG = {
   scroll: "scroll", gnosis: "gnosischain", blast: "blast", mantle: "mantle",
   celo: "celo", fantom: "fantom", moonbeam: "moonbeam", cronos: "cronos",
   mode: "mode", zora: "zora", opbnb: "opbnb", polygonzkevm: "polygonzkevm", fraxtal: "fraxtal",
+  // Real, reported gap: a custom token on Robinhood Chain (this app's own
+  // Bridge chain, not a wallet-only extra) fell straight to the generic
+  // "?" glyph — this chain was simply missing from the map entirely, not
+  // a genuinely-unsupported one. Confirmed via research (this sandbox
+  // still can't reach dexscreener.com directly) that DexScreener does
+  // track it, at exactly this slug (dexscreener.com/robinhood/...).
+  // Same research confirmed real slugs for Stable, HyperEVM, and Plasma —
+  // three more of this app's own Bridge chains that were missing here for
+  // no real reason. X Layer was also checked and left out: no DexScreener
+  // slug for it could be confirmed one way or the other, and this file's
+  // own "not safe to guess one" policy applies here too — a wrong slug
+  // only ever silently 404s to the same fallback glyph anyway, but an
+  // unverified guess isn't worth adding on the chance it's right.
+  robinhood: "robinhood", stable: "stable", hyperevm: "hyperevm", plasma: "plasma",
 };
 function customTokenLogoUrl(chainId, address) {
   const slug = CUSTOM_TOKEN_CHAIN_SLUG[chainId];
