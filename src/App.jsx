@@ -4006,13 +4006,32 @@ export default function MangoBridge() {
     // duplicate row — falls back to inserting fresh only for a path
     // that never went through that effect (the simulated flow, whose
     // hash is a fake shortHash(), never a real on-chain one).
-    const existingIdx = history.findIndex((h) => h.hash === hash);
-    const entry = { id: Date.now(), from, to, amount: amtNum, symbol: fromAsset.symbol, toSymbol: toAsset.symbol, hash, timestamp: Date.now(), status: "complete" };
-    const newHistory = existingIdx >= 0
-      ? history.map((h, i) => (i === existingIdx ? { ...h, status: "complete" } : h))
-      : [entry, ...history];
+    //
+    // Real bug fix, live-reported ("junk" entries — a stray "pending"
+    // row sitting next to the real "complete" one that never resolved):
+    // this used to read `history` from the closure and call
+    // setHistory(plainValue) — for a fast path where setRealBurnHash
+    // and onComplete fire back-to-back synchronously (the fallback-
+    // provider execution branch), the onPendingHash effect (which only
+    // runs after React's next paint) could still be pending when this
+    // ran, so it saw a STALE history snapshot missing the entry
+    // handlePendingHash was about to add — then handlePendingHash
+    // itself ran against an equally stale snapshot missing THIS
+    // update, its own dedupe check (`history.some(...)`) failed to
+    // find it, and it inserted a genuine duplicate. The functional
+    // updater form below always operates on React's actual latest
+    // state at the moment it's applied, regardless of call order or
+    // timing, so this race can't happen no matter which fires first.
+    let newHistory;
+    setHistory((prevHistory) => {
+      const existingIdx = prevHistory.findIndex((h) => h.hash === hash);
+      const entry = { id: Date.now(), from, to, amount: amtNum, symbol: fromAsset.symbol, toSymbol: toAsset.symbol, hash, timestamp: Date.now(), status: "complete" };
+      newHistory = existingIdx >= 0
+        ? prevHistory.map((h, i) => (i === existingIdx ? { ...h, status: "complete" } : h))
+        : [entry, ...prevHistory];
+      return newHistory;
+    });
     setBalances(newBalances);
-    setHistory(newHistory);
     persist(newBalances, newHistory);
     // Real fix: the asset dropdown's live balance display previously only
     // ever refreshed on wallet connect, chain switch, or opening the
@@ -4033,11 +4052,18 @@ export default function MangoBridge() {
   // stays visible with its real hash and an explorer link, instead of
   // vanishing as if nothing was ever sent.
   function handlePendingHash(hash) {
-    if (history.some((h) => h.hash === hash)) return; // already recorded (e.g. StrictMode double-invoke)
-    const entry = { id: Date.now(), from, to, amount: amtNum, symbol: fromAsset.symbol, toSymbol: toAsset.symbol, hash, timestamp: Date.now(), status: "pending" };
-    const newHistory = [entry, ...history];
-    setHistory(newHistory);
-    saveJSON("mango:history", newHistory);
+    // Real bug fix, same race as handleComplete's own comment above:
+    // the dedupe check and the update both now run against React's
+    // actual latest state at apply time, not a closure snapshot that
+    // could be stale relative to a same-tick handleComplete call.
+    let newHistory = null;
+    setHistory((prevHistory) => {
+      if (prevHistory.some((h) => h.hash === hash)) return prevHistory; // already recorded (e.g. StrictMode double-invoke, or handleComplete beat this here)
+      const entry = { id: Date.now(), from, to, amount: amtNum, symbol: fromAsset.symbol, toSymbol: toAsset.symbol, hash, timestamp: Date.now(), status: "pending" };
+      newHistory = [entry, ...prevHistory];
+      return newHistory;
+    });
+    if (newHistory) saveJSON("mango:history", newHistory);
   }
   function resetHistory() {
     setHistory([]);
