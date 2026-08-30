@@ -45,7 +45,21 @@ function alchemyUrl(slug) {
 // pool, not sharing this file's wagmi Config or its React Query cache.
 export const RPC_FALLBACKS = {
   1: ["https://ethereum.reth.rs/rpc", "https://ethereum.publicnode.com"], // Ethereum — no Ethereum Foundation-run public RPC exists; viem's own current default (Paradigm's Reth node) plus PublicNode
-  8453: ["https://mainnet.base.org", "https://base.publicnode.com"], // Base — official (Coinbase-run) + PublicNode
+  // Real bug fix, live-confirmed: mainnet.base.org is documented as
+  // rate-limited and not meant for production dApp traffic — a real
+  // browser session hit this hard, hundreds of 403/429s piling up in
+  // the console from wagmi's own routine balance/account polling. Worse
+  // than just "tried first and fails": this file's own fallback()
+  // transport uses { rank: true }, which periodically health-checks
+  // EVERY listed URL on its own to keep its ranking current — so simply
+  // reordering wouldn't have stopped the background pings to a
+  // known-bad endpoint either, only reduced how often app-driven calls
+  // hit it first. Dropped mainnet.base.org entirely rather than merely
+  // deprioritizing it, replaced with dRPC's free public Base endpoint —
+  // a real, independently-documented, keyless alternative (confirmed
+  // via research, not guessed) — so this is genuinely two working
+  // providers, not one working one plus a landmine still being pinged.
+  8453: ["https://base.publicnode.com", "https://base.drpc.org"], // Base — PublicNode + dRPC (mainnet.base.org dropped: documented as rate-limited/not for production browser traffic)
   56: ["https://bsc-dataseed.bnbchain.org", "https://bsc-dataseed1.defibit.io"], // BNB Chain — both real, team-run endpoints (the second is one of BNB Chain's own community-validator mirrors), replacing the Thirdweb default entirely
   42161: ["https://arb1.arbitrum.io/rpc", "https://arbitrum.publicnode.com"], // Arbitrum One — official (Offchain Labs) + PublicNode
   43114: ["https://api.avax.network/ext/bc/C/rpc", "https://avalanche.publicnode.com"], // Avalanche C-Chain — official (Ava Labs) + PublicNode

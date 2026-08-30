@@ -24,7 +24,13 @@ import { mainnet, base, bsc, arbitrum, avalanche, abstract, hyperEvm, ink, plasm
 
 export const RPC_FALLBACKS = {
   1: ["https://ethereum.reth.rs/rpc", "https://ethereum.publicnode.com"],
-  8453: ["https://mainnet.base.org", "https://base.publicnode.com"],
+  // Real bug fix, live-confirmed: same rate-limiting issue as wagmi.js's
+  // own RPC_FALLBACKS — see that file's own comment. mainnet.base.org
+  // dropped entirely (not just deprioritized — this file's own
+  // fallback() also uses { rank: true }, which pings every listed URL
+  // periodically regardless of app usage), replaced with dRPC's free
+  // public Base endpoint.
+  8453: ["https://base.publicnode.com", "https://base.drpc.org"],
   56: ["https://bsc-dataseed.bnbchain.org", "https://bsc-dataseed1.defibit.io"],
   42161: ["https://arb1.arbitrum.io/rpc", "https://arbitrum.publicnode.com"],
   43114: ["https://api.avax.network/ext/bc/C/rpc", "https://avalanche.publicnode.com"],
