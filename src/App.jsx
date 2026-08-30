@@ -2764,6 +2764,9 @@ const DOC_GROUPS = [
     { id: "custody", title: "Custody" },
     { id: "privacy", title: "Privacy policy" },
   ] },
+  { label: "Support", pages: [
+    { id: "support-stuck", title: "Stuck or failed transaction" },
+  ] },
   { label: "Builders", pages: [
     { id: "api-sdk", title: "REST API" },
   ] },
@@ -3147,6 +3150,18 @@ const DOC_CONTENT = {
       <li>Cross-chain messaging</li>
       <li>Bridge analytics dashboard</li>
     </ul>
+  ),
+  "support-stuck": (P, goTo) => (
+    <>
+      <p className="mb-3">Mango never takes custody of a Bridge or Swap transfer — see <DocLink P={P} onClick={() => goTo("custody")}>Custody →</DocLink> — the actual settlement happens inside Relay's own infrastructure once your source-chain transaction broadcasts. That means the fastest way to check on, or recover, a transfer that looks stuck is Relay's own tools, not this site.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>Check your source transaction first</p>
+      <p className="mb-3">Your History tab records a real hash the moment a transfer broadcasts, linked to a block explorer — open it there to confirm the transaction actually landed on the source chain before assuming anything's wrong.</p>
+      <p className="font-medium mb-1" style={{ color: P.textPrimary }}>If the source transaction confirmed but the destination hasn't arrived</p>
+      <p className="mb-3">Your funds already left your wallet and are inside Relay's system, either still filling or waiting to be claimed. Relay's own claim/withdraw tool is the direct, official way to check status and manually finish a deposit that hasn't settled on its own:</p>
+      <a href="https://relay.link/withdraw" target="_blank" rel="noopener noreferrer" className="inline-block font-medium underline underline-offset-2 mb-3" style={{ color: P.textPrimary }}>relay.link/withdraw →</a>
+      <DocCallout P={P}>This is Relay's own tool, independent of Mango — the same infrastructure every Bridge/Swap transfer here already settles through. You'll need the source transaction hash from your History tab to look it up.</DocCallout>
+      <p className="mt-3">Still stuck after checking there? Email <a href="mailto:mango@mangoprotocol.site" className="font-medium underline underline-offset-2" style={{ color: P.textPrimary }}>mango@mangoprotocol.site</a> with the source transaction hash and which chains/assets were involved.</p>
+    </>
   ),
 };
 
