@@ -193,7 +193,25 @@ export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvid
       onProgress,
     });
   } catch (err) {
-    throw new Error(`[execute step] ${err?.message || String(err)}`);
+    // Real bug fix, live-reported: a Solana same-chain swap routes
+    // through Jupiter under the hood, and Jupiter's own aggregator
+    // program rejects a trade whose actual on-chain output would come
+    // in under the quote's minimum acceptable amount by reverting with
+    // "custom program error: 0x1771" (0x1770 is the same family, a
+    // slightly different minOut check) — well-documented as
+    // "Slippage tolerance exceeded" in Jupiter's own developer docs.
+    // This is the aggregator correctly refusing to execute a worse
+    // trade than quoted, not a real failure — but the raw error used to
+    // surface as a multi-hundred-character program-log dump instead of
+    // an explanation. The real error still goes to console for
+    // debugging; anything not specifically recognized keeps today's
+    // prefixed-raw-message behavior rather than guessing at a cause.
+    const message = err?.message || String(err);
+    console.error("[executeSolanaSourcedTransfer]", err);
+    if (/0x1771|0x1770/i.test(message)) {
+      throw new Error("This trade's price moved before it could execute, and the actual rate would have given you less than expected — Jupiter refused the trade rather than fill it at a worse price. Try again, or use a smaller amount.");
+    }
+    throw new Error(`[execute step] ${message}`);
   }
 
   return result;
