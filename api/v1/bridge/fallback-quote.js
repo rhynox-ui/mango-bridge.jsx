@@ -64,6 +64,22 @@
 
 import crypto from "node:crypto";
 import { checkRateLimit } from "../../rateLimit.js";
+import { DEV_FEE_WALLET, DEV_FEE_PCT } from "../../../src/devFeeWallets.js";
+
+// Real vulnerability, closed here: feeBps/feeWallet came straight from
+// the request body and went unmodified into whichever provider's own
+// partner-fee params (1inch's referrer, 0x's swapFeeRecipient, OKX's
+// fromTokenReferrerWalletAddress, KyberSwap's feeReceiver) — this
+// endpoint is a public URL with wildcard CORS, callable directly by
+// anyone, not just this app's own client. A raw request (or a
+// malicious clone of this site's frontend hitting this SAME real
+// backend) could set feeWallet to an attacker's own address —
+// redirecting Mango's rightful protocol fee — and/or inflate feeBps
+// past what a real user should ever be charged. MAX_FEE_BPS mirrors
+// relay-quote.js's own reasoning: DEV_FEE_PCT's flat rate is provably
+// the true upper bound of anything devFeeWallets.js's own appFeeBps()
+// could legitimately produce.
+const MAX_FEE_BPS = Math.round(DEV_FEE_PCT * 10000);
 
 const NATIVE_PLACEHOLDER_ZERO = "0x0000000000000000000000000000000000000000";
 // The industry-standard EVM native-asset sentinel BOTH providers use —
@@ -459,10 +475,16 @@ export default async function handler(request, response) {
     return response.status(400).json({ error: "chainId, sellToken, buyToken, sellAmount, and takerAddress are all required." });
   }
 
+  // feeBps/feeWallet are optional — both real providers now use them
+  // (see each quoteFn's own comment for how each interprets feeBps).
+  // Never trusted as-is: feeWallet is always overwritten to the real
+  // DEV_FEE_WALLET, and feeBps is clamped to MAX_FEE_BPS — see this
+  // file's own header above for why.
+  const safeFeeBps = feeBps ? String(Math.max(0, Math.min(Number(feeBps) || 0, MAX_FEE_BPS))) : feeBps;
+  const safeFeeWallet = feeWallet ? DEV_FEE_WALLET : feeWallet;
+
   try {
-    // feeBps/feeWallet are optional — both real providers now use them
-    // (see each quoteFn's own comment for how each interprets feeBps).
-    const quote = await quoteFn({ chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps, feeWallet });
+    const quote = await quoteFn({ chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps: safeFeeBps, feeWallet: safeFeeWallet });
     return response.status(200).json({ data: quote });
   } catch (err) {
     return response.status(502).json({ error: err?.message || "Fallback quote failed." });
