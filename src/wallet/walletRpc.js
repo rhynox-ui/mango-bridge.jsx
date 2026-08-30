@@ -294,10 +294,29 @@ export async function fetchErc20TokenMetadata(chainKey, tokenAddress) {
   const key = `evm:${chainKey}:${tokenAddress.toLowerCase()}`;
   if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
   const client = getWalletPublicClient(chainKey);
-  const [symbol, decimals] = await Promise.all([
-    client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
-    client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "decimals" }),
-  ]);
+  let symbol, decimals;
+  try {
+    [symbol, decimals] = await Promise.all([
+      client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
+      client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "decimals" }),
+    ]);
+  } catch (err) {
+    // Real bug fix, live-confirmed: a raw RPC/viem failure here (a rate-
+    // limited endpoint returning a network error, or viem's own
+    // ContractFunctionExecutionError — a multi-paragraph dump of the
+    // call args and ABI) used to propagate straight up. AssetDropdown's
+    // catch block in App.jsx trusts `err.message` as already
+    // user-facing (`err?.message || "friendly default"` only falls back
+    // when message is empty) — so that raw technical text rendered
+    // directly in the token-search dropdown instead of ever reaching the
+    // friendly default, read live as the custom-token search "doing
+    // nothing" when the actual RPC call was quietly failing behind an
+    // unreadable error. Every raw failure here now becomes the same
+    // clean, actionable message regardless of cause; the real error
+    // still goes to the console for debugging.
+    console.error(`[fetchErc20TokenMetadata] ${chainKey}:${tokenAddress}`, err);
+    throw new Error("Couldn't verify this token — check the address, or try again in a moment.");
+  }
   const result = { symbol, decimals: Number(decimals) };
   tokenMetadataCache.set(key, result);
   return result;
@@ -397,7 +416,19 @@ export async function fetchSplMintDecimals(mintAddress) {
       }
     }
   }
-  throw lastError;
+  // Real bug fix, live-confirmed: this used to `throw lastError` — the
+  // raw error from whichever RPC URL failed last (a network failure like
+  // "TypeError: Failed to fetch", or a rate-limit response). App.jsx's
+  // AssetDropdown catch block trusts `err.message` as already
+  // user-facing, so that raw technical text rendered directly in the
+  // token-search dropdown instead of a clean message — read live as the
+  // custom-token search "doing nothing" when the underlying RPC call was
+  // quietly failing (rate-limited or unreachable) behind an unreadable
+  // error. Every raw failure here now becomes the same clean, actionable
+  // message regardless of cause; the real error still goes to the
+  // console for debugging.
+  console.error(`[fetchSplMintDecimals] ${mintAddress}`, lastError);
+  throw new Error("Couldn't verify this mint — check the address, or try again in a moment.");
 }
 
 /**

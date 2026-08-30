@@ -105,11 +105,19 @@ export const RPC_FALLBACKS = {
 function transportFor(chainId) {
   const urls = (RPC_FALLBACKS[chainId] || []).filter(Boolean);
   if (urls.length === 0) return http(); // no override configured for this chain — fall back to its own chain-definition default
-  // rank:true actively probes each endpoint's latency and block height and
-  // prefers the healthiest one, rather than only advancing to the next
-  // endpoint on a hard error — real protection against a "successful but
-  // stale" response, not just a dead endpoint.
-  return fallback(urls.map((url) => http(url)), { rank: true });
+  // Real bug fix, live-confirmed: this was previously { rank: true },
+  // reasoned to be a "bounded cost" since only a handful of chains are
+  // ever actively connected at once. That assumption doesn't hold in
+  // practice — wagmi never tears down a chain's client after the user
+  // switches away from it, so every distinct chain visited in one
+  // session (Base, then BNB, then Solana's EVM-side checks, etc. — a
+  // normal Swap/Bridge session touches many) leaves its own permanent
+  // rank:true background loop running forever, same accumulating-forever
+  // problem walletRpc.js's own identical fix already covers for the
+  // wallet dashboard's 80+ chains. Live-confirmed as the actual cause of
+  // base.drpc.org itself (the Base replacement endpoint) getting rate-
+  // limited (429) in production — dropped here too.
+  return fallback(urls.map((url) => http(url)));
 }
 
 // This is a WalletConnect/Reown *Project ID* — a public identifier used to
