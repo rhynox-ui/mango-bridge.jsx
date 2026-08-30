@@ -27,8 +27,36 @@
 // appFees) it always has.
 
 import { checkRateLimit } from "../../rateLimit.js";
+import { DEV_FEE_WALLET, DEV_FEE_PCT } from "../../../src/devFeeWallets.js";
 
 const RELAY_QUOTE_URL = "https://api.relay.link/quote/v2";
+
+// Real vulnerability, closed here: this was a pure passthrough — the
+// client's own appFees (which wallet gets Mango's protocol fee, and
+// how many basis points) went straight to Relay's real API completely
+// unvalidated. That's fine for the real app's own client code (it
+// always sends DEV_FEE_WALLET and appFeeBps()'s own capped rate), but
+// this endpoint is a public URL with wildcard CORS, callable directly
+// by anyone — a raw request, or a malicious clone of this site's own
+// frontend hitting this SAME real backend, could set appFees[].recipient
+// to an attacker's own wallet (redirecting Mango's rightful fee) and/or
+// inflate appFees[].fee well past what a real user should ever be
+// charged. Both are now enforced server-side rather than trusted:
+// recipient is always overwritten to the real DEV_FEE_WALLET, and fee
+// is clamped to DEV_FEE_PCT's own flat rate in bps — provably the true
+// upper bound of anything devFeeWallets.js's own appFeeBps() could ever
+// legitimately produce (its $50 cap only ever REDUCES the bps from
+// that flat rate for a large trade, never raises it).
+const MAX_FEE_BPS = Math.round(DEV_FEE_PCT * 10000);
+
+function sanitizeAppFees(appFees) {
+  if (!Array.isArray(appFees)) return appFees;
+  return appFees.map((entry) => ({
+    ...entry,
+    recipient: DEV_FEE_WALLET,
+    fee: String(Math.max(0, Math.min(Number(entry?.fee) || 0, MAX_FEE_BPS))),
+  }));
+}
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -41,10 +69,12 @@ export default async function handler(request, response) {
   if (!(await checkRateLimit(request, response, { name: "bridge-relay-quote", limit: 30 }))) return;
 
   try {
+    const body = { ...(request.body || {}) };
+    if (body.appFees) body.appFees = sanitizeAppFees(body.appFees);
     const upstream = await fetch(RELAY_QUOTE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request.body || {}),
+      body: JSON.stringify(body),
     });
     const text = await upstream.text();
     response.status(upstream.status);
