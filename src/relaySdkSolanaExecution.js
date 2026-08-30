@@ -28,7 +28,7 @@ import { adaptSolanaWallet } from "@relayprotocol/relay-svm-wallet-adapter";
 import { mainnet, base, bsc } from "wagmi/chains";
 import { robinhoodMainnet, stableMainnet } from "./wagmi.js";
 import { SOLANA_RPC_PRIMARY } from "./solanaRpc.js";
-import { DEV_FEE_WALLET, DEV_FEE_WALLET_SOLANA, DEV_FEE_PCT } from "./devFeeWallets.js";
+import { DEV_FEE_WALLET, DEV_FEE_PCT } from "./devFeeWallets.js";
 
 let clientInitialized = false;
 let initPromise = null;
@@ -94,8 +94,16 @@ const RELAY_SOLANA_CHAIN_ID = 792703809;
 // is NOT a top-level getQuote parameter the way chainId/currency are),
 // so the fee is deducted atomically by Relay's own solver as part of
 // the same settlement, same as the EVM-sourced path.
-function feeRecipientForChainId(chainId) {
-  return chainId === RELAY_SOLANA_CHAIN_ID ? DEV_FEE_WALLET_SOLANA : DEV_FEE_WALLET;
+//
+// Real bug fix, live-confirmed: this used to switch to
+// DEV_FEE_WALLET_SOLANA for a Solana destination — see relaybridge.js's
+// own feeRecipientForChainId for the full story (Relay's own docs are
+// explicit the appFees recipient must always be an EVM address; app
+// fees accrue off-chain in USDC, claimable on Base, never on the
+// swap's own chain, so there was never a real reason for a chain-
+// specific recipient). Same fix here.
+function feeRecipientForChainId() {
+  return DEV_FEE_WALLET;
 }
 
 /**
@@ -170,7 +178,7 @@ export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvid
       user: solanaAddress,
       recipient: recipient || solanaAddress,
       options: {
-        appFees: [{ recipient: feeRecipientForChainId(toChainId), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
+        appFees: [{ recipient: feeRecipientForChainId(), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
       },
     });
   } catch (err) {
