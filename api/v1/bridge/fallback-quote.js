@@ -333,7 +333,10 @@ async function quoteFromKyberSwap({ chainId, sellToken, buyToken, sellAmount, ta
 // cleanly) rather than silently misrouting funds, so this is a lower-
 // risk unknown than the SHAPE mistakes elsewhere in this file (like
 // 1inch's own endpoint version) would have been.
-function okxSignRequest({ method, requestPath, timestamp, secretKey }) {
+// Exported so fallback-supported-chains.js can sign its own read-only
+// GET /supported/chain request with the exact same scheme, instead of
+// re-deriving (and risking drifting from) this HMAC logic a second time.
+export function okxSignRequest({ method, requestPath, timestamp, secretKey }) {
   const prehash = `${timestamp}${method}${requestPath}`;
   return crypto.createHmac("sha256", secretKey).update(prehash).digest("base64");
 }
