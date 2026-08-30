@@ -3205,8 +3205,25 @@ export default function MangoBridge() {
   const toAsset = toCustomToken
     ? { symbol: toCustomToken.symbol, name: toCustomToken.symbol, decimals: 4, price: 0, color: "#8C9BAE", custom: true, address: toCustomToken.address, onchainDecimals: toCustomToken.decimals }
     : ASSETS[toAssetIdx];
-  const isNativeAsset = fromAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[from];
-  const isRealUsdcPair = fromAsset.symbol === "USDC" && toAsset.symbol === "USDC" && isCctpSupportedPair(from, to);
+  // Real bug fix, directly requested ("we can't rely on symbol... no
+  // token can ever match the same [address]"): matching by symbol alone
+  // is exactly the fragile identity check the AssetDropdown fixes above
+  // just finished hardening around. A custom Solana token's symbol is
+  // fully user-supplied — the "no live listing found for this mint yet
+  // — enter its symbol yourself" flow (AssetDropdown's own splSymbolInput)
+  // puts ZERO restriction on what a user (or an attacker crafting a
+  // token to trick one) types in, including literally "SOL" or "USDC".
+  // Before this fix, that alone made isNativeAsset/isRealUsdcPair true
+  // for a completely unrelated, unverified custom token — usingLiveBalance
+  // below would then show and gate against the REAL native/USDC balance
+  // as if it belonged to that fake token, a genuinely misleading trust
+  // signal (a scam token labeled "SOL" would display the user's actual
+  // SOL balance as its own). !fromAsset.custom/!toAsset.custom (set
+  // above only for a pasted token, never for the curated ASSETS list)
+  // restricts both checks to the one place a symbol is actually a safe,
+  // collision-free identifier: the hand-verified built-in registry.
+  const isNativeAsset = !fromAsset.custom && fromAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[from];
+  const isRealUsdcPair = !fromAsset.custom && !toAsset.custom && fromAsset.symbol === "USDC" && toAsset.symbol === "USDC" && isCctpSupportedPair(from, to);
   const usdcTokenAddress = isRealUsdcPair ? CCTP_CHAINS[from].usdc : undefined;
 
   const { data: liveUsdcBalance, isLoading: usdcBalanceLoading } = useBalance({
@@ -3229,7 +3246,9 @@ export default function MangoBridge() {
   const liveBalanceValue = isFromSolana ? undefined : (isNativeAsset ? liveBalance : liveUsdcBalance);
 
   const toWagmiChain = getWagmiChain(to);
-  const isNativeAssetTo = toAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[to];
+  // Same real bug fix as isNativeAsset's own comment above — !toAsset.custom
+  // keeps this restricted to the curated, symbol-collision-free ASSETS list.
+  const isNativeAssetTo = !toAsset.custom && toAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[to];
   const isRealUsdcPairTo = isRealUsdcPair;
   const usdcTokenAddressTo = isRealUsdcPairTo ? CCTP_CHAINS[to].usdc : undefined;
 
