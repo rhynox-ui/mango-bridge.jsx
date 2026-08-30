@@ -31,6 +31,7 @@
 // leaving a standing approval on a router this app doesn't otherwise
 // touch.
 
+import { formatUnits } from "viem";
 import { readContract, writeContract, sendTransaction, waitForTransactionReceipt } from "wagmi/actions";
 import { config } from "./wagmi.js";
 import { appFeeBps, DEV_FEE_WALLET } from "./devFeeWallets.js";
@@ -164,11 +165,33 @@ export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmo
  * ORIGINAL Relay error to show instead, since this whole path only
  * ever runs after that one failed first.
  */
-export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, onSwapHashKnown }) {
+export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, onSwapHashKnown, buyDecimals }) {
   const failures = [];
   for (const provider of FALLBACK_PROVIDERS) {
     try {
       const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
+      // Real bug fix, live-reported: a fallback provider quoting a
+      // thin/mispriced pair can return a technically-valid quote whose
+      // buyAmount rounds to zero — this used to execute unconditionally,
+      // meaning a real transaction could send the user's tokens away
+      // and return next to nothing, burning gas on a trade nobody would
+      // knowingly confirm. Only checked when buyDecimals is actually
+      // known (the caller's own onchainDecimalsForAsset can return
+      // undefined for an asset it doesn't recognize) — same "don't
+      // block on what we can't verify" rule this file already follows
+      // elsewhere, not a reason to silently accept a real zero though.
+      if (buyDecimals !== undefined && buyDecimals !== null) {
+        try {
+          const buyAmountHuman = Number(formatUnits(BigInt(quote.buyAmount ?? "0"), buyDecimals));
+          if (Number(buyAmountHuman.toFixed(4)) === 0) {
+            failures.push(`${provider}: quoted output rounds to zero at the current rate — skipped.`);
+            continue;
+          }
+        } catch {
+          // Unparseable buyAmount — fall through and let execution
+          // itself be the real check, same as before this fix.
+        }
+      }
       const result = await executeFallbackQuote({
         chainId,
         account: takerAddress,

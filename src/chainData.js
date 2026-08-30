@@ -76,6 +76,25 @@ export const TOKEN_ADDRESSES = {
     // always failed with "not safe to guess one" — a real gap, not a
     // deliberate omission.
     solana: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    // Added live in response to real user-reported "No verified mainnet
+    // contract address for USDC" failures on chains where Relay/the
+    // fallback aggregators actually do support USDC — the registry was
+    // just behind. Each cross-checked two independent sources before
+    // being added, same bar as every entry above:
+    //   bnb: Circle's own multi-chain USDC docs + BscScan, labeled
+    //   "Circle: USDC Token" (the canonical BEP-20 USDC, not a random
+    //   bridged wrapper).
+    //   hyperevm: circle.com/multi-chain-usdc/hyperevm + HyperEVMScan,
+    //   same "Circle: USDC Token" label.
+    //   ink: Circle's own "Now Available: USDC & CCTP V2 on Ink" post +
+    //   two independent explorers (Blockscout, OKLink) agreeing on the
+    //   same address.
+    // Abstract was checked too and deliberately left out — no
+    // independently-confirmed native USDC contract found for it, so
+    // this file's own rule (don't guess) still applies there.
+    bnb: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+    hyperevm: "0xb88339cb7199b77e23db6e890353e22632ba630f",
+    ink: "0x2d270e6886d130d724215a266106e6832161eaed",
   },
   USDT: {
     ethereum: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
@@ -88,6 +107,16 @@ export const TOKEN_ADDRESSES = {
   },
   USDT0: {
     stable: "0x779Ded0c9e1022225f8E0630b35a9b54bE713736",
+    // Added live, backed by a four-source verification package before
+    // being added — Tether's own official USDT0 ecosystem page
+    // (usdt0.to/ecosystem/plasma), Tether's own WDK docs
+    // (docs.wdk.tether.io, independently listing the same address under
+    // Plasma's eip155:9745), and two independent block explorers
+    // (PlasmaScan, Plasma Explorer) all agreeing on this exact address
+    // and its decimals — the highest-confidence bar any entry in this
+    // file has had, given USDT0 specifically has a documented history
+    // of lookalike/scam contracts showing up in ordinary searches.
+    plasma: "0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb",
   },
   USDG: {
     ethereum: "0xe343167631d89b6ffc58b88d6b7fb0228795491d",
@@ -186,8 +215,28 @@ export const ASSET_ONCHAIN_DECIMALS = {
 // a *token* symbol (not a chain's own native asset) must go through
 // assetDecimalsForChain(chainKey, symbol) below, never index
 // ASSET_ONCHAIN_DECIMALS directly by symbol alone.
+//
+// Same exception for BNB's own USDC deployment
+// (0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d, the address
+// TOKEN_ADDRESSES.USDC.bnb points at) — also 18 decimals, not the 6
+// every other verified USDC deployment here uses. Confirmed
+// independently against BscScan's own token page and a second,
+// separate token-data source (coinwatch.finance) before being added —
+// caught live, right after the address itself was added, specifically
+// because Binance-Peg tokens on BNB Chain have a documented history of
+// this exact 18-vs-6 mismatch (USDT already needed the same fix above).
+//
+// The opposite exception for Plasma's own USDT0 deployment
+// (0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb,
+// TOKEN_ADDRESSES.USDT0.plasma) — 6 decimals, not the 18 the global
+// USDT0: 18 entry above uses (that entry is correct for Stable's own
+// USDT0 deployment, the only one previously on file). Confirmed via
+// both PlasmaScan and Plasma Explorer independently reporting 6
+// decimals for this exact contract, alongside the same two sources'
+// address verification.
 const ASSET_ONCHAIN_DECIMALS_BY_CHAIN = {
-  bnb: { USDT: 18 },
+  bnb: { USDT: 18, USDC: 18 },
+  plasma: { USDT0: 6 },
 };
 
 export function assetDecimalsForChain(chainKey, assetSymbol) {

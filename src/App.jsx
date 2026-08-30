@@ -68,6 +68,7 @@ import {
   Download,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
+import { appFeeBps } from "./devFeeWallets.js";
 /** "0.25" not "0.25000", "1" not "1.00" — used everywhere this file displays the real Bridge/Swap protocol fee rate, so a rate change (devFeeWallets.js) can't leave stale "1%" text behind the way a hardcoded literal already had. Not used for Launchpad's own, separate trading-fee text (a different fee schedule entirely — see hookConfig's own "1% buy, 4% sell" copy). */
 function formatFeePct(rate) {
   return (rate * 100).toFixed(2).replace(/\.?0+$/, "");
@@ -75,7 +76,7 @@ function formatFeePct(rate) {
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
-import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
+import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, assetDecimalsForChain } from "./relaybridge.js";
 import { tryFallbackProviders, checkFallbackRoute } from "./fallbackDex.js";
 import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
@@ -259,8 +260,19 @@ function resolveCurrencyForAsset(chainKey, assetObj) {
 // comment on why a symbol-only decimals lookup is never safe to reuse
 // for this). A custom token's real decimals were read live off its own
 // contract (fetchErc20TokenMetadata) when it was added, not guessed.
-function onchainDecimalsForAsset(assetObj) {
-  return assetObj?.custom ? assetObj.onchainDecimals : ASSET_ONCHAIN_DECIMALS[assetObj.symbol];
+function onchainDecimalsForAsset(assetObj, chainKey) {
+  // Real bug fix, caught live while adding a new chain-specific decimals
+  // override (chainData.js's own ASSET_ONCHAIN_DECIMALS_BY_CHAIN, e.g.
+  // BNB Chain's USDT/USDC both being 18 decimals instead of the usual
+  // 6): this function's own comment already explained why a symbol-only
+  // lookup is unsafe, but the code right below it did exactly that
+  // anyway, silently ignoring every chain-specific override that
+  // existed — a real amount-math bug for BNB-USDT already live in
+  // production before this fix, not just the BNB-USDC entry that
+  // exposed it. Now actually goes through assetDecimalsForChain
+  // (chainData.js), same as automation-worker.js's own backend copy of
+  // this same amount math already correctly does.
+  return assetObj?.custom ? assetObj.onchainDecimals : assetDecimalsForChain(chainKey, assetObj?.symbol);
 }
 
 // Real bug fix: the "You receive"/"Fee"/"ETA" preview below was ALWAYS
@@ -1753,7 +1765,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // Real, separate execution path for Solana-sourced transfers —
         // see relaySdkSolanaExecution.js for why this can't share the
         // EVM path below (wagmi has no concept of Solana chains at all).
-        const decimals = fromCustom ? fromCustom.decimals : ASSET_ONCHAIN_DECIMALS[asset];
+        const decimals = fromCustom ? fromCustom.decimals : assetDecimalsForChain(from, asset);
         const totalBaseUnits = parseUnits(amount, decimals);
 
         // Real fix for a real bug: the fee used to be sent as a standalone
@@ -1794,7 +1806,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         setPhase("done");
         onComplete(result?.txHashes?.[0] || "");
       } else if (kind === "relay") {
-        const decimals = fromCustom ? fromCustom.decimals : ASSET_ONCHAIN_DECIMALS[asset];
+        const decimals = fromCustom ? fromCustom.decimals : assetDecimalsForChain(from, asset);
         const totalBaseUnits = parseUnits(amount, decimals);
 
         // Real root cause, found by tracing why "buy succeeds, sell
@@ -1908,16 +1920,40 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // after the swap succeeds, actively working against the smooth
         // experience this fallback exists for. Forgoing a fee that
         // would mostly be sub-cent dust anyway is the right trade.
+        // Same rounds-to-zero guard as App.jsx's own preview effect (see
+        // that call site's own comment for the full explanation, and
+        // why fixing only the preview isn't enough): without this,
+        // execution could accept and actually SEND a Relay quote whose
+        // real output rounds to zero, even after the preview had
+        // already found a genuinely better fallback-provider route —
+        // this function runs its own fresh quote independently of
+        // whatever the preview displayed.
+        const execToDecimals = toCustom ? toCustom.decimals : assetDecimalsForChain(to, toAsset);
+        const execAmtNum = Math.max(0, parseFloat(amount) || 0);
+        function execQuoteRoundsToZero(q) {
+          try {
+            const r = summarizeQuote(q, execToDecimals).receivedAmount;
+            return from === to && r !== null && execAmtNum > 0 && Number(r.toFixed(4)) === 0;
+          } catch {
+            return false;
+          }
+        }
         let quote;
         let fallbackResult = null;
         try {
           quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
+          if (execQuoteRoundsToZero(quote)) {
+            throw new Error("Relay's route for this pair returns next to nothing at the current rate.");
+          }
         } catch (firstErr) {
           if (from !== to) {
             throw firstErr;
           }
           try {
             quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
+            if (execQuoteRoundsToZero(quote)) {
+              throw new Error("Even the 0%-fee route for this pair returns next to nothing at the current rate.");
+            }
           } catch {
             // Both Relay attempts failed — a genuine route gap, not a
             // fee-margin problem. Real second-source fallback
@@ -1942,6 +1978,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                 // inside fallbackDex.js — a closed tab or slow RPC
                 // during that wait left no record it had broadcast.
                 onSwapHashKnown: setRealBurnHash,
+                buyDecimals: execToDecimals,
               });
             } catch (err) {
               fallbackErr = err;
@@ -3775,7 +3812,7 @@ export default function MangoBridge() {
 
       let firstErr;
       try {
-        const decimals = onchainDecimalsForAsset(fromAsset);
+        const decimals = onchainDecimalsForAsset(fromAsset, from);
         if (!decimals) throw new Error(`No decimals known for ${fromAsset.symbol} — can't safely build an amount.`);
         const amountBaseUnitsBig = parseUnits(amount, decimals);
         const amountBaseUnits = amountBaseUnitsBig.toString();
@@ -3833,8 +3870,27 @@ export default function MangoBridge() {
         };
         try {
           const quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
-          applyOkQuote(quote);
-          return;
+          // Real bug fix, live-reported: Relay can return a
+          // technically-successful (200) quote whose actual output
+          // rounds to zero for a pair it doesn't have real routing
+          // data for — live-confirmed on a Robinhood Chain token with
+          // $1M+ of genuine on-chain Uniswap v3 liquidity that Relay
+          // simply hadn't indexed. This used to be accepted as-is
+          // (applyOkQuote/return, right below), which meant the
+          // fallback providers a few lines down — which query Uniswap/
+          // PancakeSwap/etc. directly and might have the real route
+          // Relay doesn't — never got a chance to run: a "successful"
+          // quote short-circuited the whole fallback chain before it
+          // could even start. Same-chain only (from === to) — Bridge
+          // always has from !== to and has no same-chain DEX aggregator
+          // to fall back to anyway.
+          const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
+          const relayRoundsToZero = from === to && relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
+          if (!relayRoundsToZero) {
+            applyOkQuote(quote);
+            return;
+          }
+          firstErr = new Error("Relay's route for this pair returns next to nothing at the current rate.");
         } catch (err) {
           firstErr = err;
         }
@@ -3852,8 +3908,12 @@ export default function MangoBridge() {
         if (from === to) {
           try {
             const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
-            applyOkQuote(quote);
-            return;
+            const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
+            const roundsToZero = relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
+            if (!roundsToZero) {
+              applyOkQuote(quote);
+              return;
+            }
           } catch {
             // Falls through to the fallback-provider check below.
           }
@@ -3877,8 +3937,25 @@ export default function MangoBridge() {
               // estimate yet" even when a fallback route (with a real
               // quoted output amount) was exactly what unlocked the
               // button.
-              applyOkQuote(null, fallbackQuote);
-              return;
+              //
+              // Same rounds-to-zero guard as the Relay quote above —
+              // a fallback provider can also return a technically-real
+              // but functionally-worthless quote for a thin/mispriced
+              // pair. Only accept it here if it's actually a usable
+              // amount; otherwise keep falling through to "unavailable"
+              // below rather than presenting a 0.0000 trade as tappable.
+              let fallbackRoundsToZero = false;
+              try {
+                const fallbackAmt = Number(formatUnits(BigInt(fallbackQuote.buyAmount), onchainDecimalsForAsset(toAsset, to)));
+                fallbackRoundsToZero = amtNum > 0 && Number(fallbackAmt.toFixed(4)) === 0;
+              } catch {
+                // Unparseable buyAmount — treat as not-zero, same as
+                // today's behavior, rather than block on it here.
+              }
+              if (!fallbackRoundsToZero) {
+                applyOkQuote(null, fallbackQuote);
+                return;
+              }
             }
           } catch {
             // No fallback route either — falls through to unavailable.
@@ -3897,7 +3974,7 @@ export default function MangoBridge() {
   // own comment on why this matters: without it, fee/etaLabel/received
   // below are a static per-chain/per-asset estimate that never reflects
   // Relay at all, live route or not.
-  const liveQuoteSummary = routeCheck.status === "ok" && routeCheck.quote ? summarizeQuote(routeCheck.quote, onchainDecimalsForAsset(toAsset)) : null;
+  const liveQuoteSummary = routeCheck.status === "ok" && routeCheck.quote ? summarizeQuote(routeCheck.quote, onchainDecimalsForAsset(toAsset, to)) : null;
   // A fallback-provider quote (1inch/0x/OKX/KyberSwap — see
   // checkFallbackRoute's own comment) isn't Relay-shaped, so
   // summarizeQuote can't parse it, but its own buyAmount is real,
@@ -3909,7 +3986,7 @@ export default function MangoBridge() {
   let fallbackReceivedAmount = null;
   if (routeCheck.status === "ok" && !routeCheck.quote && routeCheck.fallbackQuote?.buyAmount) {
     try {
-      fallbackReceivedAmount = Number(formatUnits(BigInt(routeCheck.fallbackQuote.buyAmount), onchainDecimalsForAsset(toAsset)));
+      fallbackReceivedAmount = Number(formatUnits(BigInt(routeCheck.fallbackQuote.buyAmount), onchainDecimalsForAsset(toAsset, to)));
     } catch {
       fallbackReceivedAmount = null;
     }
@@ -3922,7 +3999,15 @@ export default function MangoBridge() {
   // like a CCTP/op-withdraw/arb-withdraw special case, which never has
   // one).
   const fee = liveQuoteSummary?.totalFeeUsd ?? (isSwapTab ? CHAINS[from].baseFee : CHAINS[from].baseFee + CHAINS[to].baseFee);
-  const devFeeAmount = amtNum * DEV_FEE_PCT;
+  // Real bug fix, live-reported: this used to be a flat amtNum *
+  // DEV_FEE_PCT with no cap, while the actual fee sent to Relay/the
+  // fallback providers (getRelayQuote's own appFeeBps, devFeeWallets.js)
+  // has always applied a $50 maximum on large trades. That mismatch
+  // meant the confirm screen could show a bigger fee than what's
+  // actually charged — e.g. a $30k trade displaying $75 while only $50
+  // is ever collected. Now calls the exact same appFeeBps() the real
+  // quote uses, so this number can never drift from what's charged.
+  const devFeeAmount = amtNum * (Number(appFeeBps(fromAsset.price > 0 ? amtNum * fromAsset.price : undefined)) / 10000);
   const seconds = liveQuoteSummary?.etaSeconds ?? Math.max(CHAINS[from].baseSeconds, CHAINS[to].baseSeconds);
   const etaLabel = seconds < 60 ? `~${Math.max(1, Math.round(seconds))}s` : `~${Math.round(seconds / 60)} min`;
   // For same-asset transfers this is a direct estimate. For cross-asset swaps
