@@ -367,7 +367,19 @@ export async function getTradeQuote({ tokenAddress, side, amountIn, slippagePerc
 // separate transaction before the actual swap, same standard pattern every
 // DEX uses.
 // ============================================================================
-export async function buyTokenReal({ tokenAddress, ethAmount, recipient, slippagePercent = 10 }) {
+// onHashKnown: optional, called the moment EACH transaction's hash is
+// actually known — BEFORE its own waitForTransactionReceipt below, not
+// after. Real gap this closes, found auditing this exact call for
+// stuck/lost-transaction risk: every other execution path in this
+// codebase (executeRelayQuote, fallbackDex.js's own executeFallbackQuote)
+// already reports a hash this early, specifically so a caller can
+// persist a "pending" record before the (possibly long) wait for
+// confirmation — without it, a slow RPC or a closed tab during that
+// wait left zero record anywhere that a real transaction — approval OR
+// the swap itself — had already broadcast. Optional and a no-op when
+// omitted so Launchpad.jsx's own existing calls (no tracking need
+// beyond the return value) keep working unchanged.
+export async function buyTokenReal({ tokenAddress, ethAmount, recipient, slippagePercent = 10, onHashKnown }) {
   const valueWei = BigInt(Math.round(parseFloat(ethAmount) * 1e18));
   const { sqrtPriceLimitX96, minAmountOut } = await getTradeQuote({ tokenAddress, side: "buy", amountIn: valueWei, slippagePercent });
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600); // 10 minutes out
@@ -380,11 +392,12 @@ export async function buyTokenReal({ tokenAddress, ethAmount, recipient, slippag
     value: valueWei,
     chainId: ROBINHOOD_CHAIN_ID,
   });
+  onHashKnown?.(hash);
   const receipt = await waitForTransactionReceipt(config, { hash, chainId: ROBINHOOD_CHAIN_ID });
   return { hash, receipt };
 }
 
-export async function sellTokenReal({ tokenAddress, tokenAmountWei, recipient, slippagePercent = 10 }) {
+export async function sellTokenReal({ tokenAddress, tokenAmountWei, recipient, slippagePercent = 10, onHashKnown }) {
   const { sqrtPriceLimitX96, minAmountOut } = await getTradeQuote({ tokenAddress, side: "sell", amountIn: tokenAmountWei, slippagePercent });
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
 
@@ -395,6 +408,7 @@ export async function sellTokenReal({ tokenAddress, tokenAmountWei, recipient, s
     args: [LAUNCHPAD_ROUTER_ADDRESS, tokenAmountWei],
     chainId: ROBINHOOD_CHAIN_ID,
   });
+  onHashKnown?.(approveHash);
   await waitForTransactionReceipt(config, { hash: approveHash, chainId: ROBINHOOD_CHAIN_ID });
 
   const hash = await writeContract(config, {
@@ -404,6 +418,7 @@ export async function sellTokenReal({ tokenAddress, tokenAmountWei, recipient, s
     args: [tokenAddress, tokenAmountWei, minAmountOut, sqrtPriceLimitX96, deadline, recipient],
     chainId: ROBINHOOD_CHAIN_ID,
   });
+  onHashKnown?.(hash);
   const receipt = await waitForTransactionReceipt(config, { hash, chainId: ROBINHOOD_CHAIN_ID });
   return { hash, receipt };
 }

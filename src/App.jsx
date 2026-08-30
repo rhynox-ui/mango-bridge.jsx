@@ -1615,7 +1615,7 @@ function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
   return "relay";
 }
 
-function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, devFeeAmount, originAmountUsd, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated }) {
+function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, devFeeAmount, originAmountUsd, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated, onPendingHash }) {
   const kind = getTransferKind(from, to, asset, toAsset);
   const isReal = kind !== "simulated";
   // Which OP Stack chain this op-deposit/op-withdraw actually targets —
@@ -1647,6 +1647,28 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
     const t = setTimeout(() => setStepIndex((i) => i + 1), 900 + Math.random() * 600);
     return () => clearTimeout(t);
   }, [isReal, phase, stepIndex]);
+
+  // Real gap this closes: History used to only ever get a record on
+  // FULL completion (onComplete, below) — a user who closed this tab,
+  // or whose connection dropped, while the destination side was still
+  // in flight (executeRelayQuote's own pollRelayStatus waits up to 10
+  // minutes for Relay's fill) had ZERO record anywhere that real funds
+  // had already left their wallet, even though the source-chain
+  // transaction had already genuinely broadcast — the same failure
+  // mode handleWithdrawalInitiated already exists to prevent for
+  // OP/Arbitrum's own multi-day pending window, just never generalized
+  // to the far more common Relay/fallback/CCTP/Wormhole path. Fires
+  // the moment ANY of those flows' own onStep first learns a real
+  // hash, which onComplete (once the flow actually finishes) then
+  // updates in place rather than duplicating. op-withdraw/arb-withdraw
+  // excluded deliberately — those already have their own, separate,
+  // already-correct tracking (onWithdrawalInitiated/withdrawals),
+  // which this would otherwise shadow with a second, never-updated
+  // "pending" entry that onComplete is never called to resolve.
+  useEffect(() => {
+    if (!realBurnHash || kind === "op-withdraw" || kind === "arb-withdraw") return;
+    onPendingHash?.(realBurnHash);
+  }, [realBurnHash]);
 
   async function handleConfirm() {
     setPhase("progress");
@@ -1819,9 +1841,17 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             }
             if (isLaunchpadPool) {
               setStepIndex(0);
+              // onHashKnown: same real gap this closes as the Relay/
+              // fallback-provider paths' own onPendingHash tracking
+              // above — without it, neither the approve step (sell
+              // only) nor the actual buy/sell transaction's hash was
+              // ever known to the UI until waitForTransactionReceipt
+              // had ALREADY resolved inside buyTokenReal/sellTokenReal,
+              // so a slow RPC or a closed tab during that wait left no
+              // record either one had broadcast.
               const result = side === "buy"
-                ? await buyTokenReal({ tokenAddress: launchpadTokenAddress, ethAmount: amount, recipient: account })
-                : await sellTokenReal({ tokenAddress: launchpadTokenAddress, tokenAmountWei: totalBaseUnits, recipient: account });
+                ? await buyTokenReal({ tokenAddress: launchpadTokenAddress, ethAmount: amount, recipient: account, onHashKnown: setRealBurnHash })
+                : await sellTokenReal({ tokenAddress: launchpadTokenAddress, tokenAmountWei: totalBaseUnits, recipient: account, onHashKnown: setRealBurnHash });
               setRealBurnHash(result.hash);
               setStepIndex(steps.length);
               setPhase("done");
@@ -1905,6 +1935,13 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                 sellAmount: totalBaseUnits.toString(),
                 takerAddress: account,
                 originAmountUsd,
+                // Same real gap this closes as the Relay path's own
+                // onPendingHash effect above: without this, the swap
+                // transaction's hash was only ever known to the UI
+                // AFTER waitForTransactionReceipt had already resolved
+                // inside fallbackDex.js — a closed tab or slow RPC
+                // during that wait left no record it had broadcast.
+                onSwapHashKnown: setRealBurnHash,
               });
             } catch (err) {
               fallbackErr = err;
@@ -2171,25 +2208,46 @@ function HistoryTab({ history, onReset }) {
       <div className="rounded-2xl p-8 flex flex-col items-center text-center gap-2" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
         <HistoryIcon size={22} color="#333A44" />
         <div className="text-[13.5px]" style={{ color: "#8B95A1" }}>No bridges yet</div>
-        <div className="text-[12px]" style={{ color: "#4A515D" }}>Your completed transfers will show up here.</div>
+        <div className="text-[12px]" style={{ color: "#4A515D" }}>Your transfers will show up here as soon as they broadcast — including still-pending ones.</div>
       </div>
     );
   }
   return (
     <div className="rounded-2xl overflow-hidden" style={{ background: "#12151B", border: "1px solid #1E232B" }}>
-      {history.map((tx, i) => (
-        <div key={tx.id} className="flex items-center gap-3 px-4 py-3.5" style={{ borderTop: i === 0 ? "none" : "1px solid #1A1E26" }}>
-          <div className="flex items-center -space-x-1.5">
-            <ChainBadge id={tx.from} size={22} />
-            <ChainBadge id={tx.to} size={22} />
+      {history.map((tx, i) => {
+        // Real gap this closes: every row showed its own real,
+        // already-known hash as plain, unclickable text — no way to
+        // actually verify a trade on-chain without manually copying it
+        // into an explorer yourself. tx.from is the chain the hash
+        // itself lives on (both handleComplete and handlePendingHash
+        // record it that way), so that's always the right explorer to
+        // link to, same convention BridgeModal's own error state
+        // already uses for realBurnHash. Falls back to plain text for
+        // a chain with no verified explorer entry (a wallet-only chain
+        // this app hasn't hand-added CHAINS data for) rather than a
+        // dead/wrong link.
+        const explorerBase = CHAINS[tx.from]?.explorer;
+        const explorerUrl = explorerBase && tx.hash ? `${explorerBase}${tx.hash}` : null;
+        return (
+          <div key={tx.id} className="flex items-center gap-3 px-4 py-3.5" style={{ borderTop: i === 0 ? "none" : "1px solid #1A1E26" }}>
+            <div className="flex items-center -space-x-1.5">
+              <ChainBadge id={tx.from} size={22} />
+              <ChainBadge id={tx.to} size={22} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 text-[13.5px] font-medium" style={{ color: "#F2F4F7" }}>{fmt(tx.amount, 2)} {tx.symbol}<ArrowUpRight size={11} color="#4A515D" /></div>
+              {explorerUrl ? (
+                <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="text-[11.5px] font-mono underline decoration-dotted underline-offset-2 hover:opacity-80" style={{ color: "#4A515D" }}>
+                  {tx.hash} · {timeAgo(tx.timestamp)}
+                </a>
+              ) : (
+                <div className="text-[11.5px] font-mono" style={{ color: "#4A515D" }}>{tx.hash} · {timeAgo(tx.timestamp)}</div>
+              )}
+            </div>
+            <StatusPill status={tx.status} />
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 text-[13.5px] font-medium" style={{ color: "#F2F4F7" }}>{fmt(tx.amount, 2)} {tx.symbol}<ArrowUpRight size={11} color="#4A515D" /></div>
-            <div className="text-[11.5px] font-mono" style={{ color: "#4A515D" }}>{tx.hash} · {timeAgo(tx.timestamp)}</div>
-          </div>
-          <StatusPill status={tx.status} />
-        </div>
-      ))}
+        );
+      })}
       <button onClick={onReset} className="w-full flex items-center justify-center gap-1.5 py-2.5 text-[12px]" style={{ color: "#4A515D", borderTop: "1px solid #1A1E26" }}>
         <RotateCcw size={12} /> Clear history
       </button>
@@ -3943,8 +4001,16 @@ export default function MangoBridge() {
       [from]: fromChainBalances,
       [to]: toChainBalances,
     };
+    // Updates the pending entry handlePendingHash already created for
+    // this exact hash (the normal case) rather than inserting a second,
+    // duplicate row — falls back to inserting fresh only for a path
+    // that never went through that effect (the simulated flow, whose
+    // hash is a fake shortHash(), never a real on-chain one).
+    const existingIdx = history.findIndex((h) => h.hash === hash);
     const entry = { id: Date.now(), from, to, amount: amtNum, symbol: fromAsset.symbol, toSymbol: toAsset.symbol, hash, timestamp: Date.now(), status: "complete" };
-    const newHistory = [entry, ...history];
+    const newHistory = existingIdx >= 0
+      ? history.map((h, i) => (i === existingIdx ? { ...h, status: "complete" } : h))
+      : [entry, ...history];
     setBalances(newBalances);
     setHistory(newHistory);
     persist(newBalances, newHistory);
@@ -3955,6 +4021,23 @@ export default function MangoBridge() {
     // the short-lived cache so this reads the genuinely-updated balance,
     // not a value cached from just before the transaction.
     refreshFromChainBalances(true);
+  }
+  // BridgeModal's own onPendingHash — fires the moment a flow's source-
+  // side transaction genuinely broadcasts, well before it's known to
+  // have fully succeeded. See that effect's own comment for the real
+  // gap this closes. Deliberately a distinct status ("pending", not
+  // "complete") so the History tab can show it as still-in-flight —
+  // handleComplete above updates this exact same entry once (if) the
+  // flow actually finishes; if it never does (tab closed, or a
+  // destination-side failure after this already broadcast), the entry
+  // stays visible with its real hash and an explorer link, instead of
+  // vanishing as if nothing was ever sent.
+  function handlePendingHash(hash) {
+    if (history.some((h) => h.hash === hash)) return; // already recorded (e.g. StrictMode double-invoke)
+    const entry = { id: Date.now(), from, to, amount: amtNum, symbol: fromAsset.symbol, toSymbol: toAsset.symbol, hash, timestamp: Date.now(), status: "pending" };
+    const newHistory = [entry, ...history];
+    setHistory(newHistory);
+    saveJSON("mango:history", newHistory);
   }
   function resetHistory() {
     setHistory([]);
@@ -4341,6 +4424,7 @@ export default function MangoBridge() {
           onClose={() => setShowModal(false)}
           onComplete={handleComplete}
           onWithdrawalInitiated={handleWithdrawalInitiated}
+          onPendingHash={handlePendingHash}
         />
       )}
       {showDocs && <DocsModal onClose={() => setShowDocs(false)} P={P} />}
