@@ -28,7 +28,7 @@ import { adaptSolanaWallet } from "@relayprotocol/relay-svm-wallet-adapter";
 import { mainnet, base, bsc } from "wagmi/chains";
 import { robinhoodMainnet, stableMainnet } from "./wagmi.js";
 import { SOLANA_RPC_PRIMARY } from "./solanaRpc.js";
-import { DEV_FEE_WALLET, DEV_FEE_PCT } from "./devFeeWallets.js";
+import { DEV_FEE_WALLET, appFeeBps } from "./devFeeWallets.js";
 
 let clientInitialized = false;
 let initPromise = null;
@@ -178,7 +178,7 @@ export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvid
       user: solanaAddress,
       recipient: recipient || solanaAddress,
       options: {
-        appFees: [{ recipient: feeRecipientForChainId(), fee: String(Math.round(DEV_FEE_PCT * 10000)) }],
+        appFees: [{ recipient: feeRecipientForChainId(), fee: appFeeBps() }],
       },
     });
   } catch (err) {

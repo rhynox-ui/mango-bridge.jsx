@@ -2,7 +2,7 @@ import { readContract, writeContract, waitForTransactionReceipt, switchChain } f
 import { parseUnits, pad } from "viem";
 import { config } from "./wagmi.js";
 import { isMainnet } from "./networkMode.js";
-import { DEV_FEE_WALLET, DEV_FEE_PCT } from "./devFeeWallets.js";
+import { DEV_FEE_WALLET, DEV_FEE_PCT, DEV_FEE_MAX_USD } from "./devFeeWallets.js";
 export { DEV_FEE_WALLET, DEV_FEE_PCT };
 
 // Shared CCTP V2 contract addresses on TESTNET — identical across Ethereum
@@ -156,7 +156,14 @@ export async function runCctpTransfer({ fromKey, toKey, account, amountHuman, re
   const recipient = recipientAddress || account;
 
   const amount = parseUnits(amountHuman, 6); // USDC uses 6 decimals
-  const devFeeAmount = amount / 100n; // 1%, integer bigint division
+  // Real DEV_FEE_PCT/DEV_FEE_MAX_USD from devFeeWallets.js, not a
+  // second hardcoded "1%" — this used to be a bare `amount / 100n`
+  // that couldn't see the rate cut to 25bps elsewhere, and USDC's own
+  // 1:1 USD peg makes the $50 cap trivial here (no price lookup
+  // needed, unlike a native-asset fee elsewhere in this codebase).
+  const flatFeeAmount = (amount * BigInt(Math.round(DEV_FEE_PCT * 10000))) / 10000n;
+  const capAmount = BigInt(DEV_FEE_MAX_USD) * 1_000_000n;
+  const devFeeAmount = flatFeeAmount > capAmount ? capAmount : flatFeeAmount;
   const burnAmount = amount - devFeeAmount;
 
   onStep?.("network");

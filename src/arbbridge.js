@@ -10,6 +10,7 @@ import {
 } from "@arbitrum/sdk";
 import { config } from "./wagmi.js";
 import { isMainnet } from "./networkMode.js";
+import { DEV_FEE_PCT, DEV_FEE_MAX_USD } from "./devFeeWallets.js";
 
 // IMPORTANT: @arbitrum/sdk's own docs and code comments (as of the current
 // v4.x release) still describe its expected inputs as "an ethers v5 signer" /
@@ -27,8 +28,17 @@ const ROBINHOOD_MAINNET_CHAIN_ID = 4663;
 const ETHEREUM_MAINNET_CHAIN_ID = 1;
 
 const DEV_FEE_WALLET = "0xf07becc2401a646fff10d10b969ef18b03582e88";
-const DEV_FEE_PCT = 0.01;
 const ERC20_TRANSFER_ABI = ["function transfer(address to, uint256 amount) returns (bool)"];
+// Real DEV_FEE_PCT from devFeeWallets.js, not a second hardcoded "1%"
+// — this file's own `.div(100)` calls couldn't see the rate cut to
+// 25bps elsewhere. ETH-denominated fees below have no cap (no live
+// ETH/USD price feed in this file to size one against); the USDC ones
+// do, trivially, since USDC is ~1:1 with USD already.
+const DEV_FEE_BPS = ethers.BigNumber.from(Math.round(DEV_FEE_PCT * 10000));
+function cappedUsdcFee(feeAmount) {
+  const capAmount = ethers.utils.parseUnits(String(DEV_FEE_MAX_USD), USDC_DECIMALS);
+  return feeAmount.gt(capAmount) ? capAmount : feeAmount;
+}
 
 function childChainId() { return isMainnet() ? ROBINHOOD_MAINNET_CHAIN_ID : ROBINHOOD_TESTNET_CHAIN_ID; }
 function parentChainId() { return isMainnet() ? ETHEREUM_MAINNET_CHAIN_ID : SEPOLIA_CHAIN_ID; }
@@ -109,7 +119,7 @@ export async function runArbDeposit({ amountHuman, onStep }) {
   const ethBridger = new EthBridger(childNetwork);
 
   const totalAmount = ethers.utils.parseEther(amountHuman);
-  const feeAmount = totalAmount.div(100); // 1%
+  const feeAmount = totalAmount.mul(DEV_FEE_BPS).div(10000);
   const depositAmount = totalAmount.sub(feeAmount);
 
   onStep?.("fee");
@@ -145,7 +155,7 @@ export async function initiateArbWithdrawal({ account, amountHuman, onStep }) {
   const ethBridger = new EthBridger(childNetwork);
 
   const totalAmount = ethers.utils.parseEther(amountHuman);
-  const feeAmount = totalAmount.div(100); // 1%
+  const feeAmount = totalAmount.mul(DEV_FEE_BPS).div(10000);
   const withdrawAmount = totalAmount.sub(feeAmount);
 
   onStep?.("fee");
@@ -187,7 +197,7 @@ export async function runArbErc20Deposit({ amountHuman, onStep }) {
   const childNetwork = await getArbitrumNetwork(childChainId());
   const erc20Bridger = new Erc20Bridger(childNetwork);
   const totalAmount = ethers.utils.parseUnits(amountHuman, USDC_DECIMALS);
-  const feeAmount = totalAmount.div(100); // 1%
+  const feeAmount = cappedUsdcFee(totalAmount.mul(DEV_FEE_BPS).div(10000));
   const amount = totalAmount.sub(feeAmount);
 
   onStep?.("fee");
@@ -221,7 +231,7 @@ export async function initiateArbErc20Withdrawal({ account, amountHuman, onStep 
   const childNetwork = await getArbitrumNetwork(childChainId());
   const erc20Bridger = new Erc20Bridger(childNetwork);
   const totalAmount = ethers.utils.parseUnits(amountHuman, USDC_DECIMALS);
-  const feeAmount = totalAmount.div(100); // 1%
+  const feeAmount = cappedUsdcFee(totalAmount.mul(DEV_FEE_BPS).div(10000));
   const amount = totalAmount.sub(feeAmount);
 
   onStep?.("fee");
