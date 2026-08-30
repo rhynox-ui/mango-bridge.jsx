@@ -222,6 +222,17 @@ const KYBERSWAP_CHAIN_SLUG = {
   43114: "avalanche",
   8453: "base",
   59144: "linea",
+  // Real gap found during a broader same-chain-Swap audit ("buy works,
+  // sell doesn't" across chains): this app already lists unichain/
+  // hyperevm/plasma as source chains (chainData.js's own
+  // MAINNET_CHAIN_IDS), but this allowlist never had them, so KyberSwap
+  // — otherwise the widest-reaching provider needing no API key — was
+  // silently skipped on all three, live-confirmed as an active gap
+  // (KyberSwap's own current chain list + aggregator-api.kyberswap.com
+  // routes-endpoint slugs, not guessed).
+  130: "unichain",
+  999: "hyperevm",
+  9745: "plasma",
 };
 
 async function quoteFromKyberSwap({ chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps, feeWallet }) {
