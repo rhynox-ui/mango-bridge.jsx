@@ -138,8 +138,15 @@ async function postRelayQuote(body) {
  * wagmi/chains' own chain objects and passes the universal native
  * placeholder address directly, rather than asking currencyAddress() to
  * resolve a chainKey it has no verified data for.
+ *
+ * feeBpsOverride is an escape hatch for the same-chain Swap fallback
+ * flow (BridgeModal's own execute call, isSwapTab-gated): a request
+ * that fails to simulate WITH the normal fee can be retried at 0% to
+ * test whether the fee itself (not a genuine liquidity/routing gap)
+ * was what pushed a thin trade past what Relay's solver network would
+ * commit to. Never used for the first attempt of any quote.
  */
-export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress, originChainId, originCurrency, destinationChainId, destinationCurrency, originAmountUsd }) {
+export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress, originChainId, originCurrency, destinationChainId, destinationCurrency, originAmountUsd, feeBpsOverride }) {
   const resolvedDestinationChainId = destinationChainId ?? MAINNET_CHAIN_IDS[toChainKey];
   const body = {
     user: userAddress,
@@ -159,7 +166,7 @@ export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAss
     destinationCurrency: destinationCurrency ?? currencyAddress(toChainKey, toAsset),
     amount: amountBaseUnits,
     tradeType: "EXACT_INPUT",
-    appFees: [{ recipient: feeRecipientForChainId(), fee: appFeeBps(originAmountUsd) }],
+    appFees: [{ recipient: feeRecipientForChainId(), fee: feeBpsOverride ?? appFeeBps(originAmountUsd) }],
   };
   const res = await postRelayQuote(body);
   if (!res.ok) {

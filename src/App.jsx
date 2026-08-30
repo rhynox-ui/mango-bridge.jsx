@@ -1698,7 +1698,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // direction. Solana being involved on either side always needs
         // its own, correctly-typed address as the real recipient.
         const defaultRecipient = CHAINS[to]?.isSolana ? solanaWallet?.address : account;
-        const quote = await getRelayQuote({
+        const quoteParams = {
           fromChainKey: from, toChainKey: to,
           fromAsset: asset, toAsset: toAsset,
           // Overrides needed for walletChains.js's wallet-only chains —
@@ -1716,8 +1716,34 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           destinationCurrency: toCustom ? toCustom.address : (isWalletOnlyChain(to) ? resolveCurrency(to, toAsset) : undefined),
           amountBaseUnits: totalBaseUnits.toString(), userAddress: account,
           recipientAddress: destination || defaultRecipient,
-          originAmountUsd,
-        });
+        };
+        // Real fallback, same-chain Swap only (from === to — Bridge
+        // always has from !== to, so this never fires there): a route
+        // that fails to simulate WITH the normal fee sometimes succeeds
+        // at 0%, because Relay's solver network has to commit to
+        // delivering (100%-fee%) of value for a fill — a thin/low-value
+        // trade can fail to clear that bar with any fee attached at
+        // all, live-confirmed on a real ~$1 sell. Deliberately does NOT
+        // collect a separate fallback fee afterward the way mango-
+        // mobile's own DexScreen.tsx does — this app signs through the
+        // user's own connected wallet (wagmi), not a self-custodial key,
+        // so doing that here would mean a SECOND signature prompt right
+        // after the swap succeeds, actively working against the smooth
+        // experience this fallback exists for. Forgoing a fee that
+        // would mostly be sub-cent dust anyway is the right trade.
+        let quote;
+        try {
+          quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
+        } catch (firstErr) {
+          if (from !== to) {
+            throw firstErr;
+          }
+          try {
+            quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
+          } catch {
+            throw firstErr;
+          }
+        }
         const result = await executeRelayQuote({
           quote,
           onStep: (step) => {
