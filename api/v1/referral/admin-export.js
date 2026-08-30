@@ -38,6 +38,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { listAllReferralRecords } from "../../referralStore.js";
+import { checkRateLimit } from "../../rateLimit.js";
 
 function safeEqual(a, b) {
   const bufA = Buffer.from(a);
@@ -81,6 +82,16 @@ export default async function handler(request, response) {
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });
   }
+
+  // Real gap this closes: the timingSafeEqual comparison below already
+  // stops an attacker from learning anything from response TIMING, but
+  // nothing stopped unlimited GUESSES at the secret itself — every
+  // other secret-gated/write endpoint in this codebase is rate-limited
+  // (rateLimit.js's own header); this bulk-PII export was the one
+  // exception. A low limit here since a legitimate caller (the admin
+  // page, a reward-run script) never needs more than a handful of
+  // requests per minute.
+  if (!(await checkRateLimit(request, response, { name: "referral-admin-export", limit: 10 }))) return;
 
   const secret = process.env.ADMIN_API_SECRET;
   const provided = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");

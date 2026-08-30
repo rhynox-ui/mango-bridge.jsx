@@ -28,6 +28,7 @@
 
 import { put, head } from "@vercel/blob";
 import { createPublicClient, http, verifyMessage } from "viem";
+import { checkRateLimit } from "./rateLimit.js";
 
 const REGISTRY_ADDRESS = "0xb4D9c0928d0bf15ACa8D698cb83703752CfdF785"; // v3, current
 const REGISTRY_ABI = [
@@ -66,11 +67,19 @@ async function readRegistry() {
 
 export default async function handler(request, response) {
   if (request.method === "GET") {
+    if (!(await checkRateLimit(request, response, { name: "logo-registry-get", limit: 60 }))) return;
     const registry = await readRegistry();
     return response.status(200).json(registry);
   }
 
   if (request.method === "POST") {
+    // Real gap this closes: every other write endpoint in api/v1/* is
+    // rate-limited (checkRateLimit's own header — "every api/v1
+    // endpoint was completely open" before it existed); this one, not
+    // under api/v1/, was missed. Without it, the poolId/on-chain check
+    // above is still correct but a brute-force script could hammer this
+    // with unlimited requests trying different poolIds/addresses.
+    if (!(await checkRateLimit(request, response, { name: "logo-registry-post", limit: 20 }))) return;
     const { tokenAddress, logoUrl, poolId, isUpdate, signature, signerAddress, description, xProfile, telegram } = request.body;
 
     if (!tokenAddress) {
@@ -80,9 +89,45 @@ export default async function handler(request, response) {
       return response.status(400).json({ error: "At least one of logoUrl, description, xProfile, or telegram is required" });
     }
 
+    const EVM_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+    if (!EVM_ADDRESS_RE.test(tokenAddress)) {
+      return response.status(400).json({ error: "tokenAddress must be a valid EVM address." });
+    }
+
     const registry = await readRegistry();
     const key = tokenAddress.toLowerCase();
     const alreadyExists = Boolean(registry[key]);
+
+    // Real vulnerability, closed here: the first-save path had NO
+    // on-chain verification at all — literally anyone could POST any
+    // tokenAddress (real, not-yet-launched, or entirely fake) and set
+    // its logo/description/social links before the real creator ever
+    // called this endpoint, e.g. a phishing Telegram/X link squatted on
+    // a token before its actual creator saves real metadata. poolId is
+    // already sent on every genuine first-save call (Launchpad.jsx
+    // passes result.poolId straight from the launch transaction's own
+    // decoded event) — cross-checking it against the Registry
+    // contract's own real, on-chain tokenAddress for that pool proves
+    // this is a real launched token at this exact address, with no
+    // signature prompt needed (which would break launching on behalf
+    // of a different creator wallet — the "Creator wallet" field this
+    // page already supports, and the update path's own documented
+    // reason a signature there is checked against the on-chain creator
+    // rather than whoever launched it).
+    if (!alreadyExists && !isUpdate) {
+      if (!poolId) {
+        return response.status(400).json({ error: "First-time save requires poolId." });
+      }
+      const [, realTokenAddress] = await publicClient.readContract({
+        address: REGISTRY_ADDRESS,
+        abi: REGISTRY_ABI,
+        functionName: "launches",
+        args: [poolId],
+      });
+      if (!realTokenAddress || realTokenAddress.toLowerCase() !== key) {
+        return response.status(403).json({ error: "poolId does not correspond to this tokenAddress." });
+      }
+    }
 
     // Real access control — only actually enforced on updates, not the
     // first save. An update to something already in the registry requires
