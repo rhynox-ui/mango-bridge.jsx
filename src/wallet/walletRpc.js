@@ -284,6 +284,37 @@ export async function fetchErc20TokenMetadata(chainKey, tokenAddress) {
 }
 
 /**
+ * Real, single-call SPL mint metadata via Jupiter's own token indexer
+ * (lite-api.jup.ag — the free tier, no API key needed, same host
+ * Jupiter's own swap UI reads from) — decimals, symbol, and the token
+ * program (Token vs Token-2022) all resolved by whoever indexed the
+ * mint, not guessed here. Preferred over fetchSplMintDecimals/
+ * fetchSplTokenSymbol below for anything Jupiter has indexed: Jupiter
+ * IS Solana's primary swap aggregator, so a token with real trading
+ * activity being absent from its own index is rare, and one indexer
+ * call is more reliable than a raw RPC read against either of
+ * solanaRpcUrls()' two free public endpoints (no dedicated Solana RPC
+ * key configured here — see solanaRpc.js's own comment), which can be
+ * slow or rate-limited under load. Throws (never fabricates) for a
+ * mint Jupiter hasn't indexed yet — callers fall back to the on-chain
+ * path below for that case.
+ */
+export async function fetchSplTokenMetadataJupiter(mintAddress) {
+  const key = `solana-jup:${mintAddress}`;
+  if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
+  const res = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mintAddress)}`);
+  if (!res.ok) throw new Error("Jupiter token lookup failed.");
+  const data = await res.json().catch(() => null);
+  const matched = Array.isArray(data) ? data.find((t) => t.id === mintAddress) : null;
+  if (!matched || typeof matched.decimals !== "number" || !matched.symbol) {
+    throw new Error("Not indexed by Jupiter yet.");
+  }
+  const result = { symbol: matched.symbol.toUpperCase(), decimals: matched.decimals, name: matched.name || matched.symbol };
+  tokenMetadataCache.set(key, result);
+  return result;
+}
+
+/**
  * Real on-chain decimals for a user-pasted SPL mint address. SPL mints
  * carry no on-chain symbol/name (that lives in an optional, separate
  * Metaplex metadata account this project doesn't parse) — the caller

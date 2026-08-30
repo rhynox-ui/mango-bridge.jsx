@@ -29,7 +29,7 @@ import { ChainBadge } from "./chainBadges.jsx";
 import { MangoLogo } from "./MangoLogo.jsx";
 import { parseUnits, formatUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
-import { fetchErc20TokenMetadata, fetchSplMintDecimals, fetchSplTokenSymbol } from "./wallet/walletRpc.js";
+import { fetchErc20TokenMetadata, fetchSplMintDecimals, fetchSplTokenSymbol, fetchSplTokenMetadataJupiter } from "./wallet/walletRpc.js";
 import { loadCustomTokens, addCustomToken } from "./wallet/customTokens.js";
 import { PublicKey } from "@solana/web3.js";
 import { useSolanaWallet } from "./SolanaWalletContext.jsx";
@@ -1092,23 +1092,53 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
     let cancelled = false;
     setFetching(true);
     if (isSolanaChain) {
-      fetchSplMintDecimals(trimmedQuery)
-        .then((decimals) => {
+      // Jupiter's own token indexer first — one call returns decimals,
+      // symbol, AND the real token program (Token vs Token-2022) for
+      // anything it's indexed, which is virtually every token with real
+      // trading activity (Jupiter IS Solana's primary swap aggregator,
+      // so a tradeable token being absent from its own index is rare).
+      // Two real reliability wins over the old RPC-first path: no
+      // dependence on either of solanaRpcUrls()' two free public
+      // endpoints being up/unthrottled right now, and no separate
+      // Token-2022 owner-program guess (fetchSplMintDecimals's own
+      // fallback below still needs one, since raw RPC has no other way
+      // to know) — Jupiter already resolved that when it indexed the
+      // mint. Falls back to the original on-chain decimals +
+      // DexScreener symbol two-step for anything genuinely too new for
+      // Jupiter to have indexed yet, or if Jupiter itself is
+      // unreachable — same graceful-degradation shape as before.
+      // A plain async function (not a chained .then/.catch tower) so
+      // the fallback path's own async work is genuinely awaited before
+      // setFetching(false) below runs — a chained-promise version of
+      // this that doesn't `return` its nested fallback call resolves
+      // and clears the loading state before the fallback actually
+      // finishes, a real ordering bug worth avoiding here.
+      (async () => {
+        try {
+          const { symbol, decimals } = await fetchSplTokenMetadataJupiter(trimmedQuery);
+          if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery, mint: trimmedQuery });
+          return;
+        } catch {
+          // Not indexed by Jupiter (or Jupiter unreachable) — fall through.
+        }
+        if (cancelled) return;
+        try {
+          const decimals = await fetchSplMintDecimals(trimmedQuery);
           if (cancelled) return;
           // Decimals confirm this is a real mint — try the live symbol
           // lookup next, but a miss there (no DexScreener-indexed pair,
           // very common for a pump.fun token pre-graduation) falls back
           // to manual entry instead of blocking the add entirely.
-          fetchSplTokenSymbol(trimmedQuery)
-            .then(({ symbol }) => { if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery, mint: trimmedQuery }); })
-            .catch(() => { if (!cancelled) setSplDecimals(decimals); })
-            .finally(() => { if (!cancelled) setFetching(false); });
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          setFetchError(err?.message || "Couldn't verify this mint — check the address and network.");
-          setFetching(false);
-        });
+          try {
+            const { symbol } = await fetchSplTokenSymbol(trimmedQuery);
+            if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery, mint: trimmedQuery });
+          } catch {
+            if (!cancelled) setSplDecimals(decimals);
+          }
+        } catch (err) {
+          if (!cancelled) setFetchError(err?.message || "Couldn't verify this mint — check the address and network.");
+        }
+      })().finally(() => { if (!cancelled) setFetching(false); });
     } else {
       fetchErc20TokenMetadata(chainId, trimmedQuery)
         .then(({ symbol, decimals }) => { if (!cancelled) setFetchedToken({ symbol, decimals, address: trimmedQuery }); })
