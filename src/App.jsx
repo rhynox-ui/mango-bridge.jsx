@@ -31,6 +31,7 @@ import { parseUnits, formatUnits, isAddress } from "viem";
 import { fetchAllEvmBalances, fetchSolanaBalance } from "./multiAssetBalances.js";
 import { fetchErc20TokenMetadata, fetchSplMintDecimals, fetchSplTokenSymbol, fetchSplTokenMetadataJupiter } from "./wallet/walletRpc.js";
 import { loadCustomTokens, addCustomToken } from "./wallet/customTokens.js";
+import { getTradeQuote, buyTokenReal, sellTokenReal } from "./launchpad-contracts.js";
 import { PublicKey } from "@solana/web3.js";
 import { useSolanaWallet } from "./SolanaWalletContext.jsx";
 import {
@@ -1773,6 +1774,62 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
       } else if (kind === "relay") {
         const decimals = fromCustom ? fromCustom.decimals : ASSET_ONCHAIN_DECIMALS[asset];
         const totalBaseUnits = parseUnits(amount, decimals);
+
+        // Real root cause, found by tracing why "buy succeeds, sell
+        // gets stuck" kept recurring on Robinhood Chain even after
+        // adding OKX and improving the fallback error messages: a
+        // token launched through this app's OWN Launchpad trades
+        // through a Uniswap v4 pool with a CUSTOM hook
+        // (MangoLaunchHook — a dynamic, asymmetric anti-dump fee, see
+        // launchpad-contracts.js's own HOOK_BUY_FEE_BPS/
+        // HOOK_EARLY_SELL_FEE_BPS comment: 1% buy, 4% sell
+        // pre-graduation). Relay and every fallback aggregator tried
+        // below (1inch/0x/OKX/KyberSwap) only know how to price and
+        // route through well-known, generic pool shapes — none of
+        // them has ever indexed this specific bespoke hook, so none
+        // can correctly simulate a swap through it. A buy sometimes
+        // still slips through by coincidence; a sell — which the hook
+        // deliberately makes more complex pre-graduation — reliably
+        // can't, no matter which of the 5 total routes attempts it.
+        // The one path that genuinely understands this hook is
+        // Mango's own Router (buyTokenReal/sellTokenReal — the exact
+        // functions the Launchpad page's own Buy/Sell UI already uses
+        // successfully). Tried first, ONLY for a same-chain Robinhood
+        // Chain trade directly against native ETH (this Router has no
+        // concept of any other quote asset) — getTradeQuote is a
+        // read-only probe: if the address isn't a real deployed
+        // Launchpad pool, its own getSlot0/getLiquidity reads revert,
+        // and this falls through to the normal Relay path below
+        // completely unchanged for every other token/chain/pair.
+        if (from === "robinhood" && to === "robinhood") {
+          const launchpadTokenAddress =
+            asset === "ETH" && toCustom?.address ? toCustom.address :
+            toAsset === "ETH" && fromCustom?.address ? fromCustom.address :
+            null;
+          if (launchpadTokenAddress) {
+            const side = asset === "ETH" ? "buy" : "sell";
+            let isLaunchpadPool = false;
+            try {
+              await getTradeQuote({ tokenAddress: launchpadTokenAddress, side, amountIn: totalBaseUnits });
+              isLaunchpadPool = true;
+            } catch {
+              // Not a real Mango Launchpad pool for this address (or the
+              // probe read itself failed) — fall through to Relay below,
+              // exactly as before this fix.
+            }
+            if (isLaunchpadPool) {
+              setStepIndex(0);
+              const result = side === "buy"
+                ? await buyTokenReal({ tokenAddress: launchpadTokenAddress, ethAmount: amount, recipient: account })
+                : await sellTokenReal({ tokenAddress: launchpadTokenAddress, tokenAmountWei: totalBaseUnits, recipient: account });
+              setRealBurnHash(result.hash);
+              setStepIndex(steps.length);
+              setPhase("done");
+              onComplete(result.hash);
+              return;
+            }
+          }
+        }
 
         // Real fix, same as the Solana-sourced path above: getRelayQuote
         // now attaches the fee via Relay's own appFees mechanism (see
@@ -3656,7 +3713,37 @@ export default function MangoBridge() {
       try {
         const decimals = onchainDecimalsForAsset(fromAsset);
         if (!decimals) throw new Error(`No decimals known for ${fromAsset.symbol} — can't safely build an amount.`);
-        const amountBaseUnits = parseUnits(amount, decimals).toString();
+        const amountBaseUnitsBig = parseUnits(amount, decimals);
+        const amountBaseUnits = amountBaseUnitsBig.toString();
+
+        // Same real root cause as BridgeModal's own execute-time check
+        // (see that call site's own comment for the full explanation:
+        // a Launchpad-launched token trades through a custom Uniswap
+        // v4 hook that Relay and every fallback provider can't price).
+        // Mirrored here so the PREVIEW recognizes it too, instead of
+        // showing "No price estimate yet" and leaving the Swap button
+        // disabled while Relay/fallback quotes — which can never
+        // succeed against this specific pool — keep failing behind the
+        // scenes.
+        if (from === "robinhood" && to === "robinhood") {
+          const launchpadTokenAddress =
+            fromAsset.symbol === "ETH" && toAsset.address ? toAsset.address :
+            toAsset.symbol === "ETH" && fromAsset.address ? fromAsset.address :
+            null;
+          if (launchpadTokenAddress) {
+            const side = fromAsset.symbol === "ETH" ? "buy" : "sell";
+            try {
+              const { estimatedAmountOut } = await getTradeQuote({ tokenAddress: launchpadTokenAddress, side, amountIn: amountBaseUnitsBig });
+              applyOkQuote(null, { provider: "launchpad", buyAmount: estimatedAmountOut.toString() });
+              return;
+            } catch {
+              // Not a real Launchpad pool for this address — fall
+              // through to the normal Relay/fallback checks below,
+              // exactly as before this fix.
+            }
+          }
+        }
+
         const originAmountUsd = fromAsset.price > 0 ? amtNum * fromAsset.price : undefined;
         const quoteParams = {
           fromChainKey: from, toChainKey: to,
