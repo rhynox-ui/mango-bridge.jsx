@@ -40,13 +40,27 @@ function getRedis() {
 }
 
 const EVM_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+// Twitter-style handle: letters/digits/underscore only, 3-20 chars —
+// short enough to fit comfortably in a shared link, long enough to rule
+// out near-total collisions. Case-insensitive for uniqueness/lookup
+// (handleKey below always lowercases), but the user's own chosen casing
+// is preserved for display (setHandle stores the raw value it's given).
+const HANDLE_RE = /^[a-zA-Z0-9_]{3,20}$/;
 
 export function isValidAddress(address) {
   return typeof address === "string" && EVM_ADDRESS_RE.test(address);
 }
 
+export function isValidHandle(handle) {
+  return typeof handle === "string" && HANDLE_RE.test(handle);
+}
+
 function referralKey(address) {
   return `referral:${address.toLowerCase()}`;
+}
+
+function handleKey(handle) {
+  return `referral-handle:${handle.toLowerCase()}`;
 }
 
 export async function getReferralStats(address) {
@@ -60,11 +74,52 @@ export async function getReferralStats(address) {
     points: Number(record?.points || 0),
     referralCount: Number(record?.referralCount || 0),
     referredBy: record?.referredBy || null,
+    handle: record?.handle || null,
     // So the dashboard can show accurate "already claimed today" state
     // on load, without needing the user to tap Claim first just to
     // discover it's on cooldown.
     dailyCooldownSeconds: dailyLockTtl > 0 ? dailyLockTtl : 0,
   };
+}
+
+/**
+ * Claims a custom referral handle for `address` — a friendlier,
+ * memorable stand-in for a raw 0x address in a shared invite link.
+ * Strictly 1-to-1 and immutable once set (same "Twitter-style" real
+ * uniqueness requested, minus rename support — a rename would need to
+ * atomically release the old reverse-lookup key too, a real additional
+ * failure mode not worth taking on until renaming is actually asked
+ * for): an address that already has one is rejected outright rather
+ * than silently overwriting it.
+ *
+ * The actual uniqueness guarantee is `client.set(..., {nx: true})` on
+ * the reverse-lookup key below — same atomic-claim pattern
+ * claimReferral's own HSETNX/claimDailyPoints's own SET-NX already
+ * establish in this file: only the first caller to reach it for a given
+ * handle ever succeeds, even under concurrent duplicate requests, so
+ * this is a real guarantee, not just an application-level check.
+ */
+export async function setHandle(address, handle) {
+  const client = getRedis();
+  const existing = await client.hget(referralKey(address), "handle");
+  if (existing) {
+    return { ok: false, reason: "already-set", handle: existing };
+  }
+
+  const claimed = await client.set(handleKey(handle), address.toLowerCase(), { nx: true });
+  if (!claimed) {
+    return { ok: false, reason: "taken" };
+  }
+
+  await client.hset(referralKey(address), { handle });
+  return { ok: true, handle };
+}
+
+/** Resolves a claimed handle to its underlying wallet address, or null if nothing's claimed it. */
+export async function resolveHandle(handle) {
+  const client = getRedis();
+  const address = await client.get(handleKey(handle));
+  return address || null;
 }
 
 /**
@@ -143,15 +198,21 @@ export async function claimDailyPoints(address) {
 /**
  * Removes every server-side key this store ever writes for `address` —
  * the real, automated version of the manual email-request flow
- * (app-delete-data.html). Three keys, all namespaced by this exact
+ * (app-delete-data.html). Four keys, all namespaced by this exact
  * address:
  *  - `referral:<address>` — the main hash (points, referralCount,
- *    referredBy, the one-time claimed flag, createdAt).
+ *    referredBy, handle, the one-time claimed flag, createdAt).
  *  - `daily-claim-lock:<address>` — their own check-in cooldown lock.
  *  - `referral-daily:<address>:<today>` — today's count of referrals
  *    THEY made as a referrer, if any. Past days' equivalents are
  *    already gone (DAILY_KEY_TTL_SECONDS self-expires them), so only
  *    today's can still exist to delete.
+ *  - `referral-handle:<handle>` — their claimed handle's reverse-lookup
+ *    entry, if they ever set one. Read from the main hash BEFORE it's
+ *    deleted, since the reverse key is keyed by handle text, not
+ *    address — without releasing this, a deleted account's handle would
+ *    stay permanently squatted, unclaimable even by the same person
+ *    re-onboarding with a fresh wallet.
  * Deliberately does NOT touch other addresses' `referredBy` pointers —
  * a referral this address made stays a real, already-happened event in
  * the referrer's own ledger (referralCount/points already credited);
@@ -162,10 +223,12 @@ export async function claimDailyPoints(address) {
 export async function deleteReferralRecord(address) {
   const client = getRedis();
   const today = new Date().toISOString().slice(0, 10);
+  const handle = await client.hget(referralKey(address), "handle");
   await Promise.all([
     client.del(referralKey(address)),
     client.del(`daily-claim-lock:${address.toLowerCase()}`),
     client.del(`referral-daily:${address.toLowerCase()}:${today}`),
+    ...(handle ? [client.del(handleKey(handle))] : []),
   ]);
   return { deleted: true };
 }
@@ -203,6 +266,7 @@ export async function listAllReferralRecords() {
         points: Number(record.points || 0),
         referralCount: Number(record.referralCount || 0),
         referredBy: record.referredBy || null,
+        handle: record.handle || null,
         createdAt: record.createdAt ? Number(record.createdAt) : null,
       });
     });
