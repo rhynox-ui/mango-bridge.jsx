@@ -3065,6 +3065,14 @@ export default function MangoBridge() {
   const activeSolanaAddress = solanaWallet.address || appKitSolana.address;
   const activeAccount = isFromSolana ? activeSolanaAddress : address;
   const connected = isFromSolana ? !!activeSolanaAddress : isConnected;
+  // Symmetric requirement: Solana involved on EITHER side needs its own
+  // real connection before a valid recipient can even be determined —
+  // not just when it's the source. Moved up here (from further down,
+  // where canBridge/the CTA already used these) so the route-check
+  // effect below can reuse the exact same, already-correct condition —
+  // see that effect's own comment on the real bug this fixes.
+  const needsEvmAddressForSolanaSource = isFromSolana && !CHAINS[to]?.isSolana && !sendToOther && !address;
+  const needsSolanaAddressForSolanaDest = CHAINS[to]?.isSolana && !isFromSolana && !sendToOther && !activeSolanaAddress;
 
   // BridgeModal reads solanaWallet.solanaProvider.current for real
   // Solana-sourced execution (see relaySdkSolanaExecution.js). When OKX
@@ -3318,7 +3326,22 @@ export default function MangoBridge() {
   // quote-to-quote — once discovered, it's discovered for good.
   const [discoveredAssetLogos, setDiscoveredAssetLogos] = useState({});
   useEffect(() => {
-    if (kind !== "relay" || amtNum <= 0 || !connected || !address || (CHAINS[to]?.isSolana && !sendToOther && !activeSolanaAddress)) {
+    // Real bug fix: this used to gate on the raw EVM `address` being
+    // truthy, unconditionally — even for a pure Solana-to-Solana swap
+    // that never touches EVM at all (recipientAddress below only ever
+    // reads `address` when the destination is EVM and the source is
+    // Solana; a Solana destination always uses activeSolanaAddress
+    // instead, regardless of origin). With only a Solana wallet
+    // connected — never an EVM one — that stray requirement meant this
+    // effect stayed "idle" forever for a custom-token Solana swap: no
+    // live quote was ever fetched, so the "You receive" preview never
+    // got past its own no-price-known fallback (see `received`'s own
+    // comment above) even though the actual quote request never needed
+    // an EVM address in the first place. Reuses the exact same,
+    // already-correct needsEvmAddressForSolanaSource/
+    // needsSolanaAddressForSolanaDest the CTA's own canBridge already
+    // relies on, instead of a separate, wrong ad-hoc check.
+    if (kind !== "relay" || amtNum <= 0 || !connected || needsEvmAddressForSolanaSource || needsSolanaAddressForSolanaDest) {
       setRouteCheck({ status: "idle" });
       return;
     }
@@ -3375,7 +3398,7 @@ export default function MangoBridge() {
       }
     }, 600); // debounce so we don't fire a request per keystroke
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [kind, amtNum, connected, address, from, to, fromAsset.symbol, toAsset.symbol, amount]);
+  }, [kind, amtNum, connected, address, needsEvmAddressForSolanaSource, needsSolanaAddressForSolanaDest, from, to, fromAsset.symbol, toAsset.symbol, amount]);
   const routeUnavailable = kind === "relay" && routeCheck.status === "unavailable";
   const routeChecking = kind === "relay" && routeCheck.status === "checking";
   // The real quote routeCheck above just fetched — see summarizeQuote's
@@ -3437,11 +3460,6 @@ export default function MangoBridge() {
   const gasReserve = GAS_RESERVE[fromAsset.symbol] ?? 0;
   const spendableBalance = availableBalance !== null ? Math.max(availableBalance - gasReserve, 0) : null;
   const insufficient = usingLiveBalance && spendableBalance !== null && amtNum > spendableBalance;
-  // Symmetric requirement: Solana involved on EITHER side needs its own
-  // real connection before a valid recipient can even be determined —
-  // not just when it's the source.
-  const needsEvmAddressForSolanaSource = isFromSolana && !CHAINS[to]?.isSolana && !sendToOther && !address;
-  const needsSolanaAddressForSolanaDest = CHAINS[to]?.isSolana && !isFromSolana && !sendToOther && !activeSolanaAddress;
   // Bridge requires two different chains (that's what makes it a
   // bridge); Swap requires the same chain but two different assets
   // (that's what makes it a trade — same-asset same-chain is a no-op).
