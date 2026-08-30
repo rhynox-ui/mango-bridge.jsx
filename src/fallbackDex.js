@@ -105,6 +105,35 @@ async function executeFallbackQuote({ chainId, account, sellTokenAddress, quote 
 }
 
 /**
+ * Quote-only version of the same provider loop — real bug fix, live-
+ * confirmed: App.jsx's own pre-confirm routeCheck preview only ever
+ * tried a single normal-fee Relay quote, and disabled the Swap button
+ * entirely the moment that one failed ("No route available for this
+ * trade"), before the user could ever tap Confirm — meaning the WHOLE
+ * fallback chain below (tryFallbackProviders, 0%-fee retry) was
+ * unreachable from the actual UI regardless of whether a fallback
+ * route genuinely existed. This lets that preview check the SAME real
+ * providers without executing anything (no approve, no swap
+ * transaction) — just whether any of them can actually quote this
+ * pair — so the button only stays disabled when NO route exists
+ * anywhere, not just when Relay's own normal-fee quote happens to fail
+ * first.
+ */
+export async function hasFallbackRoute({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd }) {
+  for (const provider of FALLBACK_PROVIDERS) {
+    try {
+      await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
+      return true;
+    } catch {
+      // Try the next provider — same "no route from this one, not
+      // necessarily no route at all" reasoning tryFallbackProviders
+      // itself already uses.
+    }
+  }
+  return false;
+}
+
+/**
  * Tries each fallback provider in FALLBACK_PROVIDERS order, returning
  * the first one that actually quotes AND executes successfully. Throws
  * an aggregate error (every provider's own failure reason) only once

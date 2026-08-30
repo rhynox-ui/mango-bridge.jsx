@@ -75,7 +75,7 @@ import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithd
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
 import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, ASSET_ONCHAIN_DECIMALS } from "./relaybridge.js";
-import { tryFallbackProviders } from "./fallbackDex.js";
+import { tryFallbackProviders, hasFallbackRoute } from "./fallbackDex.js";
 import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
 import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL, WALLET_ONLY_EVM_CHAINS } from "./wallet/walletChains.js";
@@ -3530,11 +3530,35 @@ export default function MangoBridge() {
     let cancelled = false;
     setRouteCheck({ status: "checking" });
     const timer = setTimeout(async () => {
+      // Real fix: this used to be a bare await with the response
+      // discarded — see summarizeQuote's own comment. The quote itself
+      // is kept here so the fee/ETA/received preview below can show
+      // Relay's real numbers instead of a static estimate.
+      function applyOkQuote(quote) {
+        if (cancelled) return;
+        setRouteCheck({ status: "ok", quote });
+        if (!quote) return;
+        const logoUpdates = extractLogoUpdates(quote);
+        if (Object.keys(logoUpdates).length > 0) {
+          setDiscoveredAssetLogos((prev) => {
+            // Skip the update entirely (same object reference back)
+            // when nothing's actually new — every symbol already known
+            // maps to the exact same URL — so this doesn't trigger an
+            // extra re-render on every single quote tick once a
+            // symbol's logo has already been discovered once.
+            const changed = Object.entries(logoUpdates).some(([sym, url]) => prev[sym] !== url);
+            return changed ? { ...prev, ...logoUpdates } : prev;
+          });
+        }
+      }
+
+      let firstErr;
       try {
         const decimals = onchainDecimalsForAsset(fromAsset);
         if (!decimals) throw new Error(`No decimals known for ${fromAsset.symbol} — can't safely build an amount.`);
         const amountBaseUnits = parseUnits(amount, decimals).toString();
-        const quote = await getRelayQuote({
+        const originAmountUsd = fromAsset.price > 0 ? amtNum * fromAsset.price : undefined;
+        const quoteParams = {
           fromChainKey: from, toChainKey: to,
           fromAsset: fromAsset.symbol, toAsset: toAsset.symbol,
           // Same override reasoning as the execution path in BridgeModal
@@ -3555,36 +3579,62 @@ export default function MangoBridge() {
           // address as the recipient, not whichever wallet happens to
           // be the "account" for the source side.
           recipientAddress: sendToOther ? destAddress : (CHAINS[to]?.isSolana ? activeSolanaAddress : (isFromSolana ? address : activeAccount)),
-          // Real, verified USD estimate — same reasoning as BridgeModal's
-          // own originAmountUsd prop above (fromAsset.price > 0 only for
-          // a built-in, real-priced asset; 0 is this file's own cosmetic
-          // sentinel for a custom token). Lets appFeeBps (devFeeWallets.js)
-          // apply the $50 fee cap on a real large trade in this preview
-          // quote too, not just at actual execution time.
-          originAmountUsd: fromAsset.price > 0 ? amtNum * fromAsset.price : undefined,
-        });
-        // Real fix: this used to be a bare await with the response
-        // discarded — see summarizeQuote's own comment. The quote
-        // itself is kept here so the fee/ETA/received preview below
-        // can show Relay's real numbers instead of a static estimate.
-        if (!cancelled) {
-          setRouteCheck({ status: "ok", quote });
-          const logoUpdates = extractLogoUpdates(quote);
-          if (Object.keys(logoUpdates).length > 0) {
-            setDiscoveredAssetLogos((prev) => {
-              // Skip the update entirely (same object reference back)
-              // when nothing's actually new — every symbol already
-              // known maps to the exact same URL — so this doesn't
-              // trigger an extra re-render on every single quote tick
-              // once a symbol's logo has already been discovered once.
-              const changed = Object.entries(logoUpdates).some(([sym, url]) => prev[sym] !== url);
-              return changed ? { ...prev, ...logoUpdates } : prev;
+        };
+        try {
+          const quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
+          applyOkQuote(quote);
+          return;
+        } catch (err) {
+          firstErr = err;
+        }
+        // Real bug fix, live-confirmed: this preview used to stop right
+        // here and disable the Swap button — "No available route for
+        // this trade" — the instant the FIRST attempt above failed,
+        // even though BridgeModal's own execute path (below) already
+        // has a real fallback chain for exactly this case (a normal-fee
+        // quote failing doesn't mean no route exists at all). That made
+        // the whole fallback chain unreachable: the button never became
+        // tappable, so Confirm — the only place that chain ever ran —
+        // could never fire. Mirrors BridgeModal's own three-tier order
+        // here too, same-chain Swap only (from === to — Bridge always
+        // has from !== to, so this never fires there).
+        if (from === to) {
+          try {
+            const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
+            applyOkQuote(quote);
+            return;
+          } catch {
+            // Falls through to the fallback-provider check below.
+          }
+          try {
+            const sellTokenAddress = fromAsset.custom ? fromAsset.address : resolveCurrency(from, fromAsset.symbol);
+            const buyTokenAddress = toAsset.custom ? toAsset.address : resolveCurrency(to, toAsset.symbol);
+            const available = await hasFallbackRoute({
+              chainId: resolveChainId(from),
+              sellToken: sellTokenAddress,
+              buyToken: buyTokenAddress,
+              sellAmount: amountBaseUnits,
+              takerAddress: activeAccount,
+              originAmountUsd,
             });
+            if (available) {
+              // No Relay-shaped quote to show — the fee/ETA/received
+              // preview below already falls back to its own static
+              // per-chain estimate whenever routeCheck has no live
+              // quote (see its own comment), which is exactly right
+              // here: a route DOES exist, just not one this preview can
+              // show real numbers for without actually executing it.
+              applyOkQuote(null);
+              return;
+            }
+          } catch {
+            // No fallback route either — falls through to unavailable.
           }
         }
       } catch (err) {
-        if (!cancelled) setRouteCheck({ status: "unavailable", message: err?.message || String(err) });
+        firstErr = err;
       }
+      if (!cancelled) setRouteCheck({ status: "unavailable", message: firstErr?.message || String(firstErr) });
     }, 600); // debounce so we don't fire a request per keystroke
     return () => { cancelled = true; clearTimeout(timer); };
   }, [kind, amtNum, connected, address, needsEvmAddressForSolanaSource, needsSolanaAddressForSolanaDest, from, to, fromAsset.symbol, toAsset.symbol, amount]);
