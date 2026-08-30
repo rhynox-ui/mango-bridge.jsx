@@ -76,7 +76,7 @@ async function fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sell
   return json.data;
 }
 
-async function executeFallbackQuote({ chainId, account, sellTokenAddress, quote }) {
+async function executeFallbackQuote({ chainId, account, sellTokenAddress, quote, onSwapHashKnown }) {
   if (quote.allowanceTarget) {
     const currentAllowance = await readContract(config, {
       address: sellTokenAddress,
@@ -105,6 +105,15 @@ async function executeFallbackQuote({ chainId, account, sellTokenAddress, quote 
     ...(quote.gas ? { gas: BigInt(quote.gas) } : {}),
     chainId,
   });
+  // Real gap this closes: the caller previously only ever learned this
+  // hash once waitForTransactionReceipt below had ALREADY resolved —
+  // meaning if the tab closed, or the RPC was slow to see the receipt,
+  // during that wait, the app had zero record anywhere that a real
+  // swap transaction had already broadcast. Same category of fix as
+  // App.jsx's own onPendingHash (BridgeModal) for the Relay path —
+  // reports the hash the moment it's actually known, not just once
+  // everything's confirmed.
+  onSwapHashKnown?.(swapHash);
   await waitForTransactionReceipt(config, { hash: swapHash, chainId });
   return { hash: swapHash };
 }
@@ -155,7 +164,7 @@ export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmo
  * ORIGINAL Relay error to show instead, since this whole path only
  * ever runs after that one failed first.
  */
-export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd }) {
+export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, onSwapHashKnown }) {
   const failures = [];
   for (const provider of FALLBACK_PROVIDERS) {
     try {
@@ -165,6 +174,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         account: takerAddress,
         sellTokenAddress: sellToken,
         quote: { ...quote, sellAmount },
+        onSwapHashKnown,
       });
       return { provider, hash: result.hash, buyAmount: quote.buyAmount, feeCollectedInline: !!quote.feeCollectedInline };
     } catch (err) {
