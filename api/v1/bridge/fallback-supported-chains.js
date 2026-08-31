@@ -69,6 +69,7 @@ export default async function handler(request, response) {
     // Not configured — same "fail closed, not fail loud" choice as a
     // fetch failure below. This endpoint's only job is to ADD chains
     // to what Relay already offers, never to be a hard dependency.
+    console.error("[fallback-supported-chains] OKX credentials not configured (OKX_API_KEY/OKX_SECRET_KEY/OKX_PASSPHRASE) — returning empty list.");
     return response.status(200).json({ okx: [] });
   }
 
@@ -84,10 +85,13 @@ export default async function handler(request, response) {
       },
     });
     if (!upstream.ok) {
+      const text = await upstream.text().catch(() => "");
+      console.error(`[fallback-supported-chains] OKX request failed: ${upstream.status} ${text.slice(0, 500)}`);
       return response.status(200).json({ okx: [] });
     }
     const json = await upstream.json();
     if (json?.code !== "0" || !Array.isArray(json?.data)) {
+      console.error(`[fallback-supported-chains] OKX response shape unexpected: ${JSON.stringify(json).slice(0, 500)}`);
       return response.status(200).json({ okx: [] });
     }
     const chainIds = json.data
@@ -96,7 +100,8 @@ export default async function handler(request, response) {
     cachedChainIds = chainIds;
     cachedAt = Date.now();
     return response.status(200).json({ okx: chainIds });
-  } catch {
+  } catch (err) {
+    console.error(`[fallback-supported-chains] OKX request threw: ${err?.message || err}`);
     return response.status(200).json({ okx: [] });
   }
 }
