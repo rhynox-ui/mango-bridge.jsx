@@ -330,6 +330,33 @@ export async function getTradeQuote({ tokenAddress, side, amountIn, slippagePerc
     getLaunchProgress({ poolId }),
   ]);
 
+  // Real bug fix, live-reported and root-caused: every caller of this
+  // function (the Swap preview effect and BridgeModal's own execute
+  // path) treats a successful (non-throwing) return as proof this IS a
+  // real, deployed Mango Launchpad pool for tokenAddress — exactly what
+  // this function's own header already documents relying on ("its own
+  // getSlot0/getLiquidity reads revert" for a non-pool address). That
+  // assumption was wrong: Solidity mappings default to zero for a key
+  // that was never written, so getSlot0/getLiquidity on the StateView
+  // contract return clean ZERO values for ANY address that was never
+  // actually launched through Mango's own Launchpad — they never
+  // revert — and simulateSwapOutput's own `liquidity <= 0n` guard then
+  // quietly returns 0n instead of throwing. The net effect: EVERY
+  // Robinhood Chain token, real Launchpad pool or not, was reported as
+  // a valid Launchpad trade with an estimated output of ~0, hijacking
+  // the entire trade (both preview and execution — buyTokenReal/
+  // sellTokenReal actually ran against the real, deployed
+  // LAUNCHPAD_ROUTER_ADDRESS) before Relay or this app's own Uniswap/
+  // PancakeSwap/SushiSwap fallback chain ever got a chance to run. The
+  // real, deployed Router DOES correctly validate on execution and
+  // reverts — which is the "Execution reverted 0xa64950f8..." error
+  // this was live-reported with — but by then the real fallback
+  // providers had already been skipped entirely. Throwing here
+  // restores the exact behavior every caller already assumed.
+  if (liquidity === 0n) {
+    throw new Error(`No Launchpad pool exists for ${tokenAddress} on Robinhood Chain.`);
+  }
+
   const currentSqrtPriceX96 = slot0[0];
   const slippageFactor = slippagePercent / 100;
 
