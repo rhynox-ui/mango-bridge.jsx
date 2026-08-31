@@ -150,6 +150,46 @@ export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvid
       RELAY_SOLANA_CHAIN_ID,
       connection,
       async (transaction) => {
+        // Real fix, live-reported: a Solana same-chain swap of an SPL
+        // token failed on-chain with "Transfer: insufficient lamports
+        // 36723514, need 72323388" — the wallet had plenty of the
+        // TOKEN being sold but not enough native SOL for this specific
+        // route's real fee/rent requirement. That only ever surfaced
+        // AFTER the wallet had already been asked to sign — a wasted
+        // signature prompt for a transaction that was always going to
+        // fail, with a raw program-log dump as the only explanation.
+        // Simulating first (unsigned — sigVerify defaults to false)
+        // catches the exact same failure Solana's own preflight would
+        // anyway, just before the sign prompt instead of after it, with
+        // a real, parsed message instead of a log dump. Any OTHER
+        // simulation failure (not a recognized "insufficient lamports"
+        // shape) still blocks — better than letting a doomed
+        // transaction reach the wallet at all.
+        try {
+          const sim = await connection.simulateTransaction(transaction, { commitment: "confirmed" });
+          if (sim.value.err) {
+            const logs = sim.value.logs || [];
+            const lamportsLog = logs.find((l) => /insufficient lamports/i.test(l));
+            const lamportsMatch = lamportsLog?.match(/insufficient lamports (\d+), need (\d+)/i);
+            if (lamportsMatch) {
+              const haveSol = Number(lamportsMatch[1]) / 1e9;
+              const needSol = Number(lamportsMatch[2]) / 1e9;
+              throw new Error(`This route needs ~${needSol.toFixed(4)} SOL for network fees/rent, but this wallet only has ~${haveSol.toFixed(4)} SOL. Add more SOL and try again.`);
+            }
+            throw new Error(`This trade's route can't execute (simulation failed: ${JSON.stringify(sim.value.err)}). Try a smaller amount, or a different pair.`);
+          }
+        } catch (simErr) {
+          // Only a message THIS block itself threw (the two cases
+          // above) should actually block the trade — a simulateTransaction
+          // call that errors for an unrelated reason (RPC hiccup, a
+          // method it doesn't support) isn't proof the real transaction
+          // would fail, so it falls through to the real sign+send path
+          // exactly as before this fix, same "don't block on what we
+          // can't verify" rule this app already follows elsewhere.
+          if (simErr instanceof Error && /^This (route needs|trade's route can't execute)/.test(simErr.message)) {
+            throw simErr;
+          }
+        }
         // Real bug fix, confirmed against OKX's own installed source code
         // (solana-provider's getRealChainId function): it only accepts
         // strings starting with "svm" or ones in its own hardcoded caip

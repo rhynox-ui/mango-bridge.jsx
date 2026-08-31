@@ -1986,10 +1986,19 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // whatever the preview displayed.
         const execToDecimals = toCustom ? toCustom.decimals : assetDecimalsForChain(to, toAsset);
         const execAmtNum = Math.max(0, parseFloat(amount) || 0);
+        // Real bug fix, live-reported (Stable -> Ethereum bridge showing
+        // "0.0000"/"next to nothing" and still letting the trade
+        // through): this used to only ever apply to Swap (from === to)
+        // — a genuine cross-chain Bridge quote that rounds to zero was
+        // accepted and executed as-is, no different from a real trade.
+        // There's no same-chain DEX fallback for a cross-chain Bridge
+        // (nothing to swap through Uniswap for), but the check itself —
+        // "don't accept a technically-successful quote that's actually
+        // worthless" — applies just as much there as it does to Swap.
         function execQuoteRoundsToZero(q) {
           try {
             const r = summarizeQuote(q, execToDecimals).receivedAmount;
-            return from === to && r !== null && execAmtNum > 0 && Number(r.toFixed(4)) === 0;
+            return r !== null && execAmtNum > 0 && Number(r.toFixed(4)) === 0;
           } catch {
             return false;
           }
@@ -2012,7 +2021,38 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           }
         } catch (firstErr) {
           if (from !== to) {
-            throw firstErr;
+            // Bridge: no same-chain DEX fallback exists (a cross-chain
+            // trade has nothing to swap through Uniswap for), but the
+            // same fee-margin theory Swap's own retry below is built on
+            // still applies — a thin/low-value cross-chain trade can
+            // fail to clear the solver's fill bar with the normal fee
+            // attached. One retry at 0% fee before surfacing the
+            // original error, rather than accepting whatever the
+            // normal-fee attempt returned (including a technically-
+            // "successful" quote that rounds to zero).
+            try {
+              quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
+              if (execQuoteRoundsToZero(quote)) {
+                throw new Error("Even the 0%-fee route for this pair returns next to nothing at the current rate.");
+              }
+            } catch {
+              throw firstErr;
+            }
+            const result = await executeRelayQuote({
+              quote,
+              onStep: (step) => {
+                if (typeof step === "object" && step.key === "hash-known") {
+                  setRealBurnHash(step.txHash);
+                  return;
+                }
+                if (step !== "done") setStepIndex(RELAY_STEP_INDEX[step] ?? 0);
+              },
+            });
+            setRealBurnHash(result.txHashes[0]);
+            setStepIndex(steps.length);
+            setPhase("done");
+            onComplete(result.txHashes[0]);
+            return;
           }
           try {
             if (execSkipRelayForRobinhood) {
@@ -4116,11 +4156,14 @@ export default function MangoBridge() {
             // PancakeSwap/etc. directly and might have the real route
             // Relay doesn't — never got a chance to run: a "successful"
             // quote short-circuited the whole fallback chain before it
-            // could even start. Same-chain only (from === to) — Bridge
-            // always has from !== to and has no same-chain DEX aggregator
-            // to fall back to anyway.
+            // could even start. Applies to Bridge too now (real bug fix,
+            // live-reported: a Stable -> Ethereum bridge showing
+            // "0.0000" used to be accepted here as a normal quote) — see
+            // the block below for what Bridge does differently once
+            // this trips (no same-chain DEX aggregator exists to
+            // substitute for a genuine cross-chain trade).
             const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
-            const relayRoundsToZero = from === to && relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
+            const relayRoundsToZero = relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
             if (!relayRoundsToZero) {
               applyOkQuote(quote);
               return;
@@ -4141,22 +4184,28 @@ export default function MangoBridge() {
         // the whole fallback chain unreachable: the button never became
         // tappable, so Confirm — the only place that chain ever ran —
         // could never fire. Mirrors BridgeModal's own three-tier order
-        // here too, same-chain Swap only (from === to — Bridge always
-        // has from !== to, so this never fires there).
-        if (from === to) {
-          if (!skipRelayForRobinhood) {
-            try {
-              const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
-              const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
-              const roundsToZero = relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
-              if (!roundsToZero) {
-                applyOkQuote(quote);
-                return;
-              }
-            } catch {
-              // Falls through to the fallback-provider check below.
+        // here too. Real bug fix: this 0%-fee retry now runs for Bridge
+        // too, not just Swap — the same fee-margin theory it's built on
+        // (a thin/low-value trade can fail to clear the solver's fill
+        // bar with the normal fee attached) isn't specific to same-chain
+        // trades. Only the fallback-provider check further below stays
+        // Swap-only, since there's no same-chain DEX aggregator to
+        // substitute for a genuine cross-chain Bridge.
+        if (!skipRelayForRobinhood) {
+          try {
+            const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
+            const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
+            const roundsToZero = relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
+            if (!roundsToZero) {
+              applyOkQuote(quote);
+              return;
             }
+          } catch {
+            // Falls through to the fallback-provider check below (Swap)
+            // or straight to "unavailable" (Bridge).
           }
+        }
+        if (from === to) {
           try {
             const sellTokenAddress = fromAsset.custom ? fromAsset.address : resolveCurrency(from, fromAsset.symbol);
             const buyTokenAddress = toAsset.custom ? toAsset.address : resolveCurrency(to, toAsset.symbol);
