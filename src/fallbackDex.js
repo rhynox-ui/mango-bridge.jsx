@@ -35,22 +35,35 @@ import { formatUnits } from "viem";
 import { readContract, writeContract, sendTransaction, waitForTransactionReceipt } from "wagmi/actions";
 import { config } from "./wagmi.js";
 import { appFeeBps, DEV_FEE_WALLET } from "./devFeeWallets.js";
+import { uniswapV3SupportsChain, quoteUniswapV3, executeUniswapV3Swap } from "./uniswapV3.js";
+import { uniswapV4SupportsChain, quoteUniswapV4, executeUniswapV4Swap } from "./uniswapV4.js";
+import { sushiswapV2SupportsChain, quoteSushiSwapV2, executeSushiSwapV2Swap } from "./sushiswapV2.js";
 
 const FALLBACK_QUOTE_URL = "/api/v1/bridge/fallback-quote";
 
-// Tried in this order — all four real, all fully wired. 1inch and 0x
-// first, both verified against a real account/live docs and needing
-// their own API key. okx third — live-confirmed working for the exact
-// real-world case this fallback chain exists for (a thin Base token
-// Relay couldn't route) and aggregates the broadest set of underlying
-// DEX sources of any provider here, but its own service fee (0.5%
-// on the trade that live-confirmed it, per its own UI) runs higher
-// than the others, so it's a later resort rather than the first one
-// tried. kyberswap last since it needs no key but its exact shape is
-// only verified against public docs, not a live account. Odos/ParaSwap
-// are still NOT listed — see fallback-quote.js's own header for the
-// real, specific reason each is still deliberately unwired.
-export const FALLBACK_PROVIDERS = ["1inch", "0x", "okx", "kyberswap"];
+// Tried in this order — ported from mango-mobile's own fallbackDex.js
+// per this repo's own SAS.md durable instruction ("every treatment
+// applies to both repos"): uniswap-v4/uniswap-v3/sushiswap-v2 lead,
+// same priority mobile settled on (Uniswap first, not just a
+// Robinhood-only last resort — none of the three depend on a
+// third-party API/key, so none can fail from an outage, rate limit, or
+// a bad key the way the four aggregators below genuinely can, and
+// they're the only providers here that support Robinhood Chain (4663)
+// at all). v4 before v3 since most Robinhood Chain tokens now launch
+// there (live-confirmed on mobile, 2026-08-31); sushiswap-v2 right
+// after both, same no-key shape. 1inch and 0x next, both verified
+// against a real account/live docs and needing their own API key. okx
+// after that — live-confirmed working for the exact real-world case
+// this fallback chain exists for (a thin Base token Relay couldn't
+// route) and aggregates the broadest set of underlying DEX sources of
+// any provider here, but its own service fee (0.5% on the trade that
+// live-confirmed it, per its own UI) runs higher than the others, so
+// it's a later resort rather than the first one tried. kyberswap last
+// since it needs no key but its exact shape is only verified against
+// public docs, not a live account. Odos/ParaSwap are still NOT listed
+// — see fallback-quote.js's own header for the real, specific reason
+// each is still deliberately unwired.
+export const FALLBACK_PROVIDERS = ["uniswap-v4", "uniswap-v3", "sushiswap-v2", "1inch", "0x", "okx", "kyberswap"];
 
 const ERC20_ALLOWANCE_ABI = [
   { type: "function", name: "allowance", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
@@ -146,6 +159,24 @@ async function executeFallbackQuote({ chainId, account, sellTokenAddress, quote,
 export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd }) {
   for (const provider of FALLBACK_PROVIDERS) {
     try {
+      if (provider === "uniswap-v4") {
+        if (!uniswapV4SupportsChain(chainId)) continue;
+        const best = await quoteUniswapV4({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
+        if (!best) continue;
+        return { provider, buyAmount: best.amountOut.toString() };
+      }
+      if (provider === "uniswap-v3") {
+        if (!uniswapV3SupportsChain(chainId)) continue;
+        const best = await quoteUniswapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
+        if (!best) continue;
+        return { provider, buyAmount: best.amountOut.toString() };
+      }
+      if (provider === "sushiswap-v2") {
+        if (!sushiswapV2SupportsChain(chainId)) continue;
+        const best = await quoteSushiSwapV2({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
+        if (!best) continue;
+        return { provider, buyAmount: best.amountOut.toString() };
+      }
       const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
       return { provider, buyAmount: quote.buyAmount ?? null };
     } catch {
@@ -156,6 +187,13 @@ export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmo
   }
   return null;
 }
+
+// 1% — same default tolerance the rest of this app applies elsewhere
+// when nothing more specific is available. Protects a Uniswap/
+// SushiSwap swap from landing far worse than quoted between the quote
+// call and the swap call below, without being so tight a normal price
+// move between those two calls fails it.
+const UNISWAP_SLIPPAGE_BPS = 100n;
 
 /**
  * Tries each fallback provider in FALLBACK_PROVIDERS order, returning
@@ -169,6 +207,62 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
   const failures = [];
   for (const provider of FALLBACK_PROVIDERS) {
     try {
+      if (provider === "uniswap-v4") {
+        if (!uniswapV4SupportsChain(chainId)) continue;
+        const sellAmountBig = BigInt(sellAmount);
+        const best = await quoteUniswapV4({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
+        if (!best) continue;
+        const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        const result = await executeUniswapV4Swap({
+          chainId,
+          account: takerAddress,
+          tokenIn: sellToken,
+          tokenOut: buyToken,
+          amountIn: sellAmountBig,
+          poolKey: best.poolKey,
+          zeroForOne: best.zeroForOne,
+          minAmountOut,
+        });
+        onSwapHashKnown?.(result.hash);
+        // No inline fee collection — same as this provider having no
+        // backend quote to carry a fee field on at all.
+        return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
+      }
+      if (provider === "uniswap-v3") {
+        if (!uniswapV3SupportsChain(chainId)) continue;
+        const sellAmountBig = BigInt(sellAmount);
+        const best = await quoteUniswapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
+        if (!best) continue;
+        const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        const result = await executeUniswapV3Swap({
+          chainId,
+          account: takerAddress,
+          tokenIn: sellToken,
+          tokenOut: buyToken,
+          amountIn: sellAmountBig,
+          fee: best.fee,
+          minAmountOut,
+        });
+        onSwapHashKnown?.(result.hash);
+        return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
+      }
+      if (provider === "sushiswap-v2") {
+        if (!sushiswapV2SupportsChain(chainId)) continue;
+        const sellAmountBig = BigInt(sellAmount);
+        const best = await quoteSushiSwapV2({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
+        if (!best) continue;
+        const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        const result = await executeSushiSwapV2Swap({
+          chainId,
+          account: takerAddress,
+          tokenIn: sellToken,
+          tokenOut: buyToken,
+          amountIn: sellAmountBig,
+          minAmountOut,
+        });
+        onSwapHashKnown?.(result.hash);
+        return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
+      }
       const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
       // Real bug fix, live-reported: a fallback provider quoting a
       // thin/mispriced pair can return a technically-valid quote whose
