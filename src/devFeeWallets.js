@@ -19,12 +19,16 @@
 
 export const DEV_FEE_WALLET = "0xf07becc2401a646fff10d10b969ef18b03582e88";
 export const DEV_FEE_WALLET_SOLANA = "CFqNwTuTkqkaVoNZmNE6q5TeV6CcNwGRns2NSEY72Fu2";
-// Was 0.01 (1%) — dropped to match where non-custodial DEX aggregators
-// actually sit (Li.Fi/Socket/Matcha's 0.10-0.30% route-fee range, not
-// MetaMask/Phantom's ~0.85% convenience-premium tier a wallet with
-// their existing distribution can charge) so this app's own quotes
-// stay competitive rather than quietly padded well above the market.
-export const DEV_FEE_PCT = 0.0025;
+// Was 0.01 (1%), then 0.0025 (0.25%) to match where non-custodial DEX
+// aggregators sit (Li.Fi/Socket/Matcha's 0.10-0.30% route-fee range,
+// not MetaMask/Phantom's ~0.85% convenience-premium tier a wallet with
+// their existing distribution can charge). Raised to 0.005 (0.5%)
+// 2026-08-31 on request — still well under Phantom/MetaMask's own
+// rate, and matches mango-mobile's own relayBridge.js DEV_FEE_PCT
+// exactly (kept in sync deliberately across both repos — a fee that
+// differs between the site and the app is the kind of inconsistency
+// users notice fast).
+export const DEV_FEE_PCT = 0.005;
 // A flat DEV_FEE_PCT on a large trade turns into real money fast — a
 // $50 cap keeps a $20k+ swap from paying a $50+ fee that would push a
 // high-value user toward a native interface instead. Only ever applied
