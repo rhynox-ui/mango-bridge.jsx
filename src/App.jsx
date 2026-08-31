@@ -1802,6 +1802,28 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // sent MAINNET_CHAIN_IDS[to] as undefined and thrown out of
         // currencyAddress(), which has no entry for them either.
         setStepIndex(0);
+        // Real bug fix, live-reported: a Solana-sourced trade that
+        // genuinely succeeded on-chain showed no success text, hash, or
+        // explorer link — traced to onComplete below reading
+        // `result?.txHashes?.[0]`, a shape that field never actually has.
+        // executeSolanaSourcedTransfer returns whatever Relay's own SDK
+        // execute() resolves to (`{ data: Execute, abortController }` —
+        // confirmed directly against the installed SDK's own
+        // actions/execute.d.ts), not this app's own `{txHashes: [...]}`
+        // shape that the separate REST-based executeRelayQuote path
+        // returns a few branches below. So `result.txHashes` was always
+        // undefined, onComplete always got "" instead of the real hash,
+        // and the transaction that DID land (onProgress's own
+        // setRealBurnHash calls prove it — those receive real hashes
+        // throughout) never got its history entry marked complete: a
+        // second, hash-less "complete" entry was inserted instead,
+        // while the real pending entry from onPendingHash sat stuck.
+        // Fixed by tracking the last real hash locally (a plain
+        // variable, not React state — state set via setRealBurnHash
+        // inside onProgress isn't visible in this closure until the
+        // next render, so it can't be trusted read back synchronously
+        // here) and using that for onComplete instead.
+        let lastKnownSolanaHash = "";
         const result = await executeSolanaSourcedTransfer({
           solanaAddress: account,
           solanaProvider: solanaWallet.solanaProvider.current,
@@ -1830,12 +1852,15 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           // DESTINATION is also Solana.
           recipient: destination || (CHAINS[to]?.isSolana ? account : evmAddress),
           onProgress: ({ currentStep, txHashes }) => {
-            if (txHashes?.length) setRealBurnHash(txHashes[0]);
+            if (txHashes?.length) {
+              lastKnownSolanaHash = txHashes[0];
+              setRealBurnHash(txHashes[0]);
+            }
           },
         });
         setStepIndex(steps.length);
         setPhase("done");
-        onComplete(result?.txHashes?.[0] || "");
+        onComplete(lastKnownSolanaHash || result?.data?.steps?.[0]?.items?.[0]?.txHashes?.[0] || "");
       } else if (kind === "relay") {
         const decimals = fromCustom ? fromCustom.decimals : assetDecimalsForChain(from, asset);
         const totalBaseUnits = parseUnits(amount, decimals);
@@ -1971,7 +1996,16 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         }
         let quote;
         let fallbackResult = null;
+        // Same skip as the preview effect above — see that call site's
+        // own comment for the full reasoning. Robinhood Chain same-chain
+        // swaps go straight to the fallback chain (Uniswap-led) instead
+        // of round-tripping through Relay's own known-thin coverage
+        // there first.
+        const execSkipRelayForRobinhood = from === to && from === "robinhood";
         try {
+          if (execSkipRelayForRobinhood) {
+            throw new Error("Robinhood Chain trades route directly through Uniswap.");
+          }
           quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
           if (execQuoteRoundsToZero(quote)) {
             throw new Error("Relay's route for this pair returns next to nothing at the current rate.");
@@ -1981,6 +2015,9 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             throw firstErr;
           }
           try {
+            if (execSkipRelayForRobinhood) {
+              throw firstErr;
+            }
             quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
             if (execQuoteRoundsToZero(quote)) {
               throw new Error("Even the 0%-fee route for this pair returns next to nothing at the current rate.");
@@ -3317,8 +3354,15 @@ function DocsModal({ onClose, P }) {
 // different bridge trust models and an unaudited launchpad.
 export default function MangoBridge() {
   const [theme, setTheme] = useState("light");
-  const [from, setFrom] = useState("base");
-  const [to, setTo] = useState("ethereum");
+  // Real feature, requested explicitly (2026-08-31): reopening Swap or
+  // Bridge should land back where the user left off, not reset to the
+  // hardcoded base/ethereum defaults every time. Restored directly in
+  // these initializers (not the mount effect below, which is for state
+  // that needs merging/validation against data loaded elsewhere) —
+  // loadJSON already fails safe to the same defaults as before this
+  // feature if nothing's saved yet or storage is unavailable.
+  const [from, setFrom] = useState(() => loadJSON("mango:lastFromChain", "base"));
+  const [to, setTo] = useState(() => loadJSON("mango:lastToChain", "ethereum"));
 
   // Which of walletChains.js's 25 wallet-only chains Relay's live GET
   // /chains response currently reports as usable — fetched once per app
@@ -3404,8 +3448,18 @@ export default function MangoBridge() {
   }, [relayBasedSwapChainOrder, fallbackOnlySwapChainOrder]);
 
   const [amount, setAmount] = useState("");
-  const [fromAssetIdx, setFromAssetIdxRaw] = useState(0);
-  const [toAssetIdx, setToAssetIdxRaw] = useState(0);
+  // Same "bring me back where I left" restore as from/to above — clamped
+  // to ASSETS' real bounds since a saved index could be stale after an
+  // app update (an asset removed/reordered), rather than trusting
+  // whatever's in localStorage outright.
+  const [fromAssetIdx, setFromAssetIdxRaw] = useState(() => {
+    const saved = loadJSON("mango:lastFromAssetIdx", 0);
+    return Number.isInteger(saved) && saved >= 0 && saved < ASSETS.length ? saved : 0;
+  });
+  const [toAssetIdx, setToAssetIdxRaw] = useState(() => {
+    const saved = loadJSON("mango:lastToAssetIdx", 0);
+    return Number.isInteger(saved) && saved >= 0 && saved < ASSETS.length ? saved : 0;
+  });
   // A user-pasted "paste a contract address" token (AssetDropdown,
   // customTokens.js) — null when the built-in ASSETS list (indexed by
   // fromAssetIdx/toAssetIdx above) is what's actually selected instead.
@@ -3468,7 +3522,12 @@ export default function MangoBridge() {
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
     if (requestedTab === "app") return "wallet";
     const validTabs = ["bridge", "swap", "launchpad", "wallet", "history", "portfolio"];
-    return validTabs.includes(requestedTab) ? requestedTab : "bridge";
+    if (validTabs.includes(requestedTab)) return requestedTab;
+    // "Bring me back where I left" — an explicit deep link (?tab=,
+    // ?docs=1 etc, both handled above) still wins over this; this only
+    // fills in when nothing in the URL said otherwise.
+    const savedTab = loadJSON("mango:lastTab", "bridge");
+    return validTabs.includes(savedTab) ? savedTab : "bridge";
   });
   // Which network's launchpad is showing — Robinhood Chain (real, working)
   // or Solana (coming soon). Selected via the same shared
@@ -3791,6 +3850,19 @@ export default function MangoBridge() {
     });
   }
 
+  // Persists the "where I left off" state restored by the initializers
+  // above — only Swap/Bridge's own tab and chain/asset selection, not
+  // amount (a stale pre-filled amount on reopen reads as more confusing
+  // than convenient, and could be well out of date against a since-
+  // changed balance).
+  useEffect(() => {
+    saveJSON("mango:lastTab", tab);
+    saveJSON("mango:lastFromChain", from);
+    saveJSON("mango:lastToChain", to);
+    saveJSON("mango:lastFromAssetIdx", fromAssetIdx);
+    saveJSON("mango:lastToAssetIdx", toAssetIdx);
+  }, [tab, from, to, fromAssetIdx, toAssetIdx]);
+
   const P = PALETTE[theme];
 
   function swap() { setFrom(to); setTo(from); setFromAssetIdxRaw(toAssetIdx); setToAssetIdxRaw(fromAssetIdx); setFromCustomTokenRaw(toCustomToken); setToCustomTokenRaw(fromCustomToken); }
@@ -4006,31 +4078,47 @@ export default function MangoBridge() {
           // be the "account" for the source side.
           recipientAddress: sendToOther ? destAddress : (CHAINS[to]?.isSolana ? activeSolanaAddress : (isFromSolana ? address : activeAccount)),
         };
-        try {
-          const quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
-          // Real bug fix, live-reported: Relay can return a
-          // technically-successful (200) quote whose actual output
-          // rounds to zero for a pair it doesn't have real routing
-          // data for — live-confirmed on a Robinhood Chain token with
-          // $1M+ of genuine on-chain Uniswap v3 liquidity that Relay
-          // simply hadn't indexed. This used to be accepted as-is
-          // (applyOkQuote/return, right below), which meant the
-          // fallback providers a few lines down — which query Uniswap/
-          // PancakeSwap/etc. directly and might have the real route
-          // Relay doesn't — never got a chance to run: a "successful"
-          // quote short-circuited the whole fallback chain before it
-          // could even start. Same-chain only (from === to) — Bridge
-          // always has from !== to and has no same-chain DEX aggregator
-          // to fall back to anyway.
-          const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
-          const relayRoundsToZero = from === to && relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
-          if (!relayRoundsToZero) {
-            applyOkQuote(quote);
-            return;
+        // Real fix, requested explicitly (2026-08-31): Robinhood Chain
+        // same-chain swaps skip Relay's own quote entirely and go
+        // straight to the fallback chain below, which already leads
+        // with Uniswap V4/V3 (see fallbackDex.js's own header on why —
+        // most Robinhood Chain tokens launch on Uniswap directly, and
+        // Relay's own coverage here is confirmed thin: it returned a
+        // technically-"successful" quote that actually rounds to zero
+        // for a token with $1M+ of real, quotable Uniswap v3 liquidity,
+        // live-confirmed on PONS). Skipping the round-trip (and its
+        // false "next to nothing" read) means every Robinhood pair goes
+        // straight to the provider that actually has the liquidity.
+        const skipRelayForRobinhood = from === to && from === "robinhood";
+        if (!skipRelayForRobinhood) {
+          try {
+            const quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
+            // Real bug fix, live-reported: Relay can return a
+            // technically-successful (200) quote whose actual output
+            // rounds to zero for a pair it doesn't have real routing
+            // data for — live-confirmed on a Robinhood Chain token with
+            // $1M+ of genuine on-chain Uniswap v3 liquidity that Relay
+            // simply hadn't indexed. This used to be accepted as-is
+            // (applyOkQuote/return, right below), which meant the
+            // fallback providers a few lines down — which query Uniswap/
+            // PancakeSwap/etc. directly and might have the real route
+            // Relay doesn't — never got a chance to run: a "successful"
+            // quote short-circuited the whole fallback chain before it
+            // could even start. Same-chain only (from === to) — Bridge
+            // always has from !== to and has no same-chain DEX aggregator
+            // to fall back to anyway.
+            const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
+            const relayRoundsToZero = from === to && relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
+            if (!relayRoundsToZero) {
+              applyOkQuote(quote);
+              return;
+            }
+            firstErr = new Error("Relay's route for this pair returns next to nothing at the current rate.");
+          } catch (err) {
+            firstErr = err;
           }
-          firstErr = new Error("Relay's route for this pair returns next to nothing at the current rate.");
-        } catch (err) {
-          firstErr = err;
+        } else {
+          firstErr = new Error("Robinhood Chain trades route directly through Uniswap.");
         }
         // Real bug fix, live-confirmed: this preview used to stop right
         // here and disable the Swap button — "No available route for
@@ -4044,16 +4132,18 @@ export default function MangoBridge() {
         // here too, same-chain Swap only (from === to — Bridge always
         // has from !== to, so this never fires there).
         if (from === to) {
-          try {
-            const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
-            const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
-            const roundsToZero = relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
-            if (!roundsToZero) {
-              applyOkQuote(quote);
-              return;
+          if (!skipRelayForRobinhood) {
+            try {
+              const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
+              const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
+              const roundsToZero = relayReceived !== null && amtNum > 0 && Number(relayReceived.toFixed(4)) === 0;
+              if (!roundsToZero) {
+                applyOkQuote(quote);
+                return;
+              }
+            } catch {
+              // Falls through to the fallback-provider check below.
             }
-          } catch {
-            // Falls through to the fallback-provider check below.
           }
           try {
             const sellTokenAddress = fromAsset.custom ? fromAsset.address : resolveCurrency(from, fromAsset.symbol);
