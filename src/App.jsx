@@ -33,6 +33,8 @@ import { fetchErc20TokenMetadata, fetchSplMintDecimals, fetchSplTokenSymbol, fet
 import { loadCustomTokens, addCustomToken } from "./wallet/customTokens.js";
 import { getTradeQuote, buyTokenReal, sellTokenReal } from "./launchpad-contracts.js";
 import { PublicKey } from "@solana/web3.js";
+import { pumpSwapPoolForMint, executePumpSwapTrade } from "./pumpswap.js";
+import { SOLANA_RPC_PRIMARY } from "./solanaRpc.js";
 import { useSolanaWallet } from "./SolanaWalletContext.jsx";
 import {
   useAccount,
@@ -1785,6 +1787,61 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // EVM path below (wagmi has no concept of Solana chains at all).
         const decimals = fromCustom ? fromCustom.decimals : assetDecimalsForChain(from, asset);
         const totalBaseUnits = parseUnits(amount, decimals);
+
+        // Real fix, live-reported: a same-chain Solana trade of
+        // JIMOTHY (a real, graduated pump.fun token) failed with
+        // "Transfer: insufficient lamports 36723514, need 72323388"
+        // when routed through Relay's own SDK (which routes Solana
+        // same-chain swaps through Jupiter under the hood). Real
+        // research, not a guess: JIMOTHY migrated to PumpSwap —
+        // pump.fun's own AMM — where it trades against SOL; Jupiter's
+        // routing math badly mis-costs this specific, newer pool (see
+        // pumpswap.js's own header for the full trace). Tried first,
+        // ONLY for a same-chain Solana trade where exactly one side is
+        // native SOL — pumpSwapPoolForMint is a read-only probe: no
+        // real PumpSwap pool for the other side's mint, and this falls
+        // through completely unchanged to the Relay/Jupiter path
+        // below, same "try our own precise path first" pattern the
+        // Robinhood Launchpad-hook check above already uses.
+        if (to === "solana") {
+          try {
+            const sellMint = fromCustom ? fromCustom.address : currencyAddress("solana", asset);
+            const buyMint = toCustom ? toCustom.address : currencyAddress("solana", toAsset);
+            const SOL_MINT = currencyAddress("solana", "SOL");
+            const sellIsNative = sellMint === SOL_MINT;
+            const buyIsNative = buyMint === SOL_MINT;
+            if (sellIsNative !== buyIsNative) {
+              const tokenMint = sellIsNative ? buyMint : sellMint;
+              const { Connection } = await import("@solana/web3.js");
+              const connection = new Connection(SOLANA_RPC_PRIMARY, "confirmed");
+              const poolKey = await pumpSwapPoolForMint(connection, tokenMint);
+              if (poolKey) {
+                const pumpResult = await executePumpSwapTrade({
+                  connection,
+                  solanaAddress: account,
+                  solanaProvider: solanaWallet.solanaProvider.current,
+                  mintAddress: tokenMint,
+                  side: sellIsNative ? "buy" : "sell",
+                  amountBaseUnits: totalBaseUnits,
+                });
+                setRealBurnHash(pumpResult.signature);
+                setStepIndex(steps.length);
+                setPhase("done");
+                onComplete(pumpResult.signature);
+                return;
+              }
+            }
+          } catch (pumpErr) {
+            console.error("[pumpswap] direct trade attempt failed, falling back to Relay:", pumpErr);
+            // Falls through to the unchanged Relay/Jupiter path below —
+            // covers both "not a PumpSwap-eligible pair" (no pool,
+            // currencyAddress had nothing verified for this symbol,
+            // etc — none of that is a reason to block Relay) and a
+            // genuine PumpSwap failure (thin reserves, a real slippage
+            // miss), which also isn't proof Relay's own route would
+            // fail too.
+          }
+        }
 
         // Real fix for a real bug: the fee used to be sent as a standalone
         // pre-transfer (collected even if the real transfer then failed)
