@@ -4301,6 +4301,12 @@ export default function MangoBridge() {
               sellAmount: amountBaseUnits,
               takerAddress: activeAccount,
               originAmountUsd,
+              // Real bug fix, live-reported: without this, checkFallbackRoute
+              // itself could lock in the FIRST no-key DEX provider's
+              // technically-real-but-worthless quote (a stale/near-empty
+              // pool) and never try the remaining ones — see that
+              // function's own header for the full trace.
+              buyDecimals: onchainDecimalsForAsset(toAsset, to),
             });
             if (fallbackQuote) {
               // No Relay-shaped quote to show, but checkFallbackRoute's

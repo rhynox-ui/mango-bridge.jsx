@@ -160,34 +160,58 @@ async function executeFallbackQuote({ chainId, account, sellTokenAddress, quote,
  * the buy token's own decimals) — the caller formats it, never
  * fabricates it.
  */
-export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd }) {
+// Real bug fix, live-reported: every no-key DEX branch below
+// (uniswap-v4/uniswap-v3/sushiswap-v2/pancakeswap-v3) in BOTH this
+// function and tryFallbackProviders used to return the FIRST provider
+// that came back with ANY non-null quote — even a technically-real
+// but functionally-worthless one from a stale/near-empty pool — and
+// never tried the REMAINING providers, which might have the token's
+// actual liquid pool. A custom Robinhood Chain token failing on every
+// provider identically looked like "no route anywhere" when the real
+// cause was Uniswap V4 finding a dead pool first and locking in that
+// answer before V3/SushiSwap/PancakeSwap ever got a chance to run —
+// the exact same "accept a technically-successful quote too early"
+// bug this file's own generic-provider branch below was already fixed
+// for, just one layer shallower. Shared here so both functions apply
+// the same check the same way.
+function quoteRoundsToZero(amountOut, buyDecimals) {
+  if (buyDecimals === undefined || buyDecimals === null) return false;
+  try {
+    return Number(Number(formatUnits(amountOut, buyDecimals)).toFixed(4)) === 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, buyDecimals }) {
   for (const provider of FALLBACK_PROVIDERS) {
     try {
       if (provider === "uniswap-v4") {
         if (!uniswapV4SupportsChain(chainId)) continue;
         const best = await quoteUniswapV4({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
-        if (!best) continue;
+        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         return { provider, buyAmount: best.amountOut.toString() };
       }
       if (provider === "uniswap-v3") {
         if (!uniswapV3SupportsChain(chainId)) continue;
         const best = await quoteUniswapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
-        if (!best) continue;
+        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         return { provider, buyAmount: best.amountOut.toString() };
       }
       if (provider === "sushiswap-v2") {
         if (!sushiswapV2SupportsChain(chainId)) continue;
         const best = await quoteSushiSwapV2({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
-        if (!best) continue;
+        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         return { provider, buyAmount: best.amountOut.toString() };
       }
       if (provider === "pancakeswap-v3") {
         if (!pancakeswapV3SupportsChain(chainId)) continue;
         const best = await quotePancakeSwapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
-        if (!best) continue;
+        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         return { provider, buyAmount: best.amountOut.toString() };
       }
       const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
+      if (quote.buyAmount && quoteRoundsToZero(BigInt(quote.buyAmount), buyDecimals)) continue;
       return { provider, buyAmount: quote.buyAmount ?? null };
     } catch {
       // Try the next provider — same "no route from this one, not
@@ -221,7 +245,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         if (!uniswapV4SupportsChain(chainId)) continue;
         const sellAmountBig = BigInt(sellAmount);
         const best = await quoteUniswapV4({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
-        if (!best) continue;
+        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
         const result = await executeUniswapV4Swap({
           chainId,
@@ -242,7 +266,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         if (!uniswapV3SupportsChain(chainId)) continue;
         const sellAmountBig = BigInt(sellAmount);
         const best = await quoteUniswapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
-        if (!best) continue;
+        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
         const result = await executeUniswapV3Swap({
           chainId,
@@ -260,7 +284,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         if (!sushiswapV2SupportsChain(chainId)) continue;
         const sellAmountBig = BigInt(sellAmount);
         const best = await quoteSushiSwapV2({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
-        if (!best) continue;
+        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
         const result = await executeSushiSwapV2Swap({
           chainId,
@@ -277,7 +301,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         if (!pancakeswapV3SupportsChain(chainId)) continue;
         const sellAmountBig = BigInt(sellAmount);
         const best = await quotePancakeSwapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
-        if (!best) continue;
+        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
         const result = await executePancakeSwapV3Swap({
           chainId,
