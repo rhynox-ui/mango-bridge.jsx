@@ -34,6 +34,7 @@ import { loadCustomTokens, addCustomToken } from "./wallet/customTokens.js";
 import { getTradeQuote, buyTokenReal, sellTokenReal } from "./launchpad-contracts.js";
 import { PublicKey } from "@solana/web3.js";
 import { pumpSwapPoolForMint, executePumpSwapTrade } from "./pumpswap.js";
+import { pumpFunCurveForMint, executePumpFunTrade } from "./pumpfun.js";
 import { SOLANA_RPC_PRIMARY } from "./solanaRpc.js";
 import { useSolanaWallet } from "./SolanaWalletContext.jsx";
 import {
@@ -1796,13 +1797,20 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // research, not a guess: JIMOTHY migrated to PumpSwap —
         // pump.fun's own AMM — where it trades against SOL; Jupiter's
         // routing math badly mis-costs this specific, newer pool (see
-        // pumpswap.js's own header for the full trace). Tried first,
-        // ONLY for a same-chain Solana trade where exactly one side is
-        // native SOL — pumpSwapPoolForMint is a read-only probe: no
-        // real PumpSwap pool for the other side's mint, and this falls
-        // through completely unchanged to the Relay/Jupiter path
-        // below, same "try our own precise path first" pattern the
-        // Robinhood Launchpad-hook check above already uses.
+        // pumpswap.js's own header for the full trace). Given priority
+        // explicitly, requested for the real reason it matters: most
+        // Solana tokens traded through this app ARE pump.fun tokens,
+        // and most of those haven't graduated to PumpSwap yet — tried
+        // in this order: the bonding curve (pumpfun.js, pre-graduation
+        // — the more common case) first, PumpSwap (pumpswap.js,
+        // post-graduation) second, both ahead of Relay/Jupiter. ONLY
+        // for a same-chain Solana trade where exactly one side is
+        // native SOL — pumpFunCurveForMint/pumpSwapPoolForMint are
+        // both read-only probes: neither finds a real pump.fun
+        // presence for the other side's mint, and this falls through
+        // completely unchanged to the Relay/Jupiter path below, same
+        // "try our own precise path first" pattern the Robinhood
+        // Launchpad-hook check above already uses.
         if (to === "solana") {
           try {
             const sellMint = fromCustom ? fromCustom.address : currencyAddress("solana", asset);
@@ -1812,8 +1820,27 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             const buyIsNative = buyMint === SOL_MINT;
             if (sellIsNative !== buyIsNative) {
               const tokenMint = sellIsNative ? buyMint : sellMint;
+              const side = sellIsNative ? "buy" : "sell";
               const { Connection } = await import("@solana/web3.js");
               const connection = new Connection(SOLANA_RPC_PRIMARY, "confirmed");
+
+              const bondingCurve = await pumpFunCurveForMint(connection, tokenMint);
+              if (bondingCurve) {
+                const pumpResult = await executePumpFunTrade({
+                  connection,
+                  solanaAddress: account,
+                  solanaProvider: solanaWallet.solanaProvider.current,
+                  mintAddress: tokenMint,
+                  side,
+                  amountBaseUnits: totalBaseUnits,
+                });
+                setRealBurnHash(pumpResult.signature);
+                setStepIndex(steps.length);
+                setPhase("done");
+                onComplete(pumpResult.signature);
+                return;
+              }
+
               const poolKey = await pumpSwapPoolForMint(connection, tokenMint);
               if (poolKey) {
                 const pumpResult = await executePumpSwapTrade({
@@ -1821,7 +1848,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                   solanaAddress: account,
                   solanaProvider: solanaWallet.solanaProvider.current,
                   mintAddress: tokenMint,
-                  side: sellIsNative ? "buy" : "sell",
+                  side,
                   amountBaseUnits: totalBaseUnits,
                 });
                 setRealBurnHash(pumpResult.signature);
@@ -1832,9 +1859,10 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
               }
             }
           } catch (pumpErr) {
-            console.error("[pumpswap] direct trade attempt failed, falling back to Relay:", pumpErr);
+            console.error("[pumpfun/pumpswap] direct trade attempt failed, falling back to Relay:", pumpErr);
             // Falls through to the unchanged Relay/Jupiter path below —
-            // covers both "not a PumpSwap-eligible pair" (no pool,
+            // covers both "not a pump.fun-eligible pair" (no bonding
+            // curve, no PumpSwap pool,
             // currencyAddress had nothing verified for this symbol,
             // etc — none of that is a reason to block Relay) and a
             // genuine PumpSwap failure (thin reserves, a real slippage
