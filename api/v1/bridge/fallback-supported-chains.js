@@ -25,13 +25,16 @@
 // Reuses okxSignRequest from fallback-quote.js rather than
 // re-implementing the same HMAC scheme a second time.
 //
-// Endpoint path/shape (GET /api/v5/dex/aggregator/supported/chain,
-// {code, data: [{chainId, chainName, ...}]}) matches OKX's own
-// current developer-portal docs and their official okx-dex-sdk /
-// dex-api-library repos on GitHub — not the same base path as
-// quoteFromOKX's own v6 swap endpoint (OKX versions this specific
-// endpoint separately; confirmed against their own docs, not assumed
-// to match just because the swap endpoint is v6).
+// Endpoint path/shape (GET /api/v6/dex/aggregator/supported/chain,
+// {code, data: [{chainId, chainName, ...}]}) — real, live-confirmed
+// fix: the v5 path this originally shipped with (matching OKX's
+// developer-portal docs and okx-dex-sdk/dex-api-library repos at the
+// time) started 404/error-ing in production with OKX's own
+// {code:"50050", msg:"V5 API is being deprecated. Please refer to our
+// documentation and upgrade to the latest V6 API for continued
+// access."} — caught via this file's own console.error logging, not
+// guessed. Now matches quoteFromOKX's own v6 swap endpoint's version,
+// which never had this problem.
 //
 // Fails closed, same as relay-chains.js: any fetch/auth/shape failure
 // returns an empty chainIds list rather than a 500 — a caller that
@@ -42,7 +45,7 @@
 import { checkRateLimit } from "../../rateLimit.js";
 import { okxSignRequest } from "./fallback-quote.js";
 
-const OKX_CHAINS_PATH = "/api/v5/dex/aggregator/supported/chain";
+const OKX_CHAINS_PATH = "/api/v6/dex/aggregator/supported/chain";
 const CACHE_TTL_MS = 30 * 60_000; // real chain support changes rarely — longer TTL than relay-chains.js's own 5min is fine here
 
 let cachedChainIds = null;
