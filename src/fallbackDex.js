@@ -38,6 +38,7 @@ import { appFeeBps, DEV_FEE_WALLET } from "./devFeeWallets.js";
 import { uniswapV3SupportsChain, quoteUniswapV3, executeUniswapV3Swap } from "./uniswapV3.js";
 import { uniswapV4SupportsChain, quoteUniswapV4, executeUniswapV4Swap } from "./uniswapV4.js";
 import { sushiswapV2SupportsChain, quoteSushiSwapV2, executeSushiSwapV2Swap } from "./sushiswapV2.js";
+import { pancakeswapV3SupportsChain, quotePancakeSwapV3, executePancakeSwapV3Swap } from "./pancakeswapV3.js";
 
 const FALLBACK_QUOTE_URL = "/api/v1/bridge/fallback-quote";
 
@@ -51,7 +52,10 @@ const FALLBACK_QUOTE_URL = "/api/v1/bridge/fallback-quote";
 // they're the only providers here that support Robinhood Chain (4663)
 // at all). v4 before v3 since most Robinhood Chain tokens now launch
 // there (live-confirmed on mobile, 2026-08-31); sushiswap-v2 right
-// after both, same no-key shape. 1inch and 0x next, both verified
+// after both, same no-key shape. pancakeswap-v3 right after that —
+// Robinhood Chain ONLY (see pancakeswapV3.js's own header on why: the
+// one chain with a confirmed, chain-specific Permit2 address), the
+// fourth and last no-key provider. 1inch and 0x next, both verified
 // against a real account/live docs and needing their own API key. okx
 // after that — live-confirmed working for the exact real-world case
 // this fallback chain exists for (a thin Base token Relay couldn't
@@ -63,7 +67,7 @@ const FALLBACK_QUOTE_URL = "/api/v1/bridge/fallback-quote";
 // public docs, not a live account. Odos/ParaSwap are still NOT listed
 // — see fallback-quote.js's own header for the real, specific reason
 // each is still deliberately unwired.
-export const FALLBACK_PROVIDERS = ["uniswap-v4", "uniswap-v3", "sushiswap-v2", "1inch", "0x", "okx", "kyberswap"];
+export const FALLBACK_PROVIDERS = ["uniswap-v4", "uniswap-v3", "sushiswap-v2", "pancakeswap-v3", "1inch", "0x", "okx", "kyberswap"];
 
 const ERC20_ALLOWANCE_ABI = [
   { type: "function", name: "allowance", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
@@ -177,6 +181,12 @@ export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmo
         if (!best) continue;
         return { provider, buyAmount: best.amountOut.toString() };
       }
+      if (provider === "pancakeswap-v3") {
+        if (!pancakeswapV3SupportsChain(chainId)) continue;
+        const best = await quotePancakeSwapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
+        if (!best) continue;
+        return { provider, buyAmount: best.amountOut.toString() };
+      }
       const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
       return { provider, buyAmount: quote.buyAmount ?? null };
     } catch {
@@ -258,6 +268,24 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           tokenIn: sellToken,
           tokenOut: buyToken,
           amountIn: sellAmountBig,
+          minAmountOut,
+        });
+        onSwapHashKnown?.(result.hash);
+        return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
+      }
+      if (provider === "pancakeswap-v3") {
+        if (!pancakeswapV3SupportsChain(chainId)) continue;
+        const sellAmountBig = BigInt(sellAmount);
+        const best = await quotePancakeSwapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
+        if (!best) continue;
+        const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        const result = await executePancakeSwapV3Swap({
+          chainId,
+          account: takerAddress,
+          tokenIn: sellToken,
+          tokenOut: buyToken,
+          amountIn: sellAmountBig,
+          fee: best.fee,
           minAmountOut,
         });
         onSwapHashKnown?.(result.hash);
