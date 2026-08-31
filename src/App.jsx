@@ -2096,7 +2096,19 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
     }
   }
 
-  const displayHash = kind === "simulated" ? simulatedHash : (realBurnHash || "pending…");
+  // Real crash fix, live-reported ("$.slice is not a function", caught
+  // by the top-level error boundary as "Mango Bridge crashed"):
+  // realBurnHash is set from a dozen different result shapes across
+  // every kind this modal handles (relay/cctp/solana-sourced/wormhole/
+  // op-withdraw/arb-withdraw/fallback-provider), and at least one of
+  // those upstream libraries can hand back something that isn't a
+  // plain string for its own hash field in an edge case — the `||`
+  // fallback below only guards against falsy, not against a truthy
+  // non-string sneaking through to a render-time .slice() call further
+  // down. Coercing here, once, protects every .slice() call site that
+  // reads displayHash/realBurnHash instead of trusting each one.
+  const realBurnHashStr = typeof realBurnHash === "string" ? realBurnHash : null;
+  const displayHash = kind === "simulated" ? simulatedHash : (realBurnHashStr || "pending…");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.75)", backdropFilter: "blur(4px)" }}>
@@ -2179,12 +2191,12 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-[12.5px] font-mono" style={{ background: P.dangerBg, border: `1px solid ${P.dangerBorder}`, color: P.dangerText }}>
               {errorMessage}
             </div>
-            {isReal && realBurnHash && (
+            {isReal && realBurnHashStr && (
               <div className="flex flex-col gap-2 px-3 py-2.5 rounded-lg text-[12px]" style={{ background: `${P.ctaBg}14`, border: `1px solid ${P.ctaBg}40`, color: P.ctaBg }}>
-                <span>Your transaction likely succeeded on-chain — this error happened after. Hash: <span className="font-mono">{realBurnHash.slice(0, 10)}…{realBurnHash.slice(-6)}</span></span>
+                <span>Your transaction likely succeeded on-chain — this error happened after. Hash: <span className="font-mono">{realBurnHashStr.slice(0, 10)}…{realBurnHashStr.slice(-6)}</span></span>
                 {(kind === "op-withdraw" || kind === "arb-withdraw") && <span>Go to the Withdrawals tab and use "Track by hash" with the full hash to recover it.</span>}
                 {(kind === "wormhole" || kind === "wormhole-reverse") && <span>Your ETH is locked/burned on {kind === "wormhole" ? CHAINS.ethereum.name : CHAINS.bnb.name} — nothing is lost. Wait a bit for the guardians to finish, then tap Resume below.</span>}
-                <a href={`${a.explorer}${realBurnHash}`} target="_blank" rel="noopener noreferrer" className="underline">View on {a.name} explorer</a>
+                <a href={`${a.explorer}${realBurnHashStr}`} target="_blank" rel="noopener noreferrer" className="underline">View on {a.name} explorer</a>
               </div>
             )}
             {(kind === "wormhole" || kind === "wormhole-reverse") && realBurnHash && (
