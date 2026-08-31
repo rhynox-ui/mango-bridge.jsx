@@ -4749,7 +4749,7 @@ export default function MangoBridge() {
               {/* ETA / details collapsible */}
               <button onClick={() => setDetailsOpen((o) => !o)} className="w-full flex items-center justify-between mt-3 px-4 py-2.5 rounded-xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                 <span className="text-[12.5px] font-medium flex items-center gap-1.5" style={{ color: P.ctaBg }}>
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: P.ctaBg }} /> Fee ${fmt(fee, 2)}
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: P.ctaBg }} /> Fee {formatFeePct(DEV_FEE_PCT)}%
                 </span>
                 <span className="flex items-center gap-1.5 text-[12.5px]" style={{ color: P.textSecondary }}>
                   ETA: {etaLabel}
