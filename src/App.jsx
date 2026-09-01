@@ -79,7 +79,7 @@ function formatFeePct(rate) {
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
-import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, assetDecimalsForChain } from "./relaybridge.js";
+import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, assetDecimalsForChain, unwrapWsolIfPresent } from "./relaybridge.js";
 import { tryFallbackProviders, checkFallbackRoute } from "./fallbackDex.js";
 import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
@@ -2136,6 +2136,9 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             setRealBurnHash(result.txHashes[0]);
             setStepIndex(steps.length);
             setPhase("done");
+            if (!destination && CHAINS[to]?.isSolana && toAsset === "SOL" && solanaWallet?.address) {
+              unwrapWsolIfPresent({ solanaAddress: solanaWallet.address, solanaProvider: solanaWallet.solanaProvider?.current }).catch(() => {});
+            }
             onComplete(result.txHashes[0]);
             return;
           }
@@ -2211,6 +2214,9 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // Claiming one would be misleading.
         setStepIndex(steps.length);
         setPhase("done");
+        if (!destination && CHAINS[to]?.isSolana && toAsset === "SOL" && solanaWallet?.address) {
+          unwrapWsolIfPresent({ solanaAddress: solanaWallet.address, solanaProvider: solanaWallet.solanaProvider?.current }).catch(() => {});
+        }
         onComplete(result.txHashes[0]);
       }
     } catch (err) {
