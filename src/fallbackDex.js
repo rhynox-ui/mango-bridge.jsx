@@ -183,43 +183,78 @@ function quoteRoundsToZero(amountOut, buyDecimals) {
   }
 }
 
-export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, buyDecimals }) {
-  for (const provider of FALLBACK_PROVIDERS) {
-    try {
-      if (provider === "uniswap-v4") {
-        if (!uniswapV4SupportsChain(chainId)) continue;
-        const best = await quoteUniswapV4({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
-        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
-        return { provider, buyAmount: best.amountOut.toString() };
-      }
-      if (provider === "uniswap-v3") {
-        if (!uniswapV3SupportsChain(chainId)) continue;
-        const best = await quoteUniswapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
-        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
-        return { provider, buyAmount: best.amountOut.toString() };
-      }
-      if (provider === "sushiswap-v2") {
-        if (!sushiswapV2SupportsChain(chainId)) continue;
-        const best = await quoteSushiSwapV2({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
-        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
-        return { provider, buyAmount: best.amountOut.toString() };
-      }
-      if (provider === "pancakeswap-v3") {
-        if (!pancakeswapV3SupportsChain(chainId)) continue;
-        const best = await quotePancakeSwapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: BigInt(sellAmount) });
-        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
-        return { provider, buyAmount: best.amountOut.toString() };
-      }
-      const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
-      if (quote.buyAmount && quoteRoundsToZero(BigInt(quote.buyAmount), buyDecimals)) continue;
-      return { provider, buyAmount: quote.buyAmount ?? null };
-    } catch {
-      // Try the next provider — same "no route from this one, not
-      // necessarily no route at all" reasoning tryFallbackProviders
-      // itself already uses.
+// Real bug fix, live-reported: both checkFallbackRoute and
+// tryFallbackProviders used to return the FIRST provider (in fixed
+// FALLBACK_PROVIDERS order) whose quote merely passed the rounds-to-
+// zero check — never comparing it against any of the OTHER providers,
+// even when one of them had a dramatically better price. uniswap-v4
+// finding ANY real (even thin, high-price-impact) hookless pool for a
+// pair used to lock in that answer immediately, even when uniswap-v3/
+// sushiswap-v2/pancakeswap-v3/1inch/0x/okx/kyberswap had the pair's
+// actual deep liquidity — live-reported on a Robinhood Chain token
+// (PONS) whose quoted rate was ~11x worse than its real, live market
+// price shown on DexScreener. Quoting every eligible provider is cheap
+// (reads/backend calls, no wallet interaction) and safe to run in
+// parallel, so both functions now gather every provider's quote first
+// and pick whichever gives the MOST output, not whichever answered
+// first.
+async function quoteAllProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, buyDecimals }) {
+  const sellAmountBig = BigInt(sellAmount);
+
+  const attempts = FALLBACK_PROVIDERS.map(async (provider) => {
+    if (provider === "uniswap-v4") {
+      if (!uniswapV4SupportsChain(chainId)) return null;
+      const best = await quoteUniswapV4({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
+      if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) return null;
+      return { provider, kind: "onchain", buyAmount: best.amountOut, execData: { poolKey: best.poolKey, zeroForOne: best.zeroForOne } };
     }
-  }
-  return null;
+    if (provider === "uniswap-v3") {
+      if (!uniswapV3SupportsChain(chainId)) return null;
+      const best = await quoteUniswapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
+      if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) return null;
+      return { provider, kind: "onchain", buyAmount: best.amountOut, execData: { fee: best.fee } };
+    }
+    if (provider === "sushiswap-v2") {
+      if (!sushiswapV2SupportsChain(chainId)) return null;
+      const best = await quoteSushiSwapV2({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
+      if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) return null;
+      return { provider, kind: "onchain", buyAmount: best.amountOut, execData: {} };
+    }
+    if (provider === "pancakeswap-v3") {
+      if (!pancakeswapV3SupportsChain(chainId)) return null;
+      const best = await quotePancakeSwapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
+      if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) return null;
+      return { provider, kind: "onchain", buyAmount: best.amountOut, execData: { fee: best.fee } };
+    }
+    const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
+    const buyAmount = BigInt(quote.buyAmount ?? "0");
+    if (quoteRoundsToZero(buyAmount, buyDecimals)) return null;
+    return { provider, kind: "generic", buyAmount, quote };
+  });
+
+  const settled = await Promise.allSettled(attempts);
+  const entries = [];
+  const failures = [];
+  settled.forEach((result, i) => {
+    const provider = FALLBACK_PROVIDERS[i];
+    if (result.status === "fulfilled" && result.value) {
+      entries.push(result.value);
+    } else if (result.status === "rejected") {
+      failures.push(`${provider}: ${result.reason?.message ?? String(result.reason)}`);
+    }
+  });
+  // Highest buyAmount first — FALLBACK_PROVIDERS' own priority order
+  // only matters as a tiebreaker now (Array.prototype.sort is stable,
+  // and entries were pushed in that order), not as the deciding factor.
+  entries.sort((a, b) => (b.buyAmount > a.buyAmount ? 1 : b.buyAmount < a.buyAmount ? -1 : 0));
+  return { entries, failures };
+}
+
+export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, buyDecimals }) {
+  const { entries } = await quoteAllProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, buyDecimals });
+  if (entries.length === 0) return null;
+  const winner = entries[0];
+  return { provider: winner.provider, buyAmount: winner.buyAmount.toString() };
 }
 
 // 1% — same default tolerance the rest of this app applies elsewhere
@@ -230,37 +265,38 @@ export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmo
 const UNISWAP_SLIPPAGE_BPS = 100n;
 
 /**
- * Tries each fallback provider in FALLBACK_PROVIDERS order, returning
- * the first one that actually quotes AND executes successfully. Throws
- * an aggregate error (every provider's own failure reason) only once
- * all of them have failed — the caller's own catch already has the
+ * Quotes every fallback provider (see quoteAllProviders above), then
+ * executes against whichever gave the best price, falling through to
+ * the next-best only if that execution itself fails. Throws an
+ * aggregate error (every provider's own failure reason) only once all
+ * of them have failed — the caller's own catch already has the
  * ORIGINAL Relay error to show instead, since this whole path only
  * ever runs after that one failed first.
  */
 export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, onSwapHashKnown, buyDecimals }) {
-  const failures = [];
+  const { entries, failures } = await quoteAllProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, buyDecimals });
+  const sellAmountBig = BigInt(sellAmount);
+
   // Real bug fix, live-reported: uniswap-v4/uniswap-v3/sushiswap-v2/
   // pancakeswap-v3 each require their own on-chain approval before the
   // swap itself (v4 and pancakeswap-v3 even need two, via their own
-  // separate Permit2 deployments). If a provider's quote succeeds and we
-  // move into executing the swap, but that execution then throws, the
-  // wallet approval very likely already went through — cascading into
-  // the NEXT no-key DEX provider used to ask for yet another approval on
-  // top of that, which is how one failed sell could prompt the user to
-  // approve up to 6 times in a row. Once that's happened, skip the
-  // remaining no-key DEX providers entirely and fall straight through to
-  // the generic quote-provider aggregators (1inch/0x/okx/kyberswap),
-  // which are gated through their own backend quote+execute flow and
-  // aren't part of this approval cascade.
+  // separate Permit2 deployments). If the best-priced provider's quote
+  // succeeded and we move into executing the swap, but that execution
+  // then throws, the wallet approval very likely already went through —
+  // falling through to the NEXT no-key DEX provider used to ask for yet
+  // another approval on top of that, which is how one failed sell could
+  // prompt the user to approve up to 6 times in a row. Once that's
+  // happened, skip the remaining no-key DEX providers entirely and fall
+  // straight through to the generic quote-provider aggregators (1inch/
+  // 0x/okx/kyberswap), which are gated through their own backend
+  // quote+execute flow and aren't part of this approval cascade.
   let noKeyDexApprovalSpent = false;
-  for (const provider of FALLBACK_PROVIDERS) {
+
+  for (const entry of entries) {
+    if (entry.kind === "onchain" && noKeyDexApprovalSpent) continue;
     try {
-      if (provider === "uniswap-v4") {
-        if (!uniswapV4SupportsChain(chainId) || noKeyDexApprovalSpent) continue;
-        const sellAmountBig = BigInt(sellAmount);
-        const best = await quoteUniswapV4({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
-        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
-        const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+      if (entry.provider === "uniswap-v4") {
+        const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
         noKeyDexApprovalSpent = true;
         const result = await executeUniswapV4Swap({
           chainId,
@@ -268,21 +304,17 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           tokenIn: sellToken,
           tokenOut: buyToken,
           amountIn: sellAmountBig,
-          poolKey: best.poolKey,
-          zeroForOne: best.zeroForOne,
+          poolKey: entry.execData.poolKey,
+          zeroForOne: entry.execData.zeroForOne,
           minAmountOut,
         });
         onSwapHashKnown?.(result.hash);
         // No inline fee collection — same as this provider having no
         // backend quote to carry a fee field on at all.
-        return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
+        return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
-      if (provider === "uniswap-v3") {
-        if (!uniswapV3SupportsChain(chainId) || noKeyDexApprovalSpent) continue;
-        const sellAmountBig = BigInt(sellAmount);
-        const best = await quoteUniswapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
-        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
-        const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+      if (entry.provider === "uniswap-v3") {
+        const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
         noKeyDexApprovalSpent = true;
         const result = await executeUniswapV3Swap({
           chainId,
@@ -290,18 +322,14 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           tokenIn: sellToken,
           tokenOut: buyToken,
           amountIn: sellAmountBig,
-          fee: best.fee,
+          fee: entry.execData.fee,
           minAmountOut,
         });
         onSwapHashKnown?.(result.hash);
-        return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
+        return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
-      if (provider === "sushiswap-v2") {
-        if (!sushiswapV2SupportsChain(chainId) || noKeyDexApprovalSpent) continue;
-        const sellAmountBig = BigInt(sellAmount);
-        const best = await quoteSushiSwapV2({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
-        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
-        const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+      if (entry.provider === "sushiswap-v2") {
+        const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
         noKeyDexApprovalSpent = true;
         const result = await executeSushiSwapV2Swap({
           chainId,
@@ -312,14 +340,10 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           minAmountOut,
         });
         onSwapHashKnown?.(result.hash);
-        return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
+        return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
-      if (provider === "pancakeswap-v3") {
-        if (!pancakeswapV3SupportsChain(chainId) || noKeyDexApprovalSpent) continue;
-        const sellAmountBig = BigInt(sellAmount);
-        const best = await quotePancakeSwapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
-        if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
-        const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+      if (entry.provider === "pancakeswap-v3") {
+        const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
         noKeyDexApprovalSpent = true;
         const result = await executePancakeSwapV3Swap({
           chainId,
@@ -327,45 +351,24 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           tokenIn: sellToken,
           tokenOut: buyToken,
           amountIn: sellAmountBig,
-          fee: best.fee,
+          fee: entry.execData.fee,
           minAmountOut,
         });
         onSwapHashKnown?.(result.hash);
-        return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
+        return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
-      const quote = await fetchFallbackQuote({ provider, chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd });
-      // Real bug fix, live-reported: a fallback provider quoting a
-      // thin/mispriced pair can return a technically-valid quote whose
-      // buyAmount rounds to zero — this used to execute unconditionally,
-      // meaning a real transaction could send the user's tokens away
-      // and return next to nothing, burning gas on a trade nobody would
-      // knowingly confirm. Only checked when buyDecimals is actually
-      // known (the caller's own onchainDecimalsForAsset can return
-      // undefined for an asset it doesn't recognize) — same "don't
-      // block on what we can't verify" rule this file already follows
-      // elsewhere, not a reason to silently accept a real zero though.
-      if (buyDecimals !== undefined && buyDecimals !== null) {
-        try {
-          const buyAmountHuman = Number(formatUnits(BigInt(quote.buyAmount ?? "0"), buyDecimals));
-          if (Number(buyAmountHuman.toFixed(4)) === 0) {
-            failures.push(`${provider}: quoted output rounds to zero at the current rate — skipped.`);
-            continue;
-          }
-        } catch {
-          // Unparseable buyAmount — fall through and let execution
-          // itself be the real check, same as before this fix.
-        }
-      }
+      // Generic provider (1inch/0x/okx/kyberswap) — quote was already
+      // fetched by quoteAllProviders above, re-executed against as-is.
       const result = await executeFallbackQuote({
         chainId,
         account: takerAddress,
         sellTokenAddress: sellToken,
-        quote: { ...quote, sellAmount },
+        quote: { ...entry.quote, sellAmount },
         onSwapHashKnown,
       });
-      return { provider, hash: result.hash, buyAmount: quote.buyAmount, feeCollectedInline: !!quote.feeCollectedInline };
+      return { provider: entry.provider, hash: result.hash, buyAmount: entry.quote.buyAmount, feeCollectedInline: !!entry.quote.feeCollectedInline };
     } catch (err) {
-      failures.push(`${provider}: ${err?.message ?? String(err)}`);
+      failures.push(`${entry.provider}: ${err?.message ?? String(err)}`);
     }
   }
   throw new Error(`No fallback route available. ${failures.join(" | ")}`);
