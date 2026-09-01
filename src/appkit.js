@@ -116,26 +116,33 @@ export const appKit = createAppKit({
   // app (wagmi's sendTransaction, switchChain, etc.) exactly as it was
   // before this change.
   defaultAccountTypes: { eip155: "eoa" },
-  // Real bug fix, live-reported ("the site is just firering wallet
-  // none stop... only wen user click wallet connect"): AppKit's own
-  // default is to silently restore a previously-connected session on
-  // every page load (its own initialize() calls
-  // this.syncExistingConnection() gated on
-  // OptionsController.state.enableReconnect, which defaults to true
-  // unless explicitly set false — confirmed directly from the
-  // installed @reown/appkit package's own compiled source, not
-  // assumed). That's normally invisible, convenient behavior — but a
-  // stale/corrupted cached WalletConnect session (the same class of
-  // bug this file's own SITE_URL comment above already documents
-  // hitting once before) makes that silent restore attempt fail and
-  // retry, which is what actually surfaces as a repeatedly-firing
-  // connect prompt with no code anywhere in this app calling connect()
-  // on its own — every real trigger (WalletSelectorModal, the header
-  // Connect button) is confirmed click-only. Disabling reconnect
-  // entirely removes the retry loop at its root: connecting now only
-  // ever happens from an explicit tap, exactly as asked, at the real
-  // cost of no longer silently restoring a legitimate session across a
-  // reload — a deliberate tradeoff for reliability over that one
-  // convenience.
-  enableReconnect: false,
+  // enableReconnect DELIBERATELY left at AppKit's own default (true).
+  // A previous pass here set this to false to try to fix a live-reported
+  // repeated wallet-connect prompt, on the theory that a stale
+  // WalletConnect session was retrying a silent restore. That was
+  // wrong, confirmed by digging into the ACTUAL live symptom
+  // afterward: the real trigger is the site's own "Mango Wallet"
+  // browser extension (extension/src/inpage.js's EIP-6963
+  // announcement, name: "Mango Wallet") — an injected connector, not
+  // WalletConnect. enableReconnect: false doesn't just skip a silent
+  // restore; AppKit's own initialize() calls unSyncExistingConnection()
+  // when it's false, which actively DISCONNECTS every namespace on
+  // every page load (confirmed directly in the installed package's
+  // own compiled source — appkit-base-client.js's unSyncExistingConnection).
+  // That actively desyncs this app's own isConnected/connected state
+  // from the extension's real, persistent per-origin authorization,
+  // which the extension itself never forgets just because AppKit's
+  // in-memory state says otherwise. Result: this app's own header kept
+  // showing "Connect" for a wallet that was, at the browser level,
+  // still genuinely connected — so tapping it opened AppKit's connect
+  // flow for a connector that immediately reports itself as already
+  // having a live session, which is exactly the "This account is
+  // already linked, change your account in Mango Wallet" screen
+  // (@reown/appkit-scaffold-ui's own w3m-connecting-external-view,
+  // confirmed by grepping its compiled source for that literal string
+  // — it fires whenever ConnectionController already has a tracked
+  // connection for the selected connector's id). Restoring the
+  // default lets AppKit correctly resync with an already-authorized
+  // extension on load, so the header reflects the real connected state
+  // immediately instead of prompting a redundant connect.
 });
