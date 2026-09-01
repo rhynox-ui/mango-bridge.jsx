@@ -116,4 +116,26 @@ export const appKit = createAppKit({
   // app (wagmi's sendTransaction, switchChain, etc.) exactly as it was
   // before this change.
   defaultAccountTypes: { eip155: "eoa" },
+  // Real bug fix, live-reported ("the site is just firering wallet
+  // none stop... only wen user click wallet connect"): AppKit's own
+  // default is to silently restore a previously-connected session on
+  // every page load (its own initialize() calls
+  // this.syncExistingConnection() gated on
+  // OptionsController.state.enableReconnect, which defaults to true
+  // unless explicitly set false — confirmed directly from the
+  // installed @reown/appkit package's own compiled source, not
+  // assumed). That's normally invisible, convenient behavior — but a
+  // stale/corrupted cached WalletConnect session (the same class of
+  // bug this file's own SITE_URL comment above already documents
+  // hitting once before) makes that silent restore attempt fail and
+  // retry, which is what actually surfaces as a repeatedly-firing
+  // connect prompt with no code anywhere in this app calling connect()
+  // on its own — every real trigger (WalletSelectorModal, the header
+  // Connect button) is confirmed click-only. Disabling reconnect
+  // entirely removes the retry loop at its root: connecting now only
+  // ever happens from an explicit tap, exactly as asked, at the real
+  // cost of no longer silently restoring a legitimate session across a
+  // reload — a deliberate tradeoff for reliability over that one
+  // convenience.
+  enableReconnect: false,
 });
