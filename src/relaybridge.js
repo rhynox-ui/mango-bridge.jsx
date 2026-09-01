@@ -3,6 +3,7 @@ import { config } from "./wagmi.js";
 export { MAINNET_CHAIN_IDS, NATIVE_SYMBOL, TOKEN_ADDRESSES, currencyAddress, canRelayHandle, ASSET_ONCHAIN_DECIMALS, assetDecimalsForChain } from "./chainData.js";
 import { MAINNET_CHAIN_IDS, currencyAddress } from "./chainData.js";
 import { DEV_FEE_WALLET, DEV_FEE_PCT, appFeeBps } from "./devFeeWallets.js";
+import { SOLANA_RPC_PRIMARY } from "./solanaRpc.js";
 export { DEV_FEE_WALLET, DEV_FEE_PCT };
 
 // Real fix for a real problem the previous "send a standalone fee
@@ -229,6 +230,78 @@ export async function executeRelayQuote({ quote, onStep }) {
 
   onStep?.("done");
   return { txHashes, requestId };
+}
+
+// Real bug fix, live-reported ("still receiving WSOL for bridge"), same
+// root cause mango-mobile's own relayBridge.js just fixed: chainData.js's
+// currencyAddress('solana', 'SOL') intentionally resolves to the WSOL SPL
+// mint (So11111111111111111111111111111111111111112) as the universal
+// "native SOL" placeholder Relay's quote API expects — correct for
+// QUOTING — but Relay's own solver sometimes SETTLES a Solana-destination
+// bridge by literally depositing into the recipient's WSOL associated
+// token account instead of unwrapping to native lamports, and nothing
+// here ever checked for or fixed that.
+//
+// Fires only for the connected wallet's OWN address (never a manually-
+// pasted third-party recipient — unwrapping requires a NEW transaction
+// signed by whoever owns the WSOL, so it only makes sense when that
+// owner is the wallet actually connected here) — this is
+// gated at the call site the same way mobile's is.
+//
+// Site-specific adaptation: mobile signs directly with an embedded
+// Keypair; this site has no private key at all — Solana transactions
+// are signed by the connected external wallet via OKX Connect
+// (SolanaWalletContext's solanaProvider), which only exposes
+// signTransaction(transaction, caipChainString), not sendTransaction.
+// Same signTransaction -> connection.sendRawTransaction(signed.serialize())
+// pattern already proven working 3x elsewhere in this app (see
+// relaySdkSolanaExecution.js's own adaptedWallet signer), including the
+// same real, confirmed Solana CAIP-2 identifier
+// ("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" — OKX's getRealChainId only
+// accepts strings starting with "svm" or ones on its own hardcoded CAIP
+// list, confirmed directly against OKX's installed source).
+//
+// Best-effort by design: called fire-and-forget right after a bridge
+// already reports success — a failure here must never turn an
+// already-successful bridge into a shown error, so every call site
+// swallows rejections with .catch(() => {}).
+export async function unwrapWsolIfPresent({ solanaAddress, solanaProvider }) {
+  const [{ Connection, PublicKey, TransactionMessage, VersionedTransaction }, splToken] = await Promise.all([
+    import("@solana/web3.js"),
+    import("@solana/spl-token"),
+  ]);
+  const { NATIVE_MINT, getAssociatedTokenAddress, getAccount, createCloseAccountInstruction, TokenAccountNotFoundError } = splToken;
+
+  const connection = new Connection(SOLANA_RPC_PRIMARY, "confirmed");
+  const owner = new PublicKey(solanaAddress);
+  const wsolAta = await getAssociatedTokenAddress(NATIVE_MINT, owner);
+
+  let account;
+  try {
+    account = await getAccount(connection, wsolAta);
+  } catch (err) {
+    if (err instanceof TokenAccountNotFoundError) {
+      return null; // The common case — nothing to unwrap.
+    }
+    throw err;
+  }
+  if (account.amount <= 0n) {
+    return null; // A real WSOL account exists but is already empty — nothing to reclaim.
+  }
+
+  const instruction = createCloseAccountInstruction(wsolAta, owner, owner);
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  const message = new TransactionMessage({
+    payerKey: owner,
+    instructions: [instruction],
+    recentBlockhash: blockhash,
+  }).compileToV0Message([]);
+  const transaction = new VersionedTransaction(message);
+
+  const signed = await solanaProvider.signTransaction(transaction, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`);
+  const signature = await connection.sendRawTransaction(signed.serialize());
+  await connection.confirmTransaction(signature, "confirmed");
+  return signature;
 }
 
 // ASSET_ONCHAIN_DECIMALS now lives in chainData.js — re-exported at the top of this file.
