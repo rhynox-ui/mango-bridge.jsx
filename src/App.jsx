@@ -4904,15 +4904,31 @@ export default function MangoBridge() {
                 </div>
               )}
 
-              {/* CTA */}
+              {/* CTA
+                  Real bug fix, live-reported ("can't connect wallet"):
+                  this button's own text already branches to "Connect
+                  wallet" when !connected (see the label ternary
+                  below), but disabled/onClick never accounted for that
+                  case — disabled={!connected || ...} made it
+                  UNCLICKABLE precisely when not connected (the one
+                  state where clicking it needs to do something), and
+                  onClick unconditionally opened the bridge
+                  confirmation modal rather than ever calling
+                  handleConnect. The header's own small "Connect" pill
+                  (top right) was the only actually-working way to
+                  connect — this large, primary CTA looked like the
+                  main action and did nothing. Now: enabled and wired
+                  to handleConnect whenever !connected, falling through
+                  to the existing canBridge/routeUnavailable gating
+                  only once actually connected. */}
               <button
-                disabled={!connected || !canBridge || routeUnavailable}
-                onClick={() => setShowModal(true)}
+                disabled={connected && (!canBridge || routeUnavailable)}
+                onClick={connected ? () => setShowModal(true) : handleConnect}
                 className="w-full mt-4 py-3.5 rounded-full font-display font-semibold text-[15px]"
                 style={{
-                  background: !connected || !canBridge || routeUnavailable ? P.ctaDisabledBg : P.ctaBg,
-                  color: !connected || !canBridge || routeUnavailable ? P.ctaDisabledText : P.ctaText,
-                  cursor: connected && canBridge && !routeUnavailable ? "pointer" : "not-allowed",
+                  background: connected && (!canBridge || routeUnavailable) ? P.ctaDisabledBg : P.ctaBg,
+                  color: connected && (!canBridge || routeUnavailable) ? P.ctaDisabledText : P.ctaText,
+                  cursor: !connected || (canBridge && !routeUnavailable) ? "pointer" : "not-allowed",
                 }}
               >
                 {!connected ? "Connect wallet" : onWrongNetwork ? "Switch network to continue" : !chainAssetPairValid ? (isSwapTab ? "Choose different assets" : "Choose different chains") : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
