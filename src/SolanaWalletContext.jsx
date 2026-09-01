@@ -52,6 +52,41 @@ export function SolanaWalletProvider({ children }) {
       });
       universalProviderRef.current = universalProvider;
 
+      // Real bug fix, live-reported ("This account is already linked,
+      // change your account in Mango Wallet"): OKXUniversalProvider's
+      // own init() unconditionally tries to silently restore a cached
+      // session from storage before this function ever gets a chance
+      // to run (confirmed directly from the installed
+      // @okxconnect/universal-provider package's own source —
+      // initialize() always calls tryToReconnect() -> checkStorage(),
+      // which reads a persisted "connectSession" and attempts
+      // restoreconnect() on it). When that stored session is stale or
+      // mismatched, the restore fails — and the SDK's OWN failure
+      // handler calls cleanup(false), which explicitly does NOT clear
+      // the broken session from storage (cleanSession is hardcoded
+      // false there, with a leftover commented-out line showing that
+      // was apparently supposed to be conditional). The result: the
+      // exact same broken session gets retried and fails again on
+      // every future connect attempt, indefinitely, until storage is
+      // cleared by hand — which is what "already linked" kept
+      // reappearing on repeat taps actually was.
+      //
+      // Fix: explicitly finish the cleanup the SDK's own failure path
+      // left half-done, on every connect (not just after a detected
+      // failure — connect() only ever runs from an explicit user tap
+      // here, never automatically, so there's no silent session to
+      // preserve; same "only ever connect from an explicit click, no
+      // silent reuse" fix already shipped for the separate AppKit
+      // wallet-connect path in appkit.js). cleanup isn't part of this
+      // SDK's documented public API surface, but is a real, callable
+      // method on the instance init() returns — guarded with a
+      // property check and swallowed failure since it's best-effort
+      // hardening on top of the real connect() call below, never a
+      // reason to block it.
+      if (typeof universalProvider.cleanup === "function") {
+        await universalProvider.cleanup(true).catch(() => {});
+      }
+
       await universalProvider.connect({
         namespaces: { solana: { chains: [SOLANA_MAINNET] } },
       });
