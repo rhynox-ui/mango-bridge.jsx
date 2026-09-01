@@ -3745,9 +3745,24 @@ export default function MangoBridge() {
   // calls), but this specific combination hasn't been exercised against
   // a real, funded transfer yet — flag this first if a non-OKX
   // Solana-sourced bridge is reported broken.
+  //
+  // Real bug fix, live-reported ("Invalid recipient address 0x... for
+  // chain 792703809" — an EVM address rejected as a Solana recipient):
+  // this used to spread solanaWallet unchanged in the AppKit-fallback
+  // branch, carrying over its own `address: null` from the OKX-only
+  // context — so BridgeModal's own `solanaWallet?.address` (used to
+  // build the actual bridge's recipient — see its defaultRecipient)
+  // stayed undefined even when AppKit's Solana wallet WAS genuinely
+  // connected, silently falling through to the EVM account as the
+  // recipient instead. activeSolanaAddress just above already applies
+  // the correct solanaWallet.address || appKitSolana.address fallback
+  // for every OTHER use in this component (connected, recipientAddress
+  // in the route-check/quote-preview effect, etc.) — this was the one
+  // place that fallback was missing, and BridgeModal is where the real
+  // funds-moving quote/execute actually happens.
   const effectiveSolanaWallet = solanaWallet.address
     ? solanaWallet
-    : { ...solanaWallet, solanaProvider: { current: appKitSolanaProvider } };
+    : { ...solanaWallet, address: appKitSolana.address, solanaProvider: { current: appKitSolanaProvider } };
 
   // Real, live balances for every asset relevant to the current "from"
   // chain — not just the currently-selected one. Powers the balance
