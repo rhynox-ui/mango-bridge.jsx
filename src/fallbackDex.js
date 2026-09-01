@@ -239,14 +239,29 @@ const UNISWAP_SLIPPAGE_BPS = 100n;
  */
 export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, onSwapHashKnown, buyDecimals }) {
   const failures = [];
+  // Real bug fix, live-reported: uniswap-v4/uniswap-v3/sushiswap-v2/
+  // pancakeswap-v3 each require their own on-chain approval before the
+  // swap itself (v4 and pancakeswap-v3 even need two, via their own
+  // separate Permit2 deployments). If a provider's quote succeeds and we
+  // move into executing the swap, but that execution then throws, the
+  // wallet approval very likely already went through — cascading into
+  // the NEXT no-key DEX provider used to ask for yet another approval on
+  // top of that, which is how one failed sell could prompt the user to
+  // approve up to 6 times in a row. Once that's happened, skip the
+  // remaining no-key DEX providers entirely and fall straight through to
+  // the generic quote-provider aggregators (1inch/0x/okx/kyberswap),
+  // which are gated through their own backend quote+execute flow and
+  // aren't part of this approval cascade.
+  let noKeyDexApprovalSpent = false;
   for (const provider of FALLBACK_PROVIDERS) {
     try {
       if (provider === "uniswap-v4") {
-        if (!uniswapV4SupportsChain(chainId)) continue;
+        if (!uniswapV4SupportsChain(chainId) || noKeyDexApprovalSpent) continue;
         const sellAmountBig = BigInt(sellAmount);
         const best = await quoteUniswapV4({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
         if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        noKeyDexApprovalSpent = true;
         const result = await executeUniswapV4Swap({
           chainId,
           account: takerAddress,
@@ -263,11 +278,12 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
       }
       if (provider === "uniswap-v3") {
-        if (!uniswapV3SupportsChain(chainId)) continue;
+        if (!uniswapV3SupportsChain(chainId) || noKeyDexApprovalSpent) continue;
         const sellAmountBig = BigInt(sellAmount);
         const best = await quoteUniswapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
         if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        noKeyDexApprovalSpent = true;
         const result = await executeUniswapV3Swap({
           chainId,
           account: takerAddress,
@@ -281,11 +297,12 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
       }
       if (provider === "sushiswap-v2") {
-        if (!sushiswapV2SupportsChain(chainId)) continue;
+        if (!sushiswapV2SupportsChain(chainId) || noKeyDexApprovalSpent) continue;
         const sellAmountBig = BigInt(sellAmount);
         const best = await quoteSushiSwapV2({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
         if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        noKeyDexApprovalSpent = true;
         const result = await executeSushiSwapV2Swap({
           chainId,
           account: takerAddress,
@@ -298,11 +315,12 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         return { provider, hash: result.hash, buyAmount: best.amountOut.toString(), feeCollectedInline: false };
       }
       if (provider === "pancakeswap-v3") {
-        if (!pancakeswapV3SupportsChain(chainId)) continue;
+        if (!pancakeswapV3SupportsChain(chainId) || noKeyDexApprovalSpent) continue;
         const sellAmountBig = BigInt(sellAmount);
         const best = await quotePancakeSwapV3({ chainId, tokenIn: sellToken, tokenOut: buyToken, amountIn: sellAmountBig });
         if (!best || quoteRoundsToZero(best.amountOut, buyDecimals)) continue;
         const minAmountOut = best.amountOut - (best.amountOut * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        noKeyDexApprovalSpent = true;
         const result = await executePancakeSwapV3Swap({
           chainId,
           account: takerAddress,
