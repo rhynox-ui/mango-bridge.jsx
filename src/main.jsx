@@ -97,7 +97,7 @@ const isTestRoute = new URLSearchParams(window.location.search).get("test") === 
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <WagmiProvider config={config}>
+    <WagmiProvider config={config} reconnectOnMount={false}>
       <QueryClientProvider client={queryClient}>
         <ErrorBoundary>
           <SolanaWalletProvider>
