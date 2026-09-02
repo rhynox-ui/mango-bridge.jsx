@@ -1,0 +1,45 @@
+name: One-shot Solana recipient patch
+
+on:
+  push:
+    branches:
+      - fix/wallet-connect-sol-native-sol
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: use active Solana recipient') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/wallet-connect-sol-native-sol
+
+      - name: Patch recipient source
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('src/App.jsx')
+          text = path.read_text()
+          old = 'const defaultRecipient = CHAINS[to]?.isSolana ? solanaWallet?.address : account;'
+          new = 'const defaultRecipient = CHAINS[to]?.isSolana ? activeSolanaAddress : account;'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one recipient source, found {text.count(old)}')
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+
+      - name: Verify architecture-safe recipient selection
+        run: |
+          grep -n 'const defaultRecipient = CHAINS\[to\]?.isSolana' src/App.jsx
+          grep -n 'const activeSolanaAddress' src/App.jsx
+
+      - name: Commit and remove one-shot workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx
+          git rm .github/workflows/patch-solana-recipient.yml
+          git commit -m "fix: use active Solana recipient"
+          git push origin HEAD:fix/wallet-connect-sol-native-sol
