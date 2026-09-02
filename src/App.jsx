@@ -1783,6 +1783,25 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         setPhase("done");
         onComplete(result.srcTxHash);
       } else if (kind === "relay" && isFromSolana) {
+        // Real bug fix, live-reported: this crashed deep inside the
+        // signing callback with a cryptic "[execute step] Cannot read
+        // properties of null (reading 'signTransaction')" for a Solana
+        // wallet connected through AppKit's own Solana adapter (not
+        // OKX) — confirmed live against a real connected wallet, not
+        // just the "unexercised" caveat this file's own
+        // effectiveSolanaWallet comment already carried. AppKit's
+        // useAppKitProvider("solana") can report a connected address
+        // with no walletProvider registered yet for that same
+        // namespace — this app has no fix for that gap yet, so this
+        // guard turns the crash into an honest, actionable message
+        // BEFORE a quote is even built (and before this same missing
+        // provider would otherwise reach the pumpfun/pumpswap
+        // short-circuit below too), instead of failing deep inside the
+        // SDK's own adapted-wallet closure after the user has already
+        // waited through a quote.
+        if (!solanaWallet.solanaProvider?.current) {
+          throw new Error("Your connected Solana wallet doesn't support signing yet. Disconnect and reconnect using OKX Wallet — the only Solana wallet this app can currently sign a real send with.");
+        }
         // Real, separate execution path for Solana-sourced transfers —
         // see relaySdkSolanaExecution.js for why this can't share the
         // EVM path below (wagmi has no concept of Solana chains at all).
@@ -2839,7 +2858,7 @@ function NetworkSelectorModal({ onClose, P, tab, launchpadNetwork, setLaunchpadN
 // src/appkit.js for the createAppKit() call this modal opens into.
 // OKX Wallet for Solana stays as its own explicitly-labeled option since
 // it's deliberately kept outside AppKit (see appkit.js for why).
-function WalletSelectorModal({ onClose, P, solanaRelevant }) {
+function WalletSelectorModal({ onClose, P, solanaRelevant, isFromSolana }) {
   const solanaWallet = useSolanaWallet();
   const { open: openAppKit } = useAppKit();
   const [connectingOkx, setConnectingOkx] = useState(false);
@@ -2868,6 +2887,55 @@ function WalletSelectorModal({ onClose, P, solanaRelevant }) {
     onClose();
   }
 
+  // Real inconsistency fix, live-reported: this used to always render
+  // the Solana section above EVM whenever Solana was relevant at all —
+  // including the app's own default pair (an EVM chain "you send",
+  // Solana "you receive"), where Solana is only relevant as the
+  // DESTINATION, not what actually needs to sign anything. Tapping
+  // Connect on that default pair showed "Solana" first, ahead of the
+  // EVM section a from-EVM send genuinely needs first, backwards from
+  // which wallet is actually urgent. Ordered by SOURCE side now: the
+  // chain that signs the outgoing transaction leads, the other
+  // (relevant only for receiving) follows.
+  const solanaSection = solanaRelevant && (
+    <div className="mb-4">
+      <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: P.textMuted }}>Solana</div>
+      <div className="flex flex-col gap-2">
+        <button
+          onClick={handleOkxConnect}
+          disabled={connectingOkx}
+          className="flex items-center justify-between px-3.5 py-3 rounded-xl text-left"
+          style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: connectingOkx ? 0.6 : 1 }}
+        >
+          <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>OKX Wallet</span>
+          {connectingOkx && <span className="text-[11px]" style={{ color: P.textMuted }}>Connecting…</span>}
+        </button>
+        <button
+          onClick={openAppKitSolana}
+          className="flex flex-col items-start px-3.5 py-3 rounded-xl text-left"
+          style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}
+        >
+          <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>More Solana Wallets</span>
+          <span className="text-[11px] mt-0.5" style={{ color: P.textMuted }}>Phantom, Solflare, Coinbase, Trust, Backpack, and more</span>
+        </button>
+      </div>
+    </div>
+  );
+
+  const evmSection = (
+    <div className="mb-4">
+      <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: P.textMuted }}>EVM</div>
+      <button
+        onClick={openAppKitEvm}
+        className="w-full flex flex-col items-start px-3.5 py-3 rounded-xl text-left"
+        style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}
+      >
+        <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>Browse EVM Wallets</span>
+        <span className="text-[11px] mt-0.5" style={{ color: P.textMuted }}>MetaMask, Trust Wallet, Binance Wallet, SafePal, and 500+ more</span>
+      </button>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(4,5,7,0.6)", backdropFilter: "blur(4px)" }}>
       <div className="w-full max-w-sm rounded-2xl p-5 max-h-[85vh] overflow-y-auto" style={{ background: P.bg, border: `1px solid ${P.panelBorder}` }}>
@@ -2876,42 +2944,17 @@ function WalletSelectorModal({ onClose, P, solanaRelevant }) {
           <button onClick={onClose}><X size={18} color={P.textMuted} /></button>
         </div>
 
-        {solanaRelevant && (
-          <div className="mb-4">
-            <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: P.textMuted }}>Solana</div>
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={handleOkxConnect}
-                disabled={connectingOkx}
-                className="flex items-center justify-between px-3.5 py-3 rounded-xl text-left"
-                style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, opacity: connectingOkx ? 0.6 : 1 }}
-              >
-                <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>OKX Wallet</span>
-                {connectingOkx && <span className="text-[11px]" style={{ color: P.textMuted }}>Connecting…</span>}
-              </button>
-              <button
-                onClick={openAppKitSolana}
-                className="flex flex-col items-start px-3.5 py-3 rounded-xl text-left"
-                style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}
-              >
-                <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>More Solana Wallets</span>
-                <span className="text-[11px] mt-0.5" style={{ color: P.textMuted }}>Phantom, Solflare, Coinbase, Trust, Backpack, and more</span>
-              </button>
-            </div>
-          </div>
+        {isFromSolana ? (
+          <>
+            {solanaSection}
+            {evmSection}
+          </>
+        ) : (
+          <>
+            {evmSection}
+            {solanaSection}
+          </>
         )}
-
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: P.textMuted }}>EVM</div>
-          <button
-            onClick={openAppKitEvm}
-            className="w-full flex flex-col items-start px-3.5 py-3 rounded-xl text-left"
-            style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}
-          >
-            <span className="text-[13.5px] font-semibold" style={{ color: P.textPrimary }}>Browse EVM Wallets</span>
-            <span className="text-[11px] mt-0.5" style={{ color: P.textMuted }}>MetaMask, Trust Wallet, Binance Wallet, SafePal, and 500+ more</span>
-          </button>
-        </div>
 
         {solanaWallet.error && (
           <div className="mt-3 rounded-lg p-3 text-[11.5px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
@@ -5072,7 +5115,14 @@ export default function MangoBridge() {
       )}
       {showDocs && <DocsModal onClose={() => setShowDocs(false)} P={P} />}
       {showAdminReferrals && <AdminReferralsPage onClose={() => setShowAdminReferrals(false)} />}
-      {showWalletSelector && <WalletSelectorModal onClose={() => setShowWalletSelector(false)} P={P} solanaRelevant={isFromSolana || !!CHAINS[to]?.isSolana} />}
+      {showWalletSelector && (
+        <WalletSelectorModal
+          onClose={() => setShowWalletSelector(false)}
+          P={P}
+          solanaRelevant={isFromSolana || !!CHAINS[to]?.isSolana}
+          isFromSolana={isFromSolana}
+        />
+      )}
       {showNetworkSelector && (
         <NetworkSelectorModal
           onClose={() => setShowNetworkSelector(false)}
