@@ -3844,7 +3844,18 @@ export default function MangoBridge() {
   // restricts both checks to the one place a symbol is actually a safe,
   // collision-free identifier: the hand-verified built-in registry.
   const isNativeAsset = !fromAsset.custom && fromAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[from];
-  const isRealUsdcPair = !fromAsset.custom && !toAsset.custom && fromAsset.symbol === "USDC" && toAsset.symbol === "USDC" && isCctpSupportedPair(from, to);
+  // Real bug fix, live-reported (screenshot: Base/USDC -> Solana/SOL,
+  // "You send" balance blank while "You receive" correctly showed its
+  // SOL balance): this used to require BOTH sides to be USDC in a
+  // CCTP-supported pair (fromAsset.symbol === "USDC" && toAsset.symbol
+  // === "USDC" && isCctpSupportedPair(...)), so usingLiveBalance below
+  // stayed false for the ordinary "sending USDC to a different
+  // destination asset" case — exactly the same bug just fixed on the
+  // TO side's own isRealUsdcPairTo, mirrored here: computed from the
+  // FROM asset's own identity only, guarded on CCTP_CHAINS[from]?.usdc
+  // actually existing rather than assuming every USDC-symbol built-in
+  // asset has an entry there.
+  const isRealUsdcPair = !fromAsset.custom && fromAsset.symbol === "USDC" && !!CCTP_CHAINS[from]?.usdc;
   const usdcTokenAddress = isRealUsdcPair ? CCTP_CHAINS[from].usdc : undefined;
   // A custom EVM token (pasted address, added via AssetDropdown) never
   // had a live balance source at all before this fix — isNativeAsset/
