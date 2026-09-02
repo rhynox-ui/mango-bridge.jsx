@@ -23,6 +23,11 @@ class ErrorBoundary extends React.Component {
   }
   componentDidCatch(error, info) {
     console.error("Mango Bridge crashed:", error, info);
+    // Real, minimal crash reporting (api/v1/client-error.js) — before
+    // this, a crash here was only ever visible in the crashing user's
+    // OWN browser console, invisible to anyone else. Fire-and-forget:
+    // never awaited, never lets a reporting failure make an already-bad
+    // moment worse for the person looking at this screen.
     try {
       fetch("/api/v1/client-error", {
         method: "POST",
@@ -88,6 +93,7 @@ class ErrorBoundary extends React.Component {
 
 // Genuinely isolated test route — visiting ?test=solana loads ONLY the
 // standalone connection test, completely separate from the main app.
+// Nothing here touches App.jsx or the existing, working bridge UI.
 const isTestRoute = new URLSearchParams(window.location.search).get("test") === "solana";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
