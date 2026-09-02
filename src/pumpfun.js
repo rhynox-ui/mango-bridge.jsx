@@ -73,6 +73,7 @@ import { PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web
 import BN from "bn.js";
 import { OnlinePumpSdk, PUMP_SDK } from "@pump-fun/pump-sdk";
 import { NATIVE_MINT } from "@solana/spl-token";
+import { resolveWalletStandardSigner } from "./solanaWalletStandard.js";
 
 // Wider than pumpswap.js's 1% default — see this file's own header on
 // why (no fee model for this side, unlike PumpSwap's).
@@ -146,6 +147,17 @@ export async function quotePumpFunSell({ connection, mintAddress, amountBaseUnit
  * Relay for that case.
  */
 export async function executePumpFunTrade({ connection, solanaAddress, solanaProvider, mintAddress, side, amountBaseUnits, slippagePct = DEFAULT_SLIPPAGE_PCT }) {
+  // Same real fix as relaySdkSolanaExecution.js's own resolveWalletStandardSigner
+  // fallback (see that shared module's header for the full story) — a
+  // non-OKX Wallet Standard wallet (this app's own Mango Wallet
+  // extension included) can leave solanaProvider null here even when
+  // genuinely connected, silently losing this direct pump.fun route
+  // (the caller's own try/catch just falls through to Relay/Jupiter)
+  // instead of actually using it.
+  const resolvedProvider = solanaProvider || (await resolveWalletStandardSigner(solanaAddress));
+  if (!resolvedProvider) {
+    throw new Error("No usable Solana signer for this wallet.");
+  }
   const onlineSdk = new OnlinePumpSdk(connection);
   const mint = new PublicKey(mintAddress);
   const user = new PublicKey(solanaAddress);
@@ -205,7 +217,7 @@ export async function executePumpFunTrade({ connection, solanaAddress, solanaPro
     throw new Error(`pump.fun simulation failed: ${JSON.stringify(sim.value.err)}`);
   }
 
-  const signed = await solanaProvider.signTransaction(transaction, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
+  const signed = await resolvedProvider.signTransaction(transaction, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
   const signature = await connection.sendRawTransaction(signed.serialize());
   await connection.confirmTransaction(signature, "confirmed");
   return { signature };
