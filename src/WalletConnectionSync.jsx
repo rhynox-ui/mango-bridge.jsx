@@ -1,5 +1,5 @@
 import {useEffect} from "react";
-import {useAppKitAccount} from "@reown/appkit/react";
+import {useAppKitAccount, useAppKitProvider} from "@reown/appkit/react";
 import {useConnect, useConfig} from "wagmi";
 
 // AppKit owns the connection modal/session. Wagmi owns the account state
@@ -10,10 +10,14 @@ export function WalletConnectionSync() {
   const config = useConfig();
   const {connectors} = useConnect();
   const {address, isConnected} = useAppKitAccount({namespace: "eip155"});
+  const {walletProvider} = useAppKitProvider("eip155");
   const normalizedAddress = address?.toLowerCase();
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer;
+    let attempts = 0;
+    const maxAttempts = 12;
 
     async function sync() {
       if (cancelled) return;
@@ -32,35 +36,56 @@ export function WalletConnectionSync() {
         return;
       }
 
-      // Do not use AppKit's multi-wallet connection registry here. That API is
-      // intended for the optional multi-wallet feature. The account hook is
-      // sufficient to tell us which address AppKit has actually connected.
-      //
-      // Resolve the wagmi connector from its live EIP-1193 provider instead of
-      // connector.getAccounts(). Some EIP-6963/mobile connectors only expose
-      // their account through the provider until wagmi has a connection; that
-      // was the circular dependency that left the UI stuck on Connect.
+      // AppKit's EIP-1193 provider is the authoritative provider for the
+      // connection that was just approved. Read it first so we do not depend
+      // on a wagmi connector having already appeared in React's connector
+      // list. Mango Wallet is an EIP-6963 provider, and AppKit can finish its
+      // connection before wagmi receives the late connector registration.
+      let providerAccounts = [];
+      let chainId;
+      try {
+        if (walletProvider?.request) {
+          const rawAccounts = await walletProvider.request({method: "eth_accounts"});
+          providerAccounts = Array.isArray(rawAccounts) ? rawAccounts : [];
+          const rawChainId = await walletProvider.request({method: "eth_chainId"});
+          chainId = Number(rawChainId);
+        }
+      } catch {
+        // The provider may not be ready on the first render after approval.
+      }
+
+      if (!providerAccounts.some((account) => String(account).toLowerCase() === normalizedAddress)) {
+        scheduleRetry();
+        return;
+      }
+      if (!Number.isInteger(chainId) || chainId <= 0) {
+        scheduleRetry();
+        return;
+      }
+
+      // Find the wagmi connector that owns the exact AppKit provider. If
+      // connector registration is still in flight, retry briefly rather than
+      // calling connect() or reopening the wallet approval flow.
       for (const connector of connectors) {
         if (cancelled) return;
         try {
           const provider = await connector.getProvider();
           if (!provider?.request) continue;
 
-          const providerAccounts = await provider.request({method: "eth_accounts"});
-          const accounts = Array.isArray(providerAccounts) ? providerAccounts : [];
-          if (!accounts.some((account) => account.toLowerCase() === normalizedAddress)) continue;
-
-          const rawChainId = await provider.request({method: "eth_chainId"});
-          const chainId = typeof rawChainId === "string" ? Number(rawChainId) : Number(rawChainId);
-          if (!Number.isInteger(chainId) || chainId <= 0) continue;
-          if (cancelled) return;
+          const sameProvider = walletProvider && provider === walletProvider;
+          let accounts = providerAccounts;
+          if (!sameProvider) {
+            const rawAccounts = await provider.request({method: "eth_accounts"});
+            accounts = Array.isArray(rawAccounts) ? rawAccounts : [];
+          }
+          if (!accounts.some((account) => String(account).toLowerCase() === normalizedAddress)) continue;
 
           const currentConnection = config.state.connections.get(connector.uid);
           if (
             config.state.status === "connected" &&
             config.state.current === connector.uid &&
             currentConnection?.chainId === chainId &&
-            currentConnection?.accounts?.some((account) => account.toLowerCase() === normalizedAddress)
+            currentConnection?.accounts?.some((account) => String(account).toLowerCase() === normalizedAddress)
           ) return;
 
           config.setState((state) => ({
@@ -80,13 +105,25 @@ export function WalletConnectionSync() {
           // Skip it; never call connect() and never trigger another approval.
         }
       }
+
+      scheduleRetry();
+    }
+
+    function scheduleRetry() {
+      if (cancelled || attempts >= maxAttempts) return;
+      attempts += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        void sync();
+      }, 250);
     }
 
     void sync();
     return () => {
       cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [config, connectors, normalizedAddress, isConnected]);
+  }, [config, connectors, normalizedAddress, isConnected, walletProvider]);
 
   return null;
 }
