@@ -3739,7 +3739,26 @@ export default function MangoBridge() {
   const [sendToOther, setSendToOther] = useState(false);
   const [destAddress, setDestAddress] = useState("");
 
-  const { address, isConnected, chainId: connectedChainId } = useAccount();
+  const { address, isConnected, chainId: connectedChainId, connector: evmConnector } = useAccount();
+  // Real UX gap closed, live-directed (compare against mango-mobile's
+  // own BridgeScreen.tsx, which never shows a "connect a second
+  // wallet" prompt at all — its own header comment explains why:
+  // "both an EVM and a Solana key already exist locally from the same
+  // seed the moment the wallet is created"). The site's own Mango
+  // Wallet browser extension is architecturally the SAME single-seed
+  // wallet as mobile's embedded one (extension/src/popup.js's own
+  // deriveAccountAtIndex derives both an EVM and a Solana keypair from
+  // one mnemonic, same as src/wallet/keys.js) — it just can't skip the
+  // browser's own per-namespace approval prompt the way mobile's local
+  // signing can, since that's a real security boundary, not a UX
+  // choice. What WAS a needless extra layer on top of that one
+  // unavoidable prompt: this app's own WalletSelectorModal always
+  // interposed a whole separate picker screen (OKX vs "More Solana
+  // Wallets") before ever reaching it. Detected here so the "Solana
+  // wallet needed" panel below can skip straight to AppKit's own
+  // Solana connect view instead, where Mango Wallet already appears
+  // as a real, Wallet-Standard-discovered option.
+  const isMangoWalletEvmConnected = evmConnector?.name === "Mango Wallet";
   const { connect, connectors, isPending: isConnecting, error: connectError } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
@@ -4920,15 +4939,17 @@ export default function MangoBridge() {
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <div className="text-[12.5px] font-medium mb-1" style={{ color: P.textPrimary }}>Solana wallet needed</div>
                   <div className="text-[11px] mb-2.5" style={{ color: P.textMuted }}>
-                    Solana isn't EVM-compatible, so this route needs its own separate connection, alongside your regular wallet.
+                    {isMangoWalletEvmConnected
+                      ? "Mango Wallet holds a Solana account too — this browser just needs to approve it separately, same as any other site permission."
+                      : "Solana isn't EVM-compatible, so this route needs its own separate connection, alongside your regular wallet."}
                   </div>
                   <button
-                    onClick={() => setShowWalletSelector(true)}
+                    onClick={() => (isMangoWalletEvmConnected ? openAppKit({ view: "Connect", namespace: "solana" }) : setShowWalletSelector(true))}
                     disabled={solanaWallet.connecting}
                     className="w-full py-2.5 rounded-lg text-[12.5px] font-semibold"
                     style={{ background: P.ctaBg, color: P.ctaText, opacity: solanaWallet.connecting ? 0.6 : 1 }}
                   >
-                    {solanaWallet.connecting ? "Connecting…" : "Connect Solana Wallet"}
+                    {solanaWallet.connecting ? "Connecting…" : isMangoWalletEvmConnected ? "Connect Mango Wallet" : "Connect Solana Wallet"}
                   </button>
                   {solanaWallet.error && (
                     <div className="mt-2 text-[10.5px]" style={{ color: "#D92D20" }}>{solanaWallet.error}</div>
