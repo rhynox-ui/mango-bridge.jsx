@@ -71,6 +71,7 @@ import {
   sellBaseInput as sellBaseInputMath,
   buyQuoteInput as buyQuoteInputMath,
 } from "@pump-fun/pump-swap-sdk";
+import { resolveWalletStandardSigner } from "./solanaWalletStandard.js";
 
 // 1% — same default tolerance this repo's own Uniswap/SushiSwap
 // integrations apply when nothing more specific is available.
@@ -179,6 +180,17 @@ export async function buildPumpSwapBuyInstructions({ connection, mintAddress, qu
  * provider, try the next one" contract this file's other exports use.
  */
 export async function executePumpSwapTrade({ connection, solanaAddress, solanaProvider, mintAddress, side, amountBaseUnits, slippagePct = DEFAULT_SLIPPAGE_PCT }) {
+  // Same real fix as relaySdkSolanaExecution.js/pumpfun.js's own
+  // resolveWalletStandardSigner fallback (see that shared module's
+  // header for the full story) — a non-OKX Wallet Standard wallet (this
+  // app's own Mango Wallet extension included) can leave solanaProvider
+  // null here even when genuinely connected, silently losing this
+  // direct PumpSwap route (the caller's own try/catch just falls
+  // through to Relay/Jupiter) instead of actually using it.
+  const resolvedProvider = solanaProvider || (await resolveWalletStandardSigner(solanaAddress));
+  if (!resolvedProvider) {
+    throw new Error("No usable Solana signer for this wallet.");
+  }
   const instructions = side === "sell"
     ? await buildPumpSwapSellInstructions({ connection, mintAddress, amountBaseUnits, userAddress: solanaAddress, slippagePct })
     : await buildPumpSwapBuyInstructions({ connection, mintAddress, quoteBaseUnits: amountBaseUnits, userAddress: solanaAddress, slippagePct });
@@ -200,7 +212,7 @@ export async function executePumpSwapTrade({ connection, solanaAddress, solanaPr
     throw new Error(`PumpSwap simulation failed: ${JSON.stringify(sim.value.err)}`);
   }
 
-  const signed = await solanaProvider.signTransaction(transaction, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
+  const signed = await resolvedProvider.signTransaction(transaction, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
   const signature = await connection.sendRawTransaction(signed.serialize());
   await connection.confirmTransaction(signature, "confirmed");
   return { signature };
