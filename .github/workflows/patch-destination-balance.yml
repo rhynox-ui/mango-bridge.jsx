@@ -1,0 +1,124 @@
+name: Patch destination balance display
+
+on:
+  push:
+    branches:
+      - fix/wallet-connect-sol-native-sol
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'feat: show destination wallet balance') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/wallet-connect-sol-native-sol
+
+      - name: Patch App.jsx
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/App.jsx')
+          text = path.read_text()
+
+          old = '''  const [fromChainBalances, setFromChainBalances] = useState({});
+  const [balancesLoading, setBalancesLoading] = useState(false);'''
+          new = '''  const [fromChainBalances, setFromChainBalances] = useState({});
+  const [balancesLoading, setBalancesLoading] = useState(false);
+  // Real, live balances for the current "to" chain as well. The receive
+  // side is informational, so we fetch the selected destination wallet's
+  // actual balances without using them for MAX/insufficient-funds checks.
+  // Uses the same multi-chain balance helpers as the source side, including
+  // native SOL for Solana and verified ERC-20/SPL assets for EVM/Solana.
+  const [toChainBalances, setToChainBalances] = useState({});
+  const [toBalancesLoading, setToBalancesLoading] = useState(false);'''
+          if old not in text:
+              raise SystemExit('source balance state anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''  useEffect(() => {
+    refreshFromChainBalances();
+  }, [refreshFromChainBalances]);'''
+          new = '''  useEffect(() => {
+    refreshFromChainBalances();
+  }, [refreshFromChainBalances]);
+
+  const refreshToChainBalances = useCallback(async (forceFresh = false) => {
+    if (!connected) { setToChainBalances({}); return; }
+    setToBalancesLoading(true);
+    try {
+      const real = CHAINS[to]?.isSolana
+        ? await fetchSolanaBalance({ solanaAddress: activeSolanaAddress, forceFresh })
+        : await fetchAllEvmBalances({ chainKey: to, nativeSymbol: NATIVE_SYMBOL_BY_CHAIN[to], address, forceFresh });
+      setToChainBalances(real);
+    } finally {
+      setToBalancesLoading(false);
+    }
+  }, [connected, to, address, activeSolanaAddress]);
+
+  useEffect(() => {
+    refreshToChainBalances();
+  }, [refreshToChainBalances]);'''
+          if old not in text:
+              raise SystemExit('source balance effect anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''  const usingLiveBalanceTo = connected && (isNativeAssetTo || isRealUsdcPairTo || isCustomToToken || isCustomToSolanaToken);
+  const liveBalanceLoadingTo = isCustomToSolanaToken ? customSolanaBalanceLoadingTo : isNativeAssetTo ? balanceLoadingTo : isCustomToToken ? customBalanceLoadingTo : usdcBalanceLoadingTo;
+  const liveBalanceValueTo = isNativeAssetTo ? liveBalanceTo : isCustomToToken ? liveCustomBalanceTo : liveUsdcBalanceTo;'''
+          new = '''  const hasFetchedToChainBalance = Object.prototype.hasOwnProperty.call(toChainBalances, toAsset.symbol);
+  const usingLiveBalanceTo = connected && (
+    (!toAsset.custom && (toBalancesLoading || hasFetchedToChainBalance)) ||
+    isNativeAssetTo || isRealUsdcPairTo || isCustomToToken || isCustomToSolanaToken
+  );
+  const liveBalanceLoadingTo = !toAsset.custom && toBalancesLoading
+    ? true
+    : isCustomToSolanaToken
+      ? customSolanaBalanceLoadingTo
+      : isNativeAssetTo
+        ? balanceLoadingTo
+        : isCustomToToken
+          ? customBalanceLoadingTo
+          : usdcBalanceLoadingTo;
+  const liveBalanceValueTo = hasFetchedToChainBalance
+    ? { formatted: String(toChainBalances[toAsset.symbol] ?? 0) }
+    : isNativeAssetTo
+      ? liveBalanceTo
+      : isCustomToToken
+        ? liveCustomBalanceTo
+        : liveUsdcBalanceTo;'''
+          if old not in text:
+              raise SystemExit('destination balance selector anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''                    {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(isCustomToSolanaToken ? (liveCustomSolanaBalanceTo ?? 0) : Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}'''
+          new = '''                    {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(isCustomToSolanaToken ? (liveCustomSolanaBalanceTo ?? 0) : Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}'''
+          if old not in text:
+              raise SystemExit('receive balance render anchor not found')
+          # Render expression already handles the new liveBalanceValueTo source;
+          # keep it unchanged to minimize UI churn.
+
+          path.write_text(text)
+
+          # Verify the patch landed exactly once at each critical point.
+          checks = [
+              'const [toChainBalances, setToChainBalances] = useState({});',
+              'const refreshToChainBalances = useCallback',
+              'const hasFetchedToChainBalance = Object.prototype.hasOwnProperty.call(toChainBalances, toAsset.symbol);',
+          ]
+          for check in checks:
+              if text.count(check) != 1:
+                  raise SystemExit(f'patch verification failed: {check}')
+
+      - name: Commit destination balance patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: show destination wallet balance"
+          git push origin HEAD:fix/wallet-connect-sol-native-sol
