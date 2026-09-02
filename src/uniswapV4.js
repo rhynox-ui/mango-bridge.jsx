@@ -268,6 +268,23 @@ export async function executeUniswapV4Swap({ chainId, account, tokenIn, tokenOut
     ...(tokenInIsNative ? { value: amountIn } : {}),
     chainId,
   });
-  await waitForTransactionReceipt(config, { hash: swapHash, chainId });
+  try {
+    await waitForTransactionReceipt(config, { hash: swapHash, chainId });
+  } catch (err) {
+    // Real bug, live-reported (fallbackDex.js's own tryFallbackProviders
+    // loop): swapHash above is a REAL broadcast transaction the instant
+    // writeContract returns it — if only the receipt wait then throws
+    // (a revert, or the wait itself timing out/erroring), this used to
+    // lose that hash entirely, since it was never returned on the
+    // throw path. The caller's retry-next-provider loop would then try
+    // ANOTHER swap of the same sellAmount against a wallet whose real
+    // on-chain balance/allowance had already changed — which is what
+    // produced the reported screen (a real hash shown as "likely
+    // succeeded", right next to a brand-new revert from a doomed next
+    // attempt). Tagging it here lets that loop recognize a broadcast
+    // already happened and stop instead of compounding it.
+    err.broadcastHash = swapHash;
+    throw err;
+  }
   return { hash: swapHash };
 }
