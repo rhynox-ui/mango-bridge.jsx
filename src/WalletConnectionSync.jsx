@@ -14,8 +14,27 @@ export function WalletConnectionSync() {
     let cancelled = false;
 
     async function sync() {
-      if (cancelled || !isConnected || !address) return;
-      if (config.state.status === "connected" && config.state.current) return;
+      if (cancelled) return;
+
+      // AppKit is disconnected: clear only wagmi's EVM state. This keeps the
+      // UI honest after an explicit disconnect and never opens a connection.
+      if (!isConnected || !address) {
+        if (config.state.status !== "disconnected" || config.state.connections.size > 0) {
+          config.setState(state => ({
+            ...state,
+            connections: new Map(),
+            current: null,
+            status: "disconnected",
+          }));
+        }
+        return;
+      }
+
+      // Already synchronized to this exact AppKit address.
+      if (config.state.status === "connected" && config.state.current) {
+        const current = config.state.connections.get(config.state.current);
+        if (current?.accounts?.some(account => account.toLowerCase() === address.toLowerCase())) return;
+      }
 
       // Never call wagmi's connect() here. eth_accounts/eth_chainId are
       // read-only and cannot create a new wallet approval flow.
@@ -32,7 +51,7 @@ export function WalletConnectionSync() {
           config.setState(state => ({
             ...state,
             connections: new Map(state.connections).set(connector.uid, {
-              accounts: accounts,
+              accounts,
               chainId,
               connector,
             }),
