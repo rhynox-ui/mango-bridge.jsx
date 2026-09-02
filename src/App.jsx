@@ -3936,7 +3936,24 @@ export default function MangoBridge() {
   // Same real bug fix as isNativeAsset's own comment above — !toAsset.custom
   // keeps this restricted to the curated, symbol-collision-free ASSETS list.
   const isNativeAssetTo = !toAsset.custom && toAsset.symbol === NATIVE_SYMBOL_BY_CHAIN[to];
-  const isRealUsdcPairTo = isRealUsdcPair;
+  // Real bug fix, live-reported ("let each panel show balance" — a
+  // screenshot showing "You send" correctly displaying its balance
+  // while "You receive" showed nothing at all for a plain built-in
+  // USDC destination): this used to just copy isRealUsdcPair verbatim
+  // — the SOURCE side's own "is this a CCTP-eligible USDC-to-USDC
+  // pair" check (fromAsset.symbol === "USDC" && toAsset.symbol ===
+  // "USDC" && isCctpSupportedPair(...)) — meaning the receive panel's
+  // balance only ever showed for that one narrow same-asset case,
+  // never for the ordinary "receiving USDC from a different source
+  // asset" case this screenshot was. Computed independently from the
+  // TO asset's own identity instead, same shape isNativeAssetTo/
+  // isCustomToToken already use. Guarded on CCTP_CHAINS[to]?.usdc
+  // actually existing (only 5 of this app's chains are in that map)
+  // rather than assuming every USDC-symbol built-in asset has an
+  // entry there — the same real, verified USDC address
+  // TOKEN_ADDRESSES.USDC[to] (chainData.js) already agrees with for
+  // every chain both maps cover.
+  const isRealUsdcPairTo = !toAsset.custom && toAsset.symbol === "USDC" && !!CCTP_CHAINS[to]?.usdc;
   const usdcTokenAddressTo = isRealUsdcPairTo ? CCTP_CHAINS[to].usdc : undefined;
   // Same real fix as isCustomFromToken above, mirrored for the receive
   // side — informational only (no MAX button there), but "Balance: X"
