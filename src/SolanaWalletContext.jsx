@@ -1,21 +1,16 @@
 // src/SolanaWalletContext.jsx
 //
-// Real, shared Solana connection state, using OKX Connect — the same
-// mechanism already proven working on the standalone ?test=solana page.
-// Lifted into a proper React Context here so the actual bridge UI (wallet
-// selector, balance display, transaction signing) can all share one real
-// connection instead of each needing its own.
+// Real, shared Solana connection state. OKX Connect remains the dedicated
+// signing path for Solana-sourced transfers, while Reown AppKit supplies
+// the address/provider for Solana wallets connected through its adapter.
+// The context exposes the ACTIVE Solana address so consumers that only need
+// a recipient do not accidentally fall back to an EVM address.
 //
-// Deliberately kept OKX-only and separate from the Reown AppKit
-// integration (src/appkit.js), which now covers every other Solana
-// wallet (Phantom, Solflare, Coinbase, Trust, Backpack/Glow via Wallet
-// Standard auto-discovery). Two real reasons OKX stays on its own path
-// rather than folding into AppKit's SolanaAdapter: (1) OKX's extension
-// likely also announces itself via the Solana Wallet Standard, so routing
-// it through both AppKit AND this context risks two divergent "OKX"
-// entries; (2) the actual Solana-sourced execution path
-// (relaySdkSolanaExecution.js) has only ever been exercised against this
-// specific OKX provider shape — not worth risking near real funds.
+// OKX stays on its own path rather than being folded into AppKit's Solana
+// adapter because the actual Solana-sourced execution path has only been
+// exercised against OKX's provider shape. AppKit Solana is still supported
+// for destination-side wallet state and for the provider passed through
+// App.jsx's existing effectiveSolanaWallet adapter.
 //
 // GENUINE, NAMED GAP: signing and submitting a real Solana transaction
 // (what's actually needed to bridge FROM Solana, not just receive INTO
@@ -28,6 +23,7 @@
 import React, { createContext, useContext, useState, useRef, useCallback } from "react";
 import { OKXUniversalProvider } from "@okxconnect/universal-provider";
 import { OKXSolanaProvider } from "@okxconnect/solana-provider";
+import { useAppKitAccount, useDisconnect as useAppKitDisconnect } from "@reown/appkit/react";
 
 const SOLANA_MAINNET = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 
@@ -39,6 +35,14 @@ export function SolanaWalletProvider({ children }) {
   const [error, setError] = useState(null);
   const universalProviderRef = useRef(null);
   const solanaProviderRef = useRef(null);
+  const { address: appKitAddress } = useAppKitAccount({ namespace: "solana" });
+  const { disconnect: disconnectAppKit } = useAppKitDisconnect();
+
+  // One active Solana address for consumers that need an address only.
+  // OKX wins when it is connected; otherwise AppKit's Solana account is
+  // the active address. This mirrors App.jsx's existing activeSolanaAddress
+  // selection without changing the underlying provider ownership.
+  const activeAddress = address || appKitAddress || null;
 
   const connect = useCallback(async () => {
     setConnecting(true);
@@ -111,7 +115,11 @@ export function SolanaWalletProvider({ children }) {
 
   const disconnect = useCallback(async () => {
     try {
-      await universalProviderRef.current?.disconnect();
+      if (address) {
+        await universalProviderRef.current?.disconnect();
+      } else if (appKitAddress) {
+        await disconnectAppKit({ namespace: "solana" });
+      }
     } catch {
       // Real disconnect failures aren't critical — clear local state
       // regardless, same reasoning as the standalone test page.
@@ -119,10 +127,10 @@ export function SolanaWalletProvider({ children }) {
     setAddress(null);
     universalProviderRef.current = null;
     solanaProviderRef.current = null;
-  }, []);
+  }, [address, appKitAddress, disconnectAppKit]);
 
   return (
-    <SolanaWalletContext.Provider value={{ address, connecting, error, connect, disconnect, solanaProvider: solanaProviderRef }}>
+    <SolanaWalletContext.Provider value={{ address: activeAddress, connecting, error, connect, disconnect, solanaProvider: solanaProviderRef }}>
       {children}
     </SolanaWalletContext.Provider>
   );
