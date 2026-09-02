@@ -4002,9 +4002,40 @@ export default function MangoBridge() {
     return () => { cancelled = true; };
   }, [isCustomToSolanaToken, connected, activeSolanaAddress, toAsset.address, toAsset.onchainDecimals, customSolanaBalanceRefreshKey]);
 
+  // Real bug fix, found auditing this same "You receive" balance
+  // feature: isNativeAssetTo is chain-agnostic (true for ANY chain's
+  // native asset, Solana included — same as isNativeAsset on the from
+  // side), but liveBalanceTo below is wagmi's useBalance(), an EVM-only
+  // hook explicitly disabled for a Solana destination
+  // (!CHAINS[to]?.isSolana in its own query.enabled). That combination
+  // meant native SOL as the destination asset showed usingLiveBalanceTo
+  // as true (a balance SHOULD show) while the actual value stayed
+  // undefined — rendered as a flat, wrong "Balance: 0.0000 SOL" rather
+  // than either the real balance or honestly showing nothing. Fixed the
+  // same way isCustomToSolanaToken right above already handles its own
+  // EVM-hook gap: a dedicated Solana-native fetch via fetchSolanaBalance
+  // (the exact function the FROM side's own refreshFromChainBalances
+  // already trusts for this), not the EVM hook.
+  const isNativeAssetToSolana = isNativeAssetTo && !!CHAINS[to]?.isSolana;
+  const [liveSolNativeBalanceTo, setLiveSolNativeBalanceTo] = useState(null);
+  const [solNativeBalanceLoadingTo, setSolNativeBalanceLoadingTo] = useState(false);
+  useEffect(() => {
+    if (!isNativeAssetToSolana || !connected || !activeSolanaAddress) {
+      setLiveSolNativeBalanceTo(null);
+      return;
+    }
+    let cancelled = false;
+    setSolNativeBalanceLoadingTo(true);
+    fetchSolanaBalance({ solanaAddress: activeSolanaAddress, forceFresh: customSolanaBalanceRefreshKey > 0 })
+      .then((bal) => { if (!cancelled) setLiveSolNativeBalanceTo(bal?.SOL ?? 0); })
+      .catch(() => { if (!cancelled) setLiveSolNativeBalanceTo(null); })
+      .finally(() => { if (!cancelled) setSolNativeBalanceLoadingTo(false); });
+    return () => { cancelled = true; };
+  }, [isNativeAssetToSolana, connected, activeSolanaAddress, customSolanaBalanceRefreshKey]);
+
   const usingLiveBalanceTo = connected && (isNativeAssetTo || isRealUsdcPairTo || isCustomToToken || isCustomToSolanaToken);
-  const liveBalanceLoadingTo = isCustomToSolanaToken ? customSolanaBalanceLoadingTo : isNativeAssetTo ? balanceLoadingTo : isCustomToToken ? customBalanceLoadingTo : usdcBalanceLoadingTo;
-  const liveBalanceValueTo = isNativeAssetTo ? liveBalanceTo : isCustomToToken ? liveCustomBalanceTo : liveUsdcBalanceTo;
+  const liveBalanceLoadingTo = isCustomToSolanaToken ? customSolanaBalanceLoadingTo : isNativeAssetToSolana ? solNativeBalanceLoadingTo : isNativeAssetTo ? balanceLoadingTo : isCustomToToken ? customBalanceLoadingTo : usdcBalanceLoadingTo;
+  const liveBalanceValueTo = isNativeAssetToSolana ? null : isNativeAssetTo ? liveBalanceTo : isCustomToToken ? liveCustomBalanceTo : liveUsdcBalanceTo;
 
   useEffect(() => {
     // Merged against DEFAULT_BALANCES, not just loaded as-is — otherwise
@@ -4755,7 +4786,7 @@ export default function MangoBridge() {
                 <div className="flex items-center justify-between mb-2.5">
                   <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>You receive</span>
                   <span className="text-[11.5px]" style={{ color: P.textMuted }}>
-                    {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(isCustomToSolanaToken ? (liveCustomSolanaBalanceTo ?? 0) : Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}
+                    {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(isCustomToSolanaToken ? (liveCustomSolanaBalanceTo ?? 0) : isNativeAssetToSolana ? (liveSolNativeBalanceTo ?? 0) : Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}
                   </span>
                 </div>
                 {/* Real swap widgets (Uniswap, Jupiter, 1inch, PancakeSwap)
