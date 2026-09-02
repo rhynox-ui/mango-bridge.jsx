@@ -161,14 +161,6 @@ export async function executeSushiSwapV2Swap({ chainId, account, tokenIn, tokenO
       chainId,
     });
   }
-  try {
-    await waitForTransactionReceipt(config, { hash: swapHash, chainId });
-  } catch (err) {
-    // Same real fix as uniswapV4.js's own executeUniswapV4Swap — see
-    // its comment for the full reasoning (fallbackDex.js's retry loop
-    // needs this hash to know a real swap already broadcast).
-    err.broadcastHash = swapHash;
-    throw err;
-  }
+  await waitForTransactionReceipt(config, { hash: swapHash, chainId });
   return { hash: swapHash };
 }
