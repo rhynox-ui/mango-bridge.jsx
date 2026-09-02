@@ -17,25 +17,13 @@
 //   - Anything else (connecting, signing, sending): opens a real popup
 //     window and waits for the user's decision there.
 //
-// Known limitation, stated plainly rather than hidden: MV3 service
-// workers can be torn down by the browser after ~30s idle. A pending
-// approval's in-memory sendResponse callback does not survive that — if
-// it happens mid-approval, the dApp's request will hang until it times
-// out on its own end rather than getting a clean rejection. This is a
-// real, documented gap (shared by most MV3-based wallet extensions'
-// simplest implementations), not something this file silently papers
-// over.
+// Known limitation, stated plainly: MV3 service workers can be torn down
+// by the browser after ~30s idle. A pending approval's in-memory
+// sendResponse callback does not survive that — if it happens mid-approval,
+// the dApp's request will hang until it times out on its own end rather than
+// getting a clean rejection. This is a real, documented gap, not something
+// this file silently papers over.
 
-// Registers inpage.js as a "world": "MAIN" content script, run
-// programmatically via chrome.scripting rather than as a static entry in
-// manifest.json's content_scripts array. Both forms exist in Chrome, but
-// the static-manifest form of a MAIN-world content script has a known,
-// documented reliability bug on some Chrome versions; registering it here
-// instead — once, at service-worker startup — is the form real wallet
-// extensions rely on for this. Chrome persists a registerContentScripts
-// registration across browser restarts by itself, so this only needs to
-// actually add it once; "already registered" on every later worker wake
-// (MV3 workers restart often) is the expected, harmless steady state.
 async function registerInpageScript() {
   try {
     await chrome.scripting.registerContentScripts([
@@ -50,9 +38,6 @@ async function registerInpageScript() {
       },
     ]);
   } catch (err) {
-    // Chrome throws if "mango-inpage" is already registered from a prior
-    // worker wake — that's success, not a failure, so only a genuinely
-    // different error is worth surfacing.
     if (!String(err?.message).includes("Duplicate script ID")) {
       console.error("Mango Wallet: failed to register inpage script", err);
     }
@@ -68,22 +53,11 @@ const RESOLVE_TYPE = "MANGO_WALLET_RESOLVE";
 const NO_APPROVAL_NEEDED = new Set(["eth_chainId", "eth_accounts", "eth_getAccounts", "wallet_getPermissions"]);
 const APPROVAL_METHODS_EVM = new Set([
   "eth_requestAccounts", "eth_sendTransaction", "personal_sign", "eth_signTypedData_v4", "wallet_switchEthereumChain",
-  // wallet_addEthereumChain and wallet_watchAsset previously fell through
-  // to the generic "Method not supported" (-32601) rejection below — a
-  // clean, spec-correct error, but real missing functionality: plenty of
-  // real dApps call addEthereumChain directly (not just as a fallback
-  // after a failed switch) when onboarding to a specific network, and
-  // watchAsset is the standard "Add token to wallet" button after a swap.
-  // wallet_requestPermissions piggybacks on the same approval popup as
-  // eth_requestAccounts (see popup.js) since this wallet only ever has
-  // the one real permission (eth_accounts) to grant.
   "wallet_addEthereumChain", "wallet_watchAsset", "wallet_requestPermissions",
 ]);
 const APPROVAL_METHODS_SOLANA = new Set(["connect", "signTransaction", "signAllTransactions", "signAndSendTransaction", "signMessage"]);
 
-// In-memory only — see the module doc's "known limitation" above for why
-// this can't be the sole source of truth for a long-idle popup.
-const pendingRequests = new Map(); // id -> { sendResponse, popupWindowId, chain, method, params, origin }
+const pendingRequests = new Map();
 
 async function getConnectedSites() {
   const { connectedSites } = await chrome.storage.local.get("connectedSites");
@@ -110,7 +84,7 @@ async function broadcastEvent(origin, chain, event, payload) {
     try {
       if (new URL(tab.url).origin !== origin) continue;
     } catch { continue; }
-    chrome.tabs.sendMessage(tab.id, { type: EVENT_TYPE, chain, event, payload }).catch(() => { /* no content script in that tab (e.g. chrome:// pages) — fine to ignore */ });
+    chrome.tabs.sendMessage(tab.id, { type: EVENT_TYPE, chain, event, payload }).catch(() => {});
   }
 }
 
@@ -123,7 +97,7 @@ async function openApprovalPopup(id) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === REQUEST_TYPE) {
     handleRequest(message, sendResponse);
-    return true; // async response
+    return true;
   }
   if (message?.type === POPUP_READY_TYPE) {
     const entry = pendingRequests.get(message.requestId);
@@ -146,11 +120,6 @@ async function handleRequest(message, sendResponse) {
     const connection = sites[origin]?.evm;
     if (method === "eth_chainId") { sendResponse({ result: connection?.chainId ?? "0x1" }); return; }
     if (method === "wallet_getPermissions") {
-      // EIP-2255. This wallet only ever has one real permission to report
-      // (eth_accounts) — no separate permission system exists beyond
-      // "connected or not," so this is a real, accurate answer, not a
-      // stub: an empty array when there's genuinely nothing granted yet,
-      // a single eth_accounts capability when there is.
       sendResponse({
         result: connection
           ? [{ parentCapability: "eth_accounts", invoker: origin, caveats: [{ type: "restrictReturnedAccounts", value: [connection.address] }], date: Date.now() }]
@@ -162,14 +131,26 @@ async function handleRequest(message, sendResponse) {
     return;
   }
 
+  // EIP-1193 explicitly permits eth_requestAccounts to return immediately
+  // when the dapp has already been authorized. AppKit/wagmi may call
+  // eth_requestAccounts during automatic session restoration. Treating
+  // every such call as a fresh approval was the root of the Mango Wallet
+  // reconnect loop: AppKit restored the connection, Mango opened a popup,
+  // the popup resolved the same connection, AppKit retried restoration,
+  // and the cycle repeated. An already-authorized origin must be
+  // idempotent and must never open another approval window.
+  if (chain === "evm" && method === "eth_requestAccounts") {
+    const sites = await getConnectedSites();
+    const connection = sites[origin]?.evm;
+    if (connection?.address) {
+      sendResponse({ result: [connection.address] });
+      return;
+    }
+  }
+
   // "disconnect" doesn't need a popup — a site can't force the user to
   // keep it connected, so this always succeeds immediately. This has to
-  // be checked BEFORE the needsApproval gate below: "disconnect" was
-  // never actually in APPROVAL_METHODS_SOLANA, so that gate rejected
-  // every real disconnect call with "Method not supported" and this
-  // block never ran — window.solana.disconnect() has been silently
-  // broken for every dApp that calls it (e.g. any wallet-adapter
-  // "Disconnect" button) until this fix.
+  // be checked BEFORE the needsApproval gate below.
   if (chain === "solana" && method === "disconnect") {
     await clearConnectedSite(origin, "solana");
     sendResponse({ result: null });
@@ -192,19 +173,11 @@ async function handleRequest(message, sendResponse) {
 async function handleResolve(message) {
   const { id, result, error, connection } = message;
   const entry = pendingRequests.get(id);
-  if (!entry) return; // popup resolved a request this worker no longer remembers (e.g. it was restarted) — see module doc
+  if (!entry) return;
   pendingRequests.delete(id);
 
   if (connection) {
     await setConnectedSite(entry.origin, entry.chain, connection);
-    // Real bug fixed here: this used to always broadcast "accountsChanged"
-    // for any EVM connection update, including a chain switch — where
-    // the account hasn't changed at all, only the chain has. EIP-1193
-    // has a separate event for exactly that (chainChanged, whose payload
-    // is the bare chainId string, not an array), and dApps that key
-    // chain-dependent state off that specific event never saw it fire
-    // from this wallet, only ever seeing accountsChanged with the same
-    // address it already had.
     if (entry.chain === "solana") {
       await broadcastEvent(entry.origin, "solana", "connect", connection.address);
     } else if (entry.method === "wallet_switchEthereumChain" || entry.method === "wallet_addEthereumChain") {
