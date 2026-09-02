@@ -17,41 +17,34 @@ export function WalletConnectionSync() {
       if (cancelled || !isConnected || !address) return;
       if (config.state.status === "connected" && config.state.current) return;
 
-      // Never call wagmi's connect() here. That is exactly the operation that
-      // can create another wallet approval and was responsible for the loop
-      // this component is designed to prevent. eth_accounts/eth_chainId are
-      // read-only and therefore safe after AppKit reports a successful
-      // explicit connection.
-      const connector = config.connectors.find(candidate => {
-        try {
-          return candidate.isAuthorized ? true : candidate.id !== "";
-        } catch {
-          return false;
-        }
-      });
-      if (!connector) return;
-
-      try {
-        const accounts = await connector.getAccounts();
-        if (cancelled || !accounts?.length) return;
-        const chainId = await connector.getChainId();
+      // Never call wagmi's connect() here. eth_accounts/eth_chainId are
+      // read-only and cannot create a new wallet approval flow.
+      for (const connector of config.connectors) {
         if (cancelled) return;
+        try {
+          const accounts = await connector.getAccounts();
+          const connectedAddress = accounts?.find(account => account.toLowerCase() === address.toLowerCase());
+          if (!connectedAddress) continue;
 
-        config.setState(state => ({
-          ...state,
-          connections: new Map(state.connections).set(connector.uid, {
-            accounts: accounts,
+          const chainId = await connector.getChainId();
+          if (cancelled) return;
+
+          config.setState(state => ({
+            ...state,
+            connections: new Map(state.connections).set(connector.uid, {
+              accounts: accounts,
+              chainId,
+              connector,
+            }),
+            current: connector.uid,
+            status: "connected",
             chainId,
-            connector,
-          }),
-          current: connector.uid,
-          status: "connected",
-          chainId,
-        }));
-      } catch {
-        // AppKit remains the source of truth. If the connector cannot expose
-        // its already-authorized account without prompting, leave wagmi
-        // untouched rather than risking another wallet approval.
+          }));
+          return;
+        } catch {
+          // A connector that cannot expose its already-authorized account is
+          // skipped. Do not call connect() and risk another approval prompt.
+        }
       }
     }
 
