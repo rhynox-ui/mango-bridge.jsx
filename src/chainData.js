@@ -16,13 +16,7 @@ export const MAINNET_CHAIN_IDS = {
   bnb: 56,
   robinhood: 4663,
   stable: 988,
-  // Confirmed directly from Relay's own SDK documentation — Relay's own
-  // internal identifier for Solana, not a real Solana concept.
   solana: 792703809,
-  // Native-asset-only additions, all chain ids cross-verified against
-  // wagmi/chains' own maintained definitions (see src/wagmi.js). No token
-  // contract addresses are verified for these yet, so only native-asset
-  // transfers are supported — see NATIVE_PLACEHOLDER_BY_CHAIN below.
   arbitrum: 42161,
   avalanche: 43114,
   abstract: 2741,
@@ -35,84 +29,29 @@ export const MAINNET_CHAIN_IDS = {
 
 export const NATIVE_SYMBOL = {
   ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH",
-  // StableChain's own gas token is USDT0, not ETH/a typical native coin
-  // — confirmed against StableChain's own docs (it uses Tether as its
-  // universal gas asset). Already correctly reflected in App.jsx's own
-  // local NATIVE_SYMBOL_BY_CHAIN; this export (chainData.js's shared
-  // source of truth, re-exported by relaybridge.js and used directly by
-  // api/v1/bridge/chains.js and currencyAddress() below) was missing
-  // it — a real gap: currencyAddress("stable", "USDT0") fell through to
-  // the ERC-20 TOKEN_ADDRESSES branch instead of the native-placeholder
-  // one below, meaning every real Relay quote for StableChain's own
-  // native asset sent its ERC-20 contract address instead of the
-  // universal native placeholder Relay actually expects for a native
-  // spend/receive.
   stable: "USDT0",
   solana: "SOL",
   arbitrum: "ETH", avalanche: "AVAX", abstract: "ETH", hyperevm: "HYPE",
   ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB",
 };
 
-// Verified mainnet contract addresses only — deliberately incomplete
-// where a combination hasn't been independently confirmed. See
-// relaybridge.js's own history for the verification sources behind each
-// entry; not repeated here to avoid the comments drifting out of sync
-// with the real source of truth.
 export const TOKEN_ADDRESSES = {
   USDC: {
     ethereum: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
     base: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    // Same source/verification as cctp.js's CCTP_CHAINS_MAINNET entries for
-    // these three chains — native USDC, not a bridged USDC.e variant.
     avalanche: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
     arbitrum: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
     unichain: "0x078D782b760474a361dDA0AF3839290b0EF57AD6",
-    // Real, verified USDC mint — cross-checked against two independent
-    // authoritative sources: Solana Labs' own token-list repo
-    // (solana-labs/token-list, fetched live) and Coinbase's official
-    // CDP SDK (@coinbase/cdp-sdk's own USDC_MAINNET_MINT_ADDRESS
-    // constant, already installed locally). Previously missing
-    // entirely, which is why a same-chain Solana swap into/out of USDC
-    // always failed with "not safe to guess one" — a real gap, not a
-    // deliberate omission.
     solana: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    // Added live in response to real user-reported "No verified mainnet
-    // contract address for USDC" failures on chains where Relay/the
-    // fallback aggregators actually do support USDC — the registry was
-    // just behind. Each cross-checked two independent sources before
-    // being added, same bar as every entry above:
-    //   bnb: Circle's own multi-chain USDC docs + BscScan, labeled
-    //   "Circle: USDC Token" (the canonical BEP-20 USDC, not a random
-    //   bridged wrapper).
-    //   hyperevm: circle.com/multi-chain-usdc/hyperevm + HyperEVMScan,
-    //   same "Circle: USDC Token" label.
-    //   ink: Circle's own "Now Available: USDC & CCTP V2 on Ink" post +
-    //   two independent explorers (Blockscout, OKLink) agreeing on the
-    //   same address.
     bnb: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
     hyperevm: "0xb88339cb7199b77e23db6e890353e22632ba630f",
     ink: "0x2d270e6886d130d724215a266106e6832161eaed",
-    // Added after a systematic audit pulled Relay's own live /chains
-    // response directly (the actual routing provider this app quotes
-    // through) rather than relying on a block explorer's token name.
-    // Relay's own data lists this address as "USDC" with
-    // supportsBridging:true for Abstract — previously left out because
-    // Abscan's own token page labels it "Bridged USDC (Stargate)
-    // (USDC.e)", not native Circle USDC, and no independent native-USDC
-    // deployment could be found. Circle apparently hasn't deployed
-    // native USDC on Abstract at all; this bridged representation is
-    // what Relay itself treats as the real, bridgeable USDC there, so
-    // refusing to add it was blocking a route Relay actually supports,
-    // not protecting against a fake one.
     abstract: "0x84A71ccD554Cc1b02749b35d22F684CC8ec987e1",
   },
   USDT: {
     ethereum: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     bnb: "0x55d398326f99059fF775485246999027B3197955",
     base: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
-    // Both added the same way as Abstract's USDC above — read directly
-    // from Relay's own live /chains response, not guessed or found via
-    // a third-party token list.
     arbitrum: "0xFd086bc7CD5C481DCC9C85ebE478A1C0b69FCbb9",
     solana: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
   },
@@ -122,25 +61,8 @@ export const TOKEN_ADDRESSES = {
   },
   USDT0: {
     stable: "0x779Ded0c9e1022225f8E0630b35a9b54bE713736",
-    // Added live, backed by a four-source verification package before
-    // being added — Tether's own official USDT0 ecosystem page
-    // (usdt0.to/ecosystem/plasma), Tether's own WDK docs
-    // (docs.wdk.tether.io, independently listing the same address under
-    // Plasma's eip155:9745), and two independent block explorers
-    // (PlasmaScan, Plasma Explorer) all agreeing on this exact address
-    // and its decimals — the highest-confidence bar any entry in this
-    // file has had, given USDT0 specifically has a documented history
-    // of lookalike/scam contracts showing up in ordinary searches.
     plasma: "0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb",
-    // Found via the same systematic audit as the USDC/USDT entries
-    // above (Relay's own live /chains response) — USDT0 is a LayerZero
-    // omnichain token (OFT), and HyperEVM's deployment happens to share
-    // the exact same address as Plasma's above (a real, common pattern
-    // for deterministically-deployed OFTs, not a copy/paste error).
     hyperevm: "0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb",
-    // Ink's own separate USDT0 deployment — a genuinely different
-    // address from the Plasma/HyperEVM one above, confirmed directly
-    // from the same Relay /chains response.
     ink: "0x0200c29006150606b650577bbe7b6248f58470c1",
   },
   USDG: {
@@ -149,24 +71,18 @@ export const TOKEN_ADDRESSES = {
   },
 };
 
+// Relay's Solana API uses the real native-SOL identifier here, not the
+// WSOL mint. Relay's official Solana guide lists native SOL as
+// 11111111111111111111111111111111 and WSOL separately as
+// So11111111111111111111111111111111111111112. Keeping these distinct is
+// critical: WSOL is an SPL token account balance; SOL is native lamports.
 const NATIVE_PLACEHOLDER_BY_CHAIN = {
   ethereum: NATIVE_TOKEN_ADDRESS,
   base: NATIVE_TOKEN_ADDRESS,
   bnb: NATIVE_TOKEN_ADDRESS,
   robinhood: NATIVE_TOKEN_ADDRESS,
   stable: NATIVE_TOKEN_ADDRESS,
-  // Real bug fix: this was the System Program's own address
-  // (11111111111111111111111111111111), which represents "no program/
-  // no token" on Solana, not "native SOL" — using it as a currency
-  // identifier in a cross-chain quote request is exactly the kind of
-  // mistake that produces a confusing rejection instead of a working
-  // quote. The actual, universal convention for representing native
-  // SOL in DeFi routing is the Wrapped SOL mint — confirmed two ways:
-  // Solana's own official token-list repo (solana-labs/token-list,
-  // fetched live) labels this exact address "SOL"/"Wrapped SOL", and
-  // it's @solana/spl-token's own NATIVE_MINT constant (already
-  // installed locally — fully offline confirmation).
-  solana: "So11111111111111111111111111111111111111112",
+  solana: "11111111111111111111111111111111",
   arbitrum: NATIVE_TOKEN_ADDRESS,
   avalanche: NATIVE_TOKEN_ADDRESS,
   abstract: NATIVE_TOKEN_ADDRESS,
@@ -207,12 +123,6 @@ export const ASSET_ONCHAIN_DECIMALS = {
   HYPE: 18,
   XPL: 18,
   OKB: 18,
-  // Native assets for App.jsx's wallet-only Bridge chains (walletChains.js)
-  // — 18 decimals for every one is an EVM protocol invariant (msg.value is
-  // always denominated in wei on every EVM-compatible chain without
-  // exception), not a per-chain fact needing independent verification the
-  // way an ERC-20's decimals do. Same reasoning evmChainsExtra.js's own
-  // header already documents on mango-mobile for the identical case.
   POL: 18,
   XDAI: 18,
   MON: 18,
@@ -228,44 +138,8 @@ export const ASSET_ONCHAIN_DECIMALS = {
   FRAX: 18,
 };
 
-// Real, verified exception to the global-by-symbol map above: BNB
-// Chain's own USDT deployment (0x55d398326f99059fF775485246999027B3197955,
-// the same address TOKEN_ADDRESSES.USDT.bnb already points at) uses 18
-// decimals, not the 6 every other verified USDT deployment here uses —
-// confirmed independently against BscScan, QuickNode, Uniswap, and
-// Binplorer's own token pages for that exact contract. A symbol-only
-// decimals lookup would silently apply the wrong precision to any
-// BNB-USDT amount (balance display, a quote's amount math, a swap's
-// actual on-chain value) — every call site that resolves decimals for
-// a *token* symbol (not a chain's own native asset) must go through
-// assetDecimalsForChain(chainKey, symbol) below, never index
-// ASSET_ONCHAIN_DECIMALS directly by symbol alone.
-//
-// Same exception for BNB's own USDC deployment
-// (0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d, the address
-// TOKEN_ADDRESSES.USDC.bnb points at) — also 18 decimals, not the 6
-// every other verified USDC deployment here uses. Confirmed
-// independently against BscScan's own token page and a second,
-// separate token-data source (coinwatch.finance) before being added —
-// caught live, right after the address itself was added, specifically
-// because Binance-Peg tokens on BNB Chain have a documented history of
-// this exact 18-vs-6 mismatch (USDT already needed the same fix above).
-//
-// The opposite exception for Plasma's own USDT0 deployment
-// (0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb,
-// TOKEN_ADDRESSES.USDT0.plasma) — 6 decimals, not the 18 the global
-// USDT0: 18 entry above uses (that entry is correct for Stable's own
-// USDT0 deployment, the only one previously on file). Confirmed via
-// both PlasmaScan and Plasma Explorer independently reporting 6
-// decimals for this exact contract, alongside the same two sources'
-// address verification.
 const ASSET_ONCHAIN_DECIMALS_BY_CHAIN = {
   bnb: { USDT: 18, USDC: 18 },
-  // Same 6-decimal exception as Plasma's own USDT0 above — HyperEVM's
-  // and Ink's own USDT0 deployments (TOKEN_ADDRESSES.USDT0.hyperevm/
-  // .ink) are also 6 decimals, not the global 18. Confirmed directly
-  // from Relay's own live /chains response (the actual routing
-  // provider), same systematic audit that surfaced these two entries.
   plasma: { USDT0: 6 },
   hyperevm: { USDT0: 6 },
   ink: { USDT0: 6 },
