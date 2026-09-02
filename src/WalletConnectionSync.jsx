@@ -1,5 +1,5 @@
 import {useEffect} from "react";
-import {useAppKitAccount} from "@reown/appkit/react";
+import {useAppKitAccount, useAppKitConnections, useAppKitState} from "@reown/appkit/react";
 import {useConfig} from "wagmi";
 
 // AppKit owns the connection modal/session. Wagmi owns the account state
@@ -8,7 +8,21 @@ import {useConfig} from "wagmi";
 // without calling connect() (which could open another approval prompt).
 export function WalletConnectionSync() {
   const config = useConfig();
-  const {address, isConnected} = useAppKitAccount({namespace: "eip155"});
+  const {address, isConnected, allAccounts} = useAppKitAccount({namespace: "eip155"});
+  const {connections} = useAppKitConnections("eip155");
+  const {open} = useAppKitState();
+
+  const normalizedAddress = address?.toLowerCase();
+  const appKitConnection = normalizedAddress
+    ? connections.find((connection) =>
+        connection.accounts.some((account) => account.address.toLowerCase() === normalizedAddress)
+      )
+    : undefined;
+  const appKitConnectorId = appKitConnection?.connectorId;
+  const appKitAccount = normalizedAddress
+    ? allAccounts.find((account) => account.address.toLowerCase() === normalizedAddress)
+    : undefined;
+  const appKitChainId = appKitAccount?.chainId;
 
   useEffect(() => {
     let cancelled = false;
@@ -16,11 +30,11 @@ export function WalletConnectionSync() {
     async function sync() {
       if (cancelled) return;
 
-      // AppKit is disconnected: clear only wagmi's EVM state. This keeps the
-      // UI honest after an explicit disconnect and never opens a connection.
-      if (!isConnected || !address) {
+      // AppKit is disconnected: clear only wagmi's EVM state. Solana uses a
+      // separate provider and is deliberately untouched here.
+      if (!isConnected || !normalizedAddress) {
         if (config.state.status !== "disconnected" || config.state.connections.size > 0) {
-          config.setState(state => ({
+          config.setState((state) => ({
             ...state,
             connections: new Map(),
             current: null,
@@ -30,48 +44,56 @@ export function WalletConnectionSync() {
         return;
       }
 
-      // Already synchronized to this exact AppKit address.
-      if (config.state.status === "connected" && config.state.current) {
-        const current = config.state.connections.get(config.state.current);
-        if (current?.accounts?.some(account => account.toLowerCase() === address.toLowerCase())) return;
-      }
+      // AppKit has not finished publishing its connection record yet. The
+      // account/connection hooks will re-run this effect when it appears.
+      if (!appKitConnection || !appKitConnectorId) return;
 
-      // Never call wagmi's connect() here. eth_accounts/eth_chainId are
-      // read-only and cannot create a new wallet approval flow.
-      for (const connector of config.connectors) {
-        if (cancelled) return;
+      const connector = config.connectors.find((candidate) => candidate.id === appKitConnectorId);
+      if (!connector) return;
+
+      // The AppKit connection record is authoritative for the already-approved
+      // account. Do NOT call connector.getAccounts() here: some EIP-6963/mobile
+      // connectors only expose their account after wagmi has been connected,
+      // which creates the exact circular dependency that caused this bug.
+      const accounts = appKitConnection.accounts.map((account) => account.address);
+      if (!accounts.length || !accounts.some((account) => account.toLowerCase() === normalizedAddress)) return;
+
+      let chainId = typeof appKitChainId === "number" ? appKitChainId : Number(String(appKitChainId || "").split(":").pop());
+      if (!Number.isInteger(chainId) || chainId <= 0) {
         try {
-          const accounts = await connector.getAccounts();
-          const connectedAddress = accounts?.find(account => account.toLowerCase() === address.toLowerCase());
-          if (!connectedAddress) continue;
-
-          const chainId = await connector.getChainId();
-          if (cancelled) return;
-
-          config.setState(state => ({
-            ...state,
-            connections: new Map(state.connections).set(connector.uid, {
-              accounts,
-              chainId,
-              connector,
-            }),
-            current: connector.uid,
-            status: "connected",
-            chainId,
-          }));
-          return;
+          chainId = await connector.getChainId();
         } catch {
-          // A connector that cannot expose its already-authorized account is
-          // skipped. Do not call connect() and risk another approval prompt.
+          return;
         }
       }
+      if (cancelled) return;
+
+      const currentConnection = config.state.connections.get(connector.uid);
+      if (
+        config.state.status === "connected" &&
+        config.state.current === connector.uid &&
+        currentConnection?.chainId === chainId &&
+        currentConnection?.accounts?.some((account) => account.toLowerCase() === normalizedAddress)
+      ) return;
+
+      config.setState((state) => ({
+        ...state,
+        connections: new Map(state.connections).set(connector.uid, {
+          accounts,
+          chainId,
+          connector,
+        }),
+        current: connector.uid,
+        status: "connected",
+        chainId,
+      }));
     }
 
     void sync();
     return () => {
       cancelled = true;
     };
-  }, [config, address, isConnected]);
+  }, [config, normalizedAddress, isConnected, appKitConnection, appKitConnectorId, appKitChainId, open]);
 
   return null;
 }
