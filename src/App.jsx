@@ -4945,8 +4945,21 @@ export default function MangoBridge() {
                   main form to reach the SEPARATE EVM connection this
                   route also genuinely needs. This makes that need
                   visible and actionable, right where the person is
-                  already looking. */}
-              {isFromSolana && !CHAINS[to]?.isSolana && !sendToOther && !address && (
+                  already looking.
+                  Real redundancy fix, live-reported ("actually 4" —
+                  four separate connect entry points visible at once):
+                  this panel's own condition never actually required
+                  activeSolanaAddress, despite this comment's own
+                  premise being "once the Solana address IS showing" —
+                  so it rendered immediately alongside the "Solana
+                  wallet needed" panel even before Solana was connected
+                  at all, duplicating that panel's own message before
+                  its own stated trigger ever happened. Added the
+                  missing activeSolanaAddress requirement so this only
+                  appears once Solana is genuinely connected and EVM is
+                  the one remaining gap, matching what the comment
+                  above already claimed it did. */}
+              {isFromSolana && activeSolanaAddress && !CHAINS[to]?.isSolana && !sendToOther && !address && (
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <div className="text-[12.5px] font-medium mb-1" style={{ color: P.textPrimary }}>EVM wallet needed</div>
                   <div className="text-[11px] mb-2.5" style={{ color: P.textMuted }}>
@@ -5022,19 +5035,36 @@ export default function MangoBridge() {
                   main action and did nothing. Now: enabled and wired
                   to handleConnect whenever !connected, falling through
                   to the existing canBridge/routeUnavailable gating
-                  only once actually connected. */}
-              <button
-                disabled={connected && (!canBridge || routeUnavailable)}
-                onClick={connected ? () => setShowModal(true) : handleConnect}
-                className="w-full mt-4 py-3.5 rounded-full font-display font-semibold text-[15px]"
-                style={{
-                  background: connected && (!canBridge || routeUnavailable) ? P.ctaDisabledBg : P.ctaBg,
-                  color: connected && (!canBridge || routeUnavailable) ? P.ctaDisabledText : P.ctaText,
-                  cursor: !connected || (canBridge && !routeUnavailable) ? "pointer" : "not-allowed",
-                }}
-              >
-                {!connected ? "Connect wallet" : onWrongNetwork ? "Switch network to continue" : !chainAssetPairValid ? (isSwapTab ? "Choose different assets" : "Choose different chains") : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
-              </button>
+                  only once actually connected.
+                  Real redundancy fix, live-reported ("why three wallet
+                  connect section"): connected is exactly
+                  isFromSolana ? !!activeSolanaAddress : isConnected —
+                  so on a Solana-sourced pair with no Solana wallet yet,
+                  !connected is true for the SAME reason the "Solana
+                  wallet needed" panel above already renders its own
+                  "Connect Solana Wallet" button, and both ended up
+                  doing the identical handleConnect() action stacked
+                  right on top of each other (plus the header's own
+                  "Connect" pill — three ways to do one thing on
+                  screen at once). This CTA is hidden in exactly that
+                  one overlapping case; every other !connected case
+                  (the default, non-Solana pair, where this IS the only
+                  connect entry point besides the header pill) is
+                  unchanged. */}
+              {!(isFromSolana && !activeSolanaAddress) && (
+                <button
+                  disabled={connected && (!canBridge || routeUnavailable)}
+                  onClick={connected ? () => setShowModal(true) : handleConnect}
+                  className="w-full mt-4 py-3.5 rounded-full font-display font-semibold text-[15px]"
+                  style={{
+                    background: connected && (!canBridge || routeUnavailable) ? P.ctaDisabledBg : P.ctaBg,
+                    color: connected && (!canBridge || routeUnavailable) ? P.ctaDisabledText : P.ctaText,
+                    cursor: !connected || (canBridge && !routeUnavailable) ? "pointer" : "not-allowed",
+                  }}
+                >
+                  {!connected ? "Connect wallet" : onWrongNetwork ? "Switch network to continue" : !chainAssetPairValid ? (isSwapTab ? "Choose different assets" : "Choose different chains") : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
+                </button>
+              )}
               {routeUnavailable && (
                 <div className="text-center mt-2 text-[11.5px]" style={{ color: "#D92D20" }}>
                   No available route for this trade right now — {fromAsset.symbol} on {CHAINS[from].name} to {toAsset.symbol} on {CHAINS[to].name} isn't supported yet.
