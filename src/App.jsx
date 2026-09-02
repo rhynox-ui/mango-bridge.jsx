@@ -4586,7 +4586,54 @@ export default function MangoBridge() {
   const GAS_RESERVE = { ETH: 0.0004, BNB: 0.001, USDT0: 0.5, SOL: 0.002 };
   const gasReserve = GAS_RESERVE[fromAsset.symbol] ?? 0;
   const spendableBalance = availableBalance !== null ? Math.max(availableBalance - gasReserve, 0) : null;
-  const insufficient = usingLiveBalance && spendableBalance !== null && amtNum > spendableBalance;
+  // The same spendable figure as above, kept EXACTLY, in base units —
+  // see setMax's own comment for the real bug the Number version caused.
+  // Only the wagmi/EVM paths have a real bigint to use; the Solana ones
+  // only ever produce a Number, so they stay on the old path.
+  // Deliberately the decimals EXECUTION will parse with
+  // (onchainDecimalsForAsset — the same helper handleConfirm's own
+  // amount math goes through), not wagmi's. Formatting the exact bigint
+  // with one scale and re-parsing it with another would turn this fix
+  // into a far worse bug than the rounding it replaces, so the exact
+  // path below refuses to run at all unless the two agree.
+  const balanceDecimals = onchainDecimalsForAsset(fromAsset, from);
+  const spendableBaseUnits = (() => {
+    if (!usingLiveBalance || isFromSolana || isCustomFromSolanaToken) return null;
+    const exact = liveBalanceValue?.value;
+    if (typeof exact !== "bigint") return null;
+    if (!Number.isInteger(balanceDecimals)) return null;
+    if (liveBalanceValue.decimals !== undefined && liveBalanceValue.decimals !== balanceDecimals) return null;
+    let reserve = 0n;
+    if (gasReserve > 0) {
+      try {
+        reserve = parseUnits(String(gasReserve), balanceDecimals);
+      } catch {
+        reserve = 0n;
+      }
+    }
+    return exact > reserve ? exact - reserve : 0n;
+  })();
+  // Whatever is currently typed, in base units. parseUnits throws on
+  // partial input ("", "0.", "1.2.3") — all normal mid-typing states —
+  // so this answers null rather than throwing, and the Number
+  // comparison below takes over.
+  const amountBaseUnits = (() => {
+    if (spendableBaseUnits === null || !/^\d*\.?\d*$/.test(amount || "")) return null;
+    try {
+      return parseUnits(amount && amount !== "." ? amount : "0", balanceDecimals);
+    } catch {
+      return null;
+    }
+  })();
+  // Compared in base units wherever an exact value exists. Comparing the
+  // Numbers instead would mark an exact-MAX amount "insufficient" off a
+  // single ulp of float error — the button would disable on the very
+  // amount the app itself just filled in.
+  const insufficient = usingLiveBalance && (
+    spendableBaseUnits !== null && amountBaseUnits !== null
+      ? amountBaseUnits > spendableBaseUnits
+      : spendableBalance !== null && amtNum > spendableBalance
+  );
   // Bridge requires two different chains (that's what makes it a
   // bridge); Swap requires the same chain but two different assets
   // (that's what makes it a trade — same-asset same-chain is a no-op).
@@ -4698,7 +4745,34 @@ export default function MangoBridge() {
     setHistory([]);
     removeKey("mango:history");
   }
-  function setMax() { if (spendableBalance !== null) setAmount(String(spendableBalance)); }
+  // Real bug, live-confirmed: a MAX sell reverted on-chain with "ERC20:
+  // transfer amount exceeds balance". This used to be
+  // String(spendableBalance) — and spendableBalance is a JS Number.
+  //
+  // An 18-decimal ERC-20 balance carries up to 20 significant digits; an
+  // IEEE-754 double holds ~16. So Number(formatted) ROUNDS, and when it
+  // rounds UP, the parseUnits() done at execution asks the token for more
+  // than the wallet actually holds and the transfer reverts. The two
+  // reported failures show it exactly: 19.04189460980708 (16 significant
+  // digits) and 114.28784219980588 (17) — both sitting right at the
+  // double limit, neither a real balance.
+  //
+  // Why it only ever showed up on meme tokens: native assets subtract
+  // GAS_RESERVE, which pulls the figure well clear of the true balance,
+  // and 6-decimal USDC fits a double exactly. It is specifically
+  // full-balance sells of 18-decimal tokens that break.
+  //
+  // wagmi's useBalance already carries the exact bigint, so MAX now
+  // formats THAT at full precision and parseUnits round-trips it
+  // losslessly. The Number path remains only for Solana, which never has
+  // a bigint to use.
+  function setMax() {
+    if (spendableBaseUnits !== null) {
+      setAmount(formatUnits(spendableBaseUnits, balanceDecimals));
+      return;
+    }
+    if (spendableBalance !== null) setAmount(String(spendableBalance));
+  }
 
   function handleWithdrawalInitiated({ l2TxHash, l2Timestamp, amount: amt, account: acct, chainType, l2Key }) {
     const entry = { id: Date.now(), l2TxHash, l2Timestamp, amount: amt, account: acct, initiatedAt: Date.now(), chainType, l2Key, status: chainType === "arb" ? "waiting-to-finalize" : "waiting-to-prove" };
