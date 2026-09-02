@@ -2108,13 +2108,18 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         let quote;
         let fallbackResult = null;
         // Same skip as the preview effect above — see that call site's
-        // own comment for the full reasoning. Robinhood Chain same-chain
-        // swaps go straight to the fallback chain (Uniswap-led) instead
-        // of round-tripping through Relay's own known-thin coverage
-        // there first.
-        const execSkipRelayForRobinhood = from === to && from === "robinhood";
+        // own comment for the full reasoning. Widened from Robinhood
+        // Chain to EVERY EVM same-chain swap: BNB Chain turned out to be
+        // the same case Robinhood was, live-confirmed on 牛来
+        // (0xBEEA1D618e533a387D941F58a7d4c9b7bD377777, a 1%-tax token) —
+        // Relay answered 400/no-route while Uniswap quoted the identical
+        // trade fine in its own app. Relay stays the router for
+        // CROSS-chain, which is what its solver network is actually for;
+        // a same-chain EVM trade is a plain DEX swap and now goes
+        // straight to the provider that has the pool.
+        const execSkipRelayForEvmSwap = from === to && !CHAINS[from]?.isSolana;
         try {
-          if (execSkipRelayForRobinhood) {
+          if (execSkipRelayForEvmSwap) {
             throw new Error("Robinhood Chain trades route directly through Uniswap.");
           }
           quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
@@ -2160,7 +2165,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             return;
           }
           try {
-            if (execSkipRelayForRobinhood) {
+            if (execSkipRelayForEvmSwap) {
               throw firstErr;
             }
             quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
@@ -4366,8 +4371,15 @@ export default function MangoBridge() {
         // live-confirmed on PONS). Skipping the round-trip (and its
         // false "next to nothing" read) means every Robinhood pair goes
         // straight to the provider that actually has the liquidity.
-        const skipRelayForRobinhood = from === to && from === "robinhood";
-        if (!skipRelayForRobinhood) {
+        // Widened from Robinhood Chain to EVERY EVM same-chain swap --
+        // see the execute path's own execSkipRelayForEvmSwap comment for
+        // the live case that prompted it (BNB Chain, a 1%-tax token:
+        // Relay 400/no route, while Uniswap quoted the same trade fine
+        // in its own app). Kept in lockstep with that flag deliberately:
+        // if the preview and the execution disagreed about who routes,
+        // the quote shown would not be the quote executed.
+        const skipRelayForEvmSwap = from === to && !CHAINS[from]?.isSolana;
+        if (!skipRelayForEvmSwap) {
           try {
             const quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
             // Real bug fix, live-reported: Relay can return a
@@ -4416,7 +4428,7 @@ export default function MangoBridge() {
         // trades. Only the fallback-provider check further below stays
         // Swap-only, since there's no same-chain DEX aggregator to
         // substitute for a genuine cross-chain Bridge.
-        if (!skipRelayForRobinhood) {
+        if (!skipRelayForEvmSwap) {
           try {
             const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
             const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
