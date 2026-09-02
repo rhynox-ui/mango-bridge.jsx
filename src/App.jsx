@@ -1787,21 +1787,19 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         // signing callback with a cryptic "[execute step] Cannot read
         // properties of null (reading 'signTransaction')" for a Solana
         // wallet connected through AppKit's own Solana adapter (not
-        // OKX) — confirmed live against a real connected wallet, not
-        // just the "unexercised" caveat this file's own
-        // effectiveSolanaWallet comment already carried. AppKit's
-        // useAppKitProvider("solana") can report a connected address
-        // with no walletProvider registered yet for that same
-        // namespace — this app has no fix for that gap yet, so this
-        // guard turns the crash into an honest, actionable message
-        // BEFORE a quote is even built (and before this same missing
-        // provider would otherwise reach the pumpfun/pumpswap
-        // short-circuit below too), instead of failing deep inside the
-        // SDK's own adapted-wallet closure after the user has already
-        // waited through a quote.
-        if (!solanaWallet.solanaProvider?.current) {
-          throw new Error("Your connected Solana wallet doesn't support signing yet. Disconnect and reconnect using OKX Wallet — the only Solana wallet this app can currently sign a real send with.");
-        }
+        // OKX) — confirmed live against a real connected wallet (the
+        // site's own Mango Wallet browser extension). Root cause:
+        // AppKit's useAppKitProvider("solana") can report a connected
+        // address with no walletProvider registered for that same
+        // namespace yet. Fixed at the actual root now, not guarded
+        // around: executeSolanaSourcedTransfer (relaySdkSolanaExecution.js)
+        // falls back to resolveWalletStandardSigner, which talks to the
+        // Wallet Standard directly (the same open spec both AppKit's
+        // own provider and this app's extension already correctly
+        // implement) instead of depending on AppKit's own, sometimes-
+        // stale provider snapshot. No pre-flight guard needed here
+        // anymore — that function throws its own clear error if truly
+        // no signer can be found either way.
         // Real, separate execution path for Solana-sourced transfers —
         // see relaySdkSolanaExecution.js for why this can't share the
         // EVM path below (wagmi has no concept of Solana chains at all).
@@ -5036,33 +5034,32 @@ export default function MangoBridge() {
                   to handleConnect whenever !connected, falling through
                   to the existing canBridge/routeUnavailable gating
                   only once actually connected.
-                  Real redundancy fix, live-reported ("why three wallet
-                  connect section"): connected is exactly
-                  isFromSolana ? !!activeSolanaAddress : isConnected —
-                  so on a Solana-sourced pair with no Solana wallet yet,
-                  !connected is true for the SAME reason the "Solana
-                  wallet needed" panel above already renders its own
-                  "Connect Solana Wallet" button, and both ended up
-                  doing the identical handleConnect() action stacked
-                  right on top of each other (plus the header's own
-                  "Connect" pill — three ways to do one thing on
-                  screen at once). This CTA is hidden in exactly that
-                  one overlapping case; every other !connected case
-                  (the default, non-Solana pair, where this IS the only
-                  connect entry point besides the header pill) is
-                  unchanged. */}
-              {!(isFromSolana && !activeSolanaAddress) && (
+                  Real redundancy fix, live-reported and explicitly
+                  directed ("only 1 wallet connect need to be there
+                  which is the one at top the second only appear if
+                  solana is selected"): this button no longer offers
+                  its own "Connect wallet" action at all — the header's
+                  own "Connect" pill is the ONE generic connect entry
+                  point now, full stop. The Solana-specific inline
+                  panels above (their own "Connect Solana Wallet"/
+                  "Connect EVM Wallet" buttons) are the only OTHER
+                  connect action, and only when Solana is genuinely
+                  involved on either side. This CTA now only renders
+                  once actually connected — its whole remaining job is
+                  canBridge/routeUnavailable gating on the real
+                  transfer itself, never a duplicate way to connect. */}
+              {connected && (
                 <button
-                  disabled={connected && (!canBridge || routeUnavailable)}
-                  onClick={connected ? () => setShowModal(true) : handleConnect}
+                  disabled={!canBridge || routeUnavailable}
+                  onClick={() => setShowModal(true)}
                   className="w-full mt-4 py-3.5 rounded-full font-display font-semibold text-[15px]"
                   style={{
-                    background: connected && (!canBridge || routeUnavailable) ? P.ctaDisabledBg : P.ctaBg,
-                    color: connected && (!canBridge || routeUnavailable) ? P.ctaDisabledText : P.ctaText,
-                    cursor: !connected || (canBridge && !routeUnavailable) ? "pointer" : "not-allowed",
+                    background: !canBridge || routeUnavailable ? P.ctaDisabledBg : P.ctaBg,
+                    color: !canBridge || routeUnavailable ? P.ctaDisabledText : P.ctaText,
+                    cursor: canBridge && !routeUnavailable ? "pointer" : "not-allowed",
                   }}
                 >
-                  {!connected ? "Connect wallet" : onWrongNetwork ? "Switch network to continue" : !chainAssetPairValid ? (isSwapTab ? "Choose different assets" : "Choose different chains") : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
+                  {onWrongNetwork ? "Switch network to continue" : !chainAssetPairValid ? (isSwapTab ? "Choose different assets" : "Choose different chains") : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
                 </button>
               )}
               {routeUnavailable && (

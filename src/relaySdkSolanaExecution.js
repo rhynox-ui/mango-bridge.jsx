@@ -106,17 +106,90 @@ function feeRecipientForChainId() {
   return DEV_FEE_WALLET;
 }
 
+// Real fix for a real, live-reported crash: solanaWallet.solanaProvider
+// (App.jsx's effectiveSolanaWallet) falls back to AppKit's own
+// useAppKitProvider("solana") whenever OKX isn't the one connected —
+// but that hook reads a Valtio snapshot (ProviderController.state
+// .providers.solana) that can stay null even after AppKit's own
+// connect flow already reported a real, connected address (confirmed
+// live: the site's own Mango Wallet extension — a real, spec-correct
+// Wallet Standard implementation, not a third-party unknown — showed
+// a connected address, then crashed signing with "Cannot read
+// properties of null (reading 'signTransaction')", meaning that
+// provider snapshot genuinely was null at execute time despite a
+// successful earlier connect).
+//
+// Rather than accept that as a permanent "only OKX works" limitation,
+// this bypasses AppKit's own provider snapshot entirely and talks to
+// the Wallet Standard directly — the same open, published spec both
+// AppKit's WalletStandardProvider (confirmed by reading its installed
+// source: @reown/appkit-adapter-solana/dist/esm/src/providers/
+// WalletStandardProvider.js) and this app's own extension
+// (extension/src/inpage.js) already correctly implement independently
+// of each other. getWallets().get() (@wallet-standard/app, the same
+// package AppKit's own watchStandard.js already uses internally) lists
+// every currently-registered standard wallet regardless of whatever
+// AppKit's internal state happens to think is connected right now;
+// matching by the real, already-known connected address finds the
+// right one directly, with no dependency on AppKit's own reactive
+// timing.
+async function resolveWalletStandardSigner(address) {
+  if (!address) return null;
+  let getWallets;
+  try {
+    ({ getWallets } = await import("@wallet-standard/app"));
+  } catch {
+    return null;
+  }
+  const wallets = getWallets().get();
+  const wallet = wallets.find(
+    (w) => w.features?.["solana:signTransaction"] && w.accounts?.some((acc) => acc.address === address),
+  );
+  if (!wallet) return null;
+  const account = wallet.accounts.find((acc) => acc.address === address);
+  const feature = wallet.features["solana:signTransaction"];
+  return {
+    async signTransaction(transaction) {
+      // Same serialize-unsigned -> Uint8Array -> feature call ->
+      // reconstruct shape WalletStandardProvider.signTransaction
+      // already uses (its own installed source, read directly) — kept
+      // identical so the rest of this file's own signed.serialize()
+      // call right after this resolves works unchanged either way.
+      const serialized = transaction.serialize({ verifySignatures: false });
+      const [result] = await feature.signTransaction({ account, transaction: new Uint8Array(serialized) });
+      if (!result?.signedTransaction) {
+        throw new Error("The connected wallet returned no signed transaction.");
+      }
+      const { Transaction, VersionedTransaction } = await import("@solana/web3.js");
+      // Same version-detection convention @solana/wallet-adapter-base's
+      // own isVersionedTransaction uses ('version' in transaction) —
+      // confirmed directly from that installed package's source, not
+      // guessed, since WalletStandardProvider.js imports it from there.
+      return "version" in transaction
+        ? VersionedTransaction.deserialize(result.signedTransaction)
+        : Transaction.from(result.signedTransaction);
+    },
+  };
+}
+
 /**
  * Executes a Solana-SOURCED transfer using Relay's official SDK and the
  * real, connected Solana wallet's actual sign-and-send capability (from
- * OKX Connect, via SolanaWalletContext).
+ * OKX Connect, via SolanaWalletContext, or any other Wallet Standard
+ * wallet via the resolveWalletStandardSigner fallback above when
+ * AppKit's own provider snapshot for it isn't available).
  *
  * @param {string} solanaAddress - the real, connected Solana address
- * @param {object} solanaProvider - the OKX Solana provider instance (has signTransaction)
+ * @param {object} solanaProvider - the OKX/AppKit Solana provider instance (has signTransaction), or null/undefined to fall back to resolveWalletStandardSigner
  * @param {object} quoteParams - { toChainKey wagmi chain id, toCurrency, amount, recipient }
  * @param {function} onProgress - real progress callback, same shape as Relay's own onProgress
  */
 export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvider, toChainId, toCurrency, amountBaseUnits, recipient, onProgress }) {
+  const resolvedProvider = solanaProvider || (await resolveWalletStandardSigner(solanaAddress));
+  if (!resolvedProvider) {
+    throw new Error("Your connected Solana wallet doesn't support signing yet. Try disconnecting and reconnecting it.");
+  }
+
   try {
     await ensureClientInitialized();
   } catch (err) {
