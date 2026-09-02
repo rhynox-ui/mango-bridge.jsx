@@ -269,7 +269,7 @@ export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvid
         // list, which includes Solana's real CAIP-2 identifier using its
         // genesis hash - "solana:mainnet" was never valid, matching
         // neither condition, which is exactly what threw "wrong chainId".
-        const signed = await solanaProvider.signTransaction(transaction, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`);
+        const signed = await resolvedProvider.signTransaction(transaction, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`);
         const signature = await connection.sendRawTransaction(signed.serialize());
         return { signature };
       }
