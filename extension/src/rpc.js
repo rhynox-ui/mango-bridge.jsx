@@ -174,3 +174,14 @@ export async function fetchSplMintDecimals(mintAddress) {
   const mint = await getMint(connection, new PublicKey(mintAddress));
   return mint.decimals;
 }
+
+/** Real symbol/name lookup for a verified SPL mint — see walletRpc.js's own version of this comment on why DexScreener is the source (a mint carries no on-chain symbol itself). No cache here, matching this file's own simpler shape versus walletRpc.js's cached version. */
+export async function fetchSplTokenSymbol(mintAddress) {
+  const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`);
+  if (!res.ok) throw new Error("Couldn't look up this token right now — try again in a moment.");
+  const data = await res.json().catch(() => null);
+  const pair = (data?.pairs || []).find((p) => p.baseToken?.address === mintAddress || p.quoteToken?.address === mintAddress);
+  const matched = pair?.baseToken?.address === mintAddress ? pair.baseToken : pair?.quoteToken?.address === mintAddress ? pair.quoteToken : null;
+  if (!matched?.symbol) throw new Error("This token has no indexed trading pairs yet, so there's no symbol to fetch.");
+  return { symbol: matched.symbol.toUpperCase(), name: matched.name || matched.symbol };
+}
