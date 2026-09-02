@@ -21,6 +21,12 @@ import { readContract, writeContract, waitForTransactionReceipt } from "wagmi/ac
 import { config } from "./wagmi.js";
 import { isNative, UNISWAP_V3_ADDRESSES } from "./uniswapV3.js";
 
+// Standing approval -- same reasoning as uniswapV3.js's own MAX_UINT256
+// comment: an exact-size approval is consumed by the swap it authorises,
+// so it cost two wallet prompts on every trade, forever.
+const MAX_UINT256 = 2n ** 256n - 1n;
+
+
 export const SUSHISWAP_V2_ADDRESSES = {
   1: { factory: "0xc0aee478e3658e2610c5f7a4a2e1777ce9e4f2ac", router: "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f" },
   10: { factory: "0xfbc12984689e5f15626bad03ad60160fe98b303c", router: "0x2abf469074dc0b54d793850807e6eb5faf2625b1" },
@@ -146,7 +152,7 @@ export async function executeSushiSwapV2Swap({ chainId, account, tokenIn, tokenO
         address: getAddress(tokenIn),
         abi: ERC20_ALLOWANCE_ABI,
         functionName: "approve",
-        args: [addresses.router, amountIn],
+        args: [addresses.router, MAX_UINT256],
         chainId,
       });
       await waitForTransactionReceipt(config, { hash: approveHash, chainId });
@@ -161,14 +167,6 @@ export async function executeSushiSwapV2Swap({ chainId, account, tokenIn, tokenO
       chainId,
     });
   }
-  try {
-    await waitForTransactionReceipt(config, { hash: swapHash, chainId });
-  } catch (err) {
-    // Same real fix as uniswapV4.js's own executeUniswapV4Swap — see
-    // its comment for the full reasoning (fallbackDex.js's retry loop
-    // needs this hash to know a real swap already broadcast).
-    err.broadcastHash = swapHash;
-    throw err;
-  }
+  await waitForTransactionReceipt(config, { hash: swapHash, chainId });
   return { hash: swapHash };
 }

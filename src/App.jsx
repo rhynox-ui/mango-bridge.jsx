@@ -2108,13 +2108,18 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
         let quote;
         let fallbackResult = null;
         // Same skip as the preview effect above — see that call site's
-        // own comment for the full reasoning. Robinhood Chain same-chain
-        // swaps go straight to the fallback chain (Uniswap-led) instead
-        // of round-tripping through Relay's own known-thin coverage
-        // there first.
-        const execSkipRelayForRobinhood = from === to && from === "robinhood";
+        // own comment for the full reasoning. Widened from Robinhood
+        // Chain to EVERY EVM same-chain swap: BNB Chain turned out to be
+        // the same case Robinhood was, live-confirmed on 牛来
+        // (0xBEEA1D618e533a387D941F58a7d4c9b7bD377777, a 1%-tax token) —
+        // Relay answered 400/no-route while Uniswap quoted the identical
+        // trade fine in its own app. Relay stays the router for
+        // CROSS-chain, which is what its solver network is actually for;
+        // a same-chain EVM trade is a plain DEX swap and now goes
+        // straight to the provider that has the pool.
+        const execSkipRelayForEvmSwap = from === to && !CHAINS[from]?.isSolana;
         try {
-          if (execSkipRelayForRobinhood) {
+          if (execSkipRelayForEvmSwap) {
             throw new Error("Robinhood Chain trades route directly through Uniswap.");
           }
           quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
@@ -2160,7 +2165,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             return;
           }
           try {
-            if (execSkipRelayForRobinhood) {
+            if (execSkipRelayForEvmSwap) {
               throw firstErr;
             }
             quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
@@ -4366,8 +4371,15 @@ export default function MangoBridge() {
         // live-confirmed on PONS). Skipping the round-trip (and its
         // false "next to nothing" read) means every Robinhood pair goes
         // straight to the provider that actually has the liquidity.
-        const skipRelayForRobinhood = from === to && from === "robinhood";
-        if (!skipRelayForRobinhood) {
+        // Widened from Robinhood Chain to EVERY EVM same-chain swap --
+        // see the execute path's own execSkipRelayForEvmSwap comment for
+        // the live case that prompted it (BNB Chain, a 1%-tax token:
+        // Relay 400/no route, while Uniswap quoted the same trade fine
+        // in its own app). Kept in lockstep with that flag deliberately:
+        // if the preview and the execution disagreed about who routes,
+        // the quote shown would not be the quote executed.
+        const skipRelayForEvmSwap = from === to && !CHAINS[from]?.isSolana;
+        if (!skipRelayForEvmSwap) {
           try {
             const quote = await getRelayQuote({ ...quoteParams, originAmountUsd });
             // Real bug fix, live-reported: Relay can return a
@@ -4416,7 +4428,7 @@ export default function MangoBridge() {
         // trades. Only the fallback-provider check further below stays
         // Swap-only, since there's no same-chain DEX aggregator to
         // substitute for a genuine cross-chain Bridge.
-        if (!skipRelayForRobinhood) {
+        if (!skipRelayForEvmSwap) {
           try {
             const quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
             const relayReceived = summarizeQuote(quote, onchainDecimalsForAsset(toAsset, to)).receivedAmount;
@@ -4586,7 +4598,54 @@ export default function MangoBridge() {
   const GAS_RESERVE = { ETH: 0.0004, BNB: 0.001, USDT0: 0.5, SOL: 0.002 };
   const gasReserve = GAS_RESERVE[fromAsset.symbol] ?? 0;
   const spendableBalance = availableBalance !== null ? Math.max(availableBalance - gasReserve, 0) : null;
-  const insufficient = usingLiveBalance && spendableBalance !== null && amtNum > spendableBalance;
+  // The same spendable figure as above, kept EXACTLY, in base units —
+  // see setMax's own comment for the real bug the Number version caused.
+  // Only the wagmi/EVM paths have a real bigint to use; the Solana ones
+  // only ever produce a Number, so they stay on the old path.
+  // Deliberately the decimals EXECUTION will parse with
+  // (onchainDecimalsForAsset — the same helper handleConfirm's own
+  // amount math goes through), not wagmi's. Formatting the exact bigint
+  // with one scale and re-parsing it with another would turn this fix
+  // into a far worse bug than the rounding it replaces, so the exact
+  // path below refuses to run at all unless the two agree.
+  const balanceDecimals = onchainDecimalsForAsset(fromAsset, from);
+  const spendableBaseUnits = (() => {
+    if (!usingLiveBalance || isFromSolana || isCustomFromSolanaToken) return null;
+    const exact = liveBalanceValue?.value;
+    if (typeof exact !== "bigint") return null;
+    if (!Number.isInteger(balanceDecimals)) return null;
+    if (liveBalanceValue.decimals !== undefined && liveBalanceValue.decimals !== balanceDecimals) return null;
+    let reserve = 0n;
+    if (gasReserve > 0) {
+      try {
+        reserve = parseUnits(String(gasReserve), balanceDecimals);
+      } catch {
+        reserve = 0n;
+      }
+    }
+    return exact > reserve ? exact - reserve : 0n;
+  })();
+  // Whatever is currently typed, in base units. parseUnits throws on
+  // partial input ("", "0.", "1.2.3") — all normal mid-typing states —
+  // so this answers null rather than throwing, and the Number
+  // comparison below takes over.
+  const amountBaseUnits = (() => {
+    if (spendableBaseUnits === null || !/^\d*\.?\d*$/.test(amount || "")) return null;
+    try {
+      return parseUnits(amount && amount !== "." ? amount : "0", balanceDecimals);
+    } catch {
+      return null;
+    }
+  })();
+  // Compared in base units wherever an exact value exists. Comparing the
+  // Numbers instead would mark an exact-MAX amount "insufficient" off a
+  // single ulp of float error — the button would disable on the very
+  // amount the app itself just filled in.
+  const insufficient = usingLiveBalance && (
+    spendableBaseUnits !== null && amountBaseUnits !== null
+      ? amountBaseUnits > spendableBaseUnits
+      : spendableBalance !== null && amtNum > spendableBalance
+  );
   // Bridge requires two different chains (that's what makes it a
   // bridge); Swap requires the same chain but two different assets
   // (that's what makes it a trade — same-asset same-chain is a no-op).
@@ -4698,7 +4757,34 @@ export default function MangoBridge() {
     setHistory([]);
     removeKey("mango:history");
   }
-  function setMax() { if (spendableBalance !== null) setAmount(String(spendableBalance)); }
+  // Real bug, live-confirmed: a MAX sell reverted on-chain with "ERC20:
+  // transfer amount exceeds balance". This used to be
+  // String(spendableBalance) — and spendableBalance is a JS Number.
+  //
+  // An 18-decimal ERC-20 balance carries up to 20 significant digits; an
+  // IEEE-754 double holds ~16. So Number(formatted) ROUNDS, and when it
+  // rounds UP, the parseUnits() done at execution asks the token for more
+  // than the wallet actually holds and the transfer reverts. The two
+  // reported failures show it exactly: 19.04189460980708 (16 significant
+  // digits) and 114.28784219980588 (17) — both sitting right at the
+  // double limit, neither a real balance.
+  //
+  // Why it only ever showed up on meme tokens: native assets subtract
+  // GAS_RESERVE, which pulls the figure well clear of the true balance,
+  // and 6-decimal USDC fits a double exactly. It is specifically
+  // full-balance sells of 18-decimal tokens that break.
+  //
+  // wagmi's useBalance already carries the exact bigint, so MAX now
+  // formats THAT at full precision and parseUnits round-trips it
+  // losslessly. The Number path remains only for Solana, which never has
+  // a bigint to use.
+  function setMax() {
+    if (spendableBaseUnits !== null) {
+      setAmount(formatUnits(spendableBaseUnits, balanceDecimals));
+      return;
+    }
+    if (spendableBalance !== null) setAmount(String(spendableBalance));
+  }
 
   function handleWithdrawalInitiated({ l2TxHash, l2Timestamp, amount: amt, account: acct, chainType, l2Key }) {
     const entry = { id: Date.now(), l2TxHash, l2Timestamp, amount: amt, account: acct, initiatedAt: Date.now(), chainType, l2Key, status: chainType === "arb" ? "waiting-to-finalize" : "waiting-to-prove" };

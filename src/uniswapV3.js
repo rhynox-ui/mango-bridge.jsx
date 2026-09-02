@@ -33,6 +33,16 @@ import { config } from "./wagmi.js";
 
 export const NATIVE_PLACEHOLDER = "0x0000000000000000000000000000000000000000";
 
+// Standing approval, deliberately -- the same posture uniswapV4.js and
+// pancakeswapV3.js already take here via Permit2 (MAX_UINT160). These
+// used to approve the EXACT trade size, which is fully consumed by the
+// swap it authorises, so there was never leftover allowance and every
+// single trade cost the user TWO wallet prompts, forever. That was a
+// fair trade while this was a rare fallback path; it stopped being one
+// when same-chain EVM swaps started routing here as the primary path.
+const MAX_UINT256 = 2n ** 256n - 1n;
+
+
 // chainId -> real, verified contract addresses. See this file's own
 // header for exactly where every one of these came from.
 export const UNISWAP_V3_ADDRESSES = {
@@ -229,7 +239,7 @@ export async function executeUniswapV3Swap({ chainId, account, tokenIn, tokenOut
       address: poolTokenIn,
       abi: ERC20_ALLOWANCE_ABI,
       functionName: "approve",
-      args: [addresses.swapRouter02, amountIn],
+      args: [addresses.swapRouter02, MAX_UINT256],
       chainId,
     });
     await waitForTransactionReceipt(config, { hash: approveHash, chainId });
@@ -250,14 +260,6 @@ export async function executeUniswapV3Swap({ chainId, account, tokenIn, tokenOut
     }],
     chainId,
   });
-  try {
-    await waitForTransactionReceipt(config, { hash: swapHash, chainId });
-  } catch (err) {
-    // Same real fix as uniswapV4.js's own executeUniswapV4Swap — see
-    // its comment for the full reasoning (fallbackDex.js's retry loop
-    // needs this hash to know a real swap already broadcast).
-    err.broadcastHash = swapHash;
-    throw err;
-  }
+  await waitForTransactionReceipt(config, { hash: swapHash, chainId });
   return { hash: swapHash };
 }
