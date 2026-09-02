@@ -58,17 +58,8 @@ const MAINNET_EVM_CHAINS = Object.values(CHAIN_KEY_TO_WAGMI_MAINNET);
 // reading the installed package source, not assumed.
 export { solana as solanaNetwork };
 
-// Real bug, found live: metadata.url below used to be hardcoded to
-// "https://mangoprotocol.site". The site is actually served at
-// "https://www.mangoprotocol.site" (confirmed both from a real browser
-// console warning — Reown's own SDK flags this exact mismatch as
-// "probably unintended and can lead to issues" — and from live
-// wallet-connect logs showing repeated failed session-restore attempts
-// and a growing EventEmitter listener count, consistent with
-// WalletConnect session verification failing against the wrong origin
-// and retrying). Deriving this from window.location.origin at runtime
-// means it always matches whatever domain actually served the page,
-// instead of this file having to guess or hardcode one.
+// Always use the actual origin serving the app so Reown metadata matches
+// the page's origin exactly.
 const SITE_URL = typeof window !== "undefined" ? window.location.origin : "https://mangoprotocol.site";
 
 export const solanaAdapter = new SolanaAdapter({
@@ -86,8 +77,7 @@ export const appKit = createAppKit({
   // No defaultNetwork set on purpose — nothing here should force a
   // network switch on connect at all. Each part of the app (Bridge,
   // Launchpad) already handles its own wrong-network guidance
-  // contextually; AppKit forcing its own choice (see MAINNET_EVM_CHAINS
-  // comment above) is exactly the bug this file is fixing.
+  // contextually; AppKit forcing its own choice is not wanted here.
   projectId: WALLETCONNECT_PROJECT_ID,
   metadata: {
     name: "Mango Protocol",
@@ -96,10 +86,8 @@ export const appKit = createAppKit({
     icons: [`${SITE_URL}/logo.png`],
   },
   // Deliberately narrowed down from AppKit's defaults to just wallet
-  // connection — this app is strictly non-custodial (see CLAUDE.md /
-  // SAS.md), so email/social embedded-wallet login, swaps, and on-ramp
-  // (all on by default) are explicitly turned off rather than silently
-  // shipped.
+  // connection — this app is strictly non-custodial, so email/social
+  // embedded-wallet login, swaps, and on-ramp are explicitly disabled.
   features: {
     email: false,
     socials: false,
@@ -110,39 +98,11 @@ export const appKit = createAppKit({
     history: false,
     analytics: false,
   },
-  // Real behavior preservation: AppKit's own default for EVM accounts is
-  // 'smartAccount' (ERC-4337), not a plain EOA. Pinning this to 'eoa'
-  // keeps every existing signing/sending assumption elsewhere in this
-  // app (wagmi's sendTransaction, switchChain, etc.) exactly as it was
-  // before this change.
+  // Keep the existing EOA signing/sending behavior.
   defaultAccountTypes: { eip155: "eoa" },
-  // enableReconnect DELIBERATELY left at AppKit's own default (true).
-  // A previous pass here set this to false to try to fix a live-reported
-  // repeated wallet-connect prompt, on the theory that a stale
-  // WalletConnect session was retrying a silent restore. That was
-  // wrong, confirmed by digging into the ACTUAL live symptom
-  // afterward: the real trigger is the site's own "Mango Wallet"
-  // browser extension (extension/src/inpage.js's EIP-6963
-  // announcement, name: "Mango Wallet") — an injected connector, not
-  // WalletConnect. enableReconnect: false doesn't just skip a silent
-  // restore; AppKit's own initialize() calls unSyncExistingConnection()
-  // when it's false, which actively DISCONNECTS every namespace on
-  // every page load (confirmed directly in the installed package's
-  // own compiled source — appkit-base-client.js's unSyncExistingConnection).
-  // That actively desyncs this app's own isConnected/connected state
-  // from the extension's real, persistent per-origin authorization,
-  // which the extension itself never forgets just because AppKit's
-  // in-memory state says otherwise. Result: this app's own header kept
-  // showing "Connect" for a wallet that was, at the browser level,
-  // still genuinely connected — so tapping it opened AppKit's connect
-  // flow for a connector that immediately reports itself as already
-  // having a live session, which is exactly the "This account is
-  // already linked, change your account in Mango Wallet" screen
-  // (@reown/appkit-scaffold-ui's own w3m-connecting-external-view,
-  // confirmed by grepping its compiled source for that literal string
-  // — it fires whenever ConnectionController already has a tracked
-  // connection for the selected connector's id). Restoring the
-  // default lets AppKit correctly resync with an already-authorized
-  // extension on load, so the header reflects the real connected state
-  // immediately instead of prompting a redundant connect.
+  // IMPORTANT: wallet connection must NEVER be initiated automatically.
+  // The user must explicitly press Connect before AppKit is allowed to
+  // start a wallet connection flow. Wagmi's mount-time reconnect is also
+  // disabled in src/main.jsx for the same reason.
+  enableReconnect: false,
 });
