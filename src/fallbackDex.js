@@ -294,6 +294,25 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
 
   for (const entry of entries) {
     if (entry.kind === "onchain" && noKeyDexApprovalSpent) continue;
+    // Real bug fix, live-reported (screenshot): every executeXSwap
+    // below broadcasts a REAL transaction before it can possibly throw
+    // (the swap itself, not an approval step) — but a failure in the
+    // receipt wait AFTER that used to be indistinguishable here from
+    // "this provider's quote never got anywhere," so the loop moved on
+    // to the NEXT provider and tried ANOTHER swap of the same
+    // sellAmount against a wallet whose real balance/allowance had
+    // already changed. That's exactly what produced the reported
+    // screen: a real hash shown as "likely succeeded on-chain," right
+    // next to a brand-new revert from a second, doomed attempt. Each
+    // executeXSwap now tags err.broadcastHash when its own swap step
+    // broadcast before failing; reportHash below catches the same
+    // signal from executeFallbackQuote's onSwapHashKnown (which already
+    // fires pre-receipt-wait). Either one means: stop, don't retry.
+    let broadcastHashThisEntry = null;
+    const reportHash = hash => {
+      broadcastHashThisEntry = hash;
+      onSwapHashKnown?.(hash);
+    };
     try {
       if (entry.provider === "uniswap-v4") {
         const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
@@ -308,7 +327,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           zeroForOne: entry.execData.zeroForOne,
           minAmountOut,
         });
-        onSwapHashKnown?.(result.hash);
+        reportHash(result.hash);
         // No inline fee collection — same as this provider having no
         // backend quote to carry a fee field on at all.
         return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
@@ -325,7 +344,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           fee: entry.execData.fee,
           minAmountOut,
         });
-        onSwapHashKnown?.(result.hash);
+        reportHash(result.hash);
         return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
       if (entry.provider === "sushiswap-v2") {
@@ -339,7 +358,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           amountIn: sellAmountBig,
           minAmountOut,
         });
-        onSwapHashKnown?.(result.hash);
+        reportHash(result.hash);
         return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
       if (entry.provider === "pancakeswap-v3") {
@@ -354,7 +373,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           fee: entry.execData.fee,
           minAmountOut,
         });
-        onSwapHashKnown?.(result.hash);
+        reportHash(result.hash);
         return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
       // Generic provider (1inch/0x/okx/kyberswap) — quote was already
@@ -364,10 +383,24 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         account: takerAddress,
         sellTokenAddress: sellToken,
         quote: { ...entry.quote, sellAmount },
-        onSwapHashKnown,
+        onSwapHashKnown: reportHash,
       });
       return { provider: entry.provider, hash: result.hash, buyAmount: entry.quote.buyAmount, feeCollectedInline: !!entry.quote.feeCollectedInline };
     } catch (err) {
+      const broadcastHash = err?.broadcastHash || broadcastHashThisEntry;
+      if (broadcastHash) {
+        // A real transaction already broadcast for this entry — make
+        // sure the caller has the hash (executeXSwap's own err.broadcastHash
+        // path never called reportHash itself) and stop here instead of
+        // risking a second swap against balance/allowance state this
+        // failure may have already changed.
+        if (!broadcastHashThisEntry) {
+          onSwapHashKnown?.(broadcastHash);
+        }
+        const err2 = new Error(`${entry.provider} broadcast a real transaction (${broadcastHash}) that then failed to confirm: ${err?.message ?? String(err)}. Not retrying with another provider — check the transaction on-chain before trying again.`);
+        err2.broadcastHash = broadcastHash;
+        throw err2;
+      }
       failures.push(`${entry.provider}: ${err?.message ?? String(err)}`);
     }
   }
