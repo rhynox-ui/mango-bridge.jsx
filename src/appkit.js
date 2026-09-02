@@ -116,33 +116,35 @@ export const appKit = createAppKit({
   // app (wagmi's sendTransaction, switchChain, etc.) exactly as it was
   // before this change.
   defaultAccountTypes: { eip155: "eoa" },
-  // enableReconnect DELIBERATELY left at AppKit's own default (true).
-  // A previous pass here set this to false to try to fix a live-reported
-  // repeated wallet-connect prompt, on the theory that a stale
-  // WalletConnect session was retrying a silent restore. That was
-  // wrong, confirmed by digging into the ACTUAL live symptom
-  // afterward: the real trigger is the site's own "Mango Wallet"
-  // browser extension (extension/src/inpage.js's EIP-6963
-  // announcement, name: "Mango Wallet") — an injected connector, not
-  // WalletConnect. enableReconnect: false doesn't just skip a silent
-  // restore; AppKit's own initialize() calls unSyncExistingConnection()
-  // when it's false, which actively DISCONNECTS every namespace on
-  // every page load (confirmed directly in the installed package's
-  // own compiled source — appkit-base-client.js's unSyncExistingConnection).
-  // That actively desyncs this app's own isConnected/connected state
-  // from the extension's real, persistent per-origin authorization,
-  // which the extension itself never forgets just because AppKit's
-  // in-memory state says otherwise. Result: this app's own header kept
-  // showing "Connect" for a wallet that was, at the browser level,
-  // still genuinely connected — so tapping it opened AppKit's connect
-  // flow for a connector that immediately reports itself as already
-  // having a live session, which is exactly the "This account is
-  // already linked, change your account in Mango Wallet" screen
-  // (@reown/appkit-scaffold-ui's own w3m-connecting-external-view,
-  // confirmed by grepping its compiled source for that literal string
-  // — it fires whenever ConnectionController already has a tracked
-  // connection for the selected connector's id). Restoring the
-  // default lets AppKit correctly resync with an already-authorized
-  // extension on load, so the header reflects the real connected state
-  // immediately instead of prompting a redundant connect.
+  // enableReconnect: false — explicit product decision, repeatedly
+  // requested live: the wallet must only ever connect from a user tap,
+  // never on its own on page load. A previous pass here tried this same
+  // setting to fix a different, now-resolved bug (a live-reported
+  // repeated wallet-connect prompt) and reverted it after finding
+  // AppKit's own initialize() calls unSyncExistingConnection() when
+  // this is false, which actively DISCONNECTS every namespace on every
+  // page load (confirmed directly in the installed package's own
+  // compiled source — appkit-base-client.js's unSyncExistingConnection).
+  // That used to desync this app's own connected state from the site's
+  // "Mango Wallet" browser extension's real, persistent per-origin
+  // authorization: the header would show "Connect" for a wallet still
+  // genuinely authorized at the browser level, and tapping it re-opened
+  // a connect flow for a connector that immediately reported itself as
+  // already linked — @reown/appkit-scaffold-ui's own
+  // w3m-connecting-external-view ("This account is already linked,
+  // change your account in Mango Wallet"), which fires whenever
+  // ConnectionController already has a tracked connection for the
+  // selected connector's id. That specific collision is now fixed at
+  // its actual root cause instead: extension/src/background.js checks
+  // getConnectedSites() for eth_requestAccounts and returns the
+  // existing authorized connection directly rather than opening a new
+  // approval, so re-connecting an already-authorized extension after
+  // this intentional on-load disconnect is a clean, silent reuse, not
+  // a collision. (That extension fix ships to users only once the
+  // rebuilt package is published to the Chrome Web Store — see
+  // extension/manifest.json's version.) The real, accepted cost of
+  // this setting: every wallet (WalletConnect-relayed ones included)
+  // needs an explicit tap to reconnect each visit — that's the point,
+  // not a side effect.
+  enableReconnect: false,
 });
