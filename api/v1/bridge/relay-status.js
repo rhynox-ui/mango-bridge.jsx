@@ -9,12 +9,16 @@
 // silently failing at the browser level the whole time.
 
 import { checkRateLimit } from "../../rateLimit.js";
+import { applyCors } from "../../cors.js";
 
 const RELAY_STATUS_URL = "https://api.relay.link/intents/status/v3";
 
 export default async function handler(request, response) {
-  response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "GET");
+  // Allowlisted rather than wildcard — see api/cors.js for what
+  // that closes, what is deliberately left public, and why no
+  // existing caller breaks. Also answers the preflight this
+  // endpoint never had a handler for.
+  if (applyCors(request, response, { methods: "GET" })) return;
 
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });

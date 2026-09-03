@@ -65,6 +65,7 @@
 import crypto from "node:crypto";
 import { checkRateLimit } from "../../rateLimit.js";
 import { DEV_FEE_WALLET, DEV_FEE_PCT } from "../../../src/devFeeWallets.js";
+import { applyCors } from "../../cors.js";
 
 // Real vulnerability, closed here: feeBps/feeWallet came straight from
 // the request body and went unmodified into whichever provider's own
@@ -458,9 +459,24 @@ const PROVIDERS = {
   kyberswap: quoteFromKyberSwap,
 };
 
+// The fee clamp, lifted out of the handler so scripts/verify-fee-
+// tampering.mjs can prove it directly — a later security audit asked
+// for exactly that by name. Same behaviour as before, plus Math.round:
+// a fractional bps is not a unit any provider here accepts, and
+// String(12.7) would previously have been forwarded verbatim.
+export function sanitizeFeeParams({ feeBps, feeWallet }) {
+  return {
+    feeBps: feeBps ? String(Math.round(Math.max(0, Math.min(Number(feeBps) || 0, MAX_FEE_BPS)))) : feeBps,
+    feeWallet: feeWallet ? DEV_FEE_WALLET : feeWallet,
+  };
+}
+
 export default async function handler(request, response) {
-  response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "POST");
+  // Allowlisted rather than wildcard — see api/cors.js for what
+  // that closes, what is deliberately left public, and why no
+  // existing caller breaks. Also answers the preflight this
+  // endpoint never had a handler for.
+  if (applyCors(request, response, { methods: "POST" })) return;
 
   if (request.method !== "POST") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports POST." });
@@ -483,8 +499,7 @@ export default async function handler(request, response) {
   // Never trusted as-is: feeWallet is always overwritten to the real
   // DEV_FEE_WALLET, and feeBps is clamped to MAX_FEE_BPS — see this
   // file's own header above for why.
-  const safeFeeBps = feeBps ? String(Math.max(0, Math.min(Number(feeBps) || 0, MAX_FEE_BPS))) : feeBps;
-  const safeFeeWallet = feeWallet ? DEV_FEE_WALLET : feeWallet;
+  const { feeBps: safeFeeBps, feeWallet: safeFeeWallet } = sanitizeFeeParams({ feeBps, feeWallet });
 
   try {
     const quote = await quoteFn({ chainId, sellToken, buyToken, sellAmount, takerAddress, feeBps: safeFeeBps, feeWallet: safeFeeWallet });

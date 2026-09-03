@@ -30,6 +30,7 @@ import { robinhoodMainnet, stableMainnet } from "./wagmi.js";
 import { SOLANA_RPC_PRIMARY } from "./solanaRpc.js";
 import { DEV_FEE_WALLET, appFeeBps } from "./devFeeWallets.js";
 import { resolveWalletStandardSigner } from "./solanaWalletStandard.js";
+import { assertSolanaTransactionMatchesIntent } from "./solanaTxIntent.js";
 
 let clientInitialized = false;
 let initPromise = null;
@@ -204,6 +205,16 @@ export async function executeSolanaSourcedTransfer({ solanaAddress, solanaProvid
         // list, which includes Solana's real CAIP-2 identifier using its
         // genesis hash - "solana:mainnet" was never valid, matching
         // neither condition, which is exactly what threw "wrong chainId".
+        // Pre-sign intent check — the Solana counterpart to the EVM
+        // path's txIntentFirewall, and the audit's finding #6: the
+        // simulation above proves this transaction will SUCCEED, which
+        // is not the same as proving it does what the user asked. A
+        // draining transaction simulates perfectly. See
+        // solanaTxIntent.js for exactly what is provable here and what
+        // is only worth warning about.
+        for (const warning of assertSolanaTransactionMatchesIntent(transaction, { expectedSigner: solanaAddress })) {
+          console.warn(`[solanaTxIntent] ${warning}`);
+        }
         const signed = await resolvedProvider.signTransaction(transaction, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`);
         const signature = await connection.sendRawTransaction(signed.serialize());
         return { signature };
