@@ -19,7 +19,7 @@
     "@pump-fun/pump-sdk": "^1.36.0",
     "@pump-fun/pump-swap-sdk": "^1.19.0",
     "@relayprotocol/relay-sdk": "^7.0.2",
-    "@relayprotocol/relay-svm-wallet-adapter": "^21.0.1",
+    "@relayprotocol/relay-svm-wallet-adapter": "^21.0.3",
     "@reown/appkit": "^1.8.23",
     "@reown/appkit-adapter-solana": "^1.8.23",
     "@reown/appkit-adapter-wagmi": "^1.8.23",
