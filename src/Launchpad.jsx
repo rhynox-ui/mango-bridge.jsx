@@ -479,15 +479,34 @@ function HolderConcentrationBar({ holders, P }) {
 // through from the app's own light/dark toggle so the embed actually
 // matches instead of always forcing one look.
 //
-// Gated on hasTrades rather than always attempting the iframe: this app's
-// marketCapUsd is literally the sum of accrued trading fees (see
-// CreateLaunchModal/TokenDetailView comments elsewhere in this file), so
-// $0 means zero trades ever happened, by construction — not an estimate.
-// A pair DexScreener has never seen a swap for won't have a chart to show,
-// so this shows the same honest "no trades yet" language used everywhere
-// else in this file instead of embedding a guaranteed-empty iframe.
+// Gated on whether this pool has actually been traded, rather than always
+// attempting the iframe: a pair DexScreener has never seen a swap for has
+// no chart to draw, so the honest "no trades yet" language beats an
+// embed guaranteed to be blank.
+//
+// WHAT THAT GATE USED TO BE, and why it was wrong. It read
+// `marketCapUsd > 0`, on the stated reasoning that market cap here is the
+// sum of accrued trading fees and so $0 proves no trade ever happened "by
+// construction". That premise does not hold: a real token was observed
+// showing "No trades yet" directly above a Recent Trades panel listing
+// six real swaps. Tiny trades — the ones in that report were 0.00002 to
+// 0.0003 ETH — accrue fees that still round to $0, so a $0 cap means
+// "nothing worth a cent has accrued", not "nothing has happened".
+//
+// The gate now uses the trade list itself, which is the thing actually
+// being asked about. `hasTrades` is deliberately tri-state: `null` means
+// the trade list is still loading, and the chart must NOT claim "no
+// trades yet" during that window — that claim is exactly the bug, just
+// arriving a second earlier.
 function DexScreenerChart({ tokenAddress, hasTrades, theme, P }) {
   const [loaded, setLoaded] = useState(false);
+  if (hasTrades === null) {
+    return (
+      <div className="rounded-2xl p-4 mb-3 flex items-center justify-center text-[12px]" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, height: 260, color: P.textMuted }}>
+        Loading chart…
+      </div>
+    );
+  }
   if (!hasTrades) {
     return (
       <div className="rounded-2xl p-4 mb-3 flex flex-col items-center justify-center text-center gap-1.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, height: 260 }}>
@@ -515,7 +534,7 @@ function DexScreenerChart({ tokenAddress, hasTrades, theme, P }) {
   );
 }
 
-function TokenActivityPanel({ token, P }) {
+function TokenActivityPanel({ token, P, onTradesLoaded }) {
   const [tab, setTab] = useState("trades");
   const [trades, setTrades] = useState(null);
   const [holders, setHolders] = useState(null);
@@ -531,8 +550,22 @@ function TokenActivityPanel({ token, P }) {
     setTradesError(null);
     let cancelled = false;
     getRecentTrades({ poolId: token.poolId })
-      .then((real) => { if (!cancelled) setTrades(real); })
-      .catch((err) => { if (!cancelled) setTradesError(err?.message || String(err)); });
+      .then((real) => {
+        if (cancelled) return;
+        setTrades(real);
+        // The chart above gates on this. It is reported from here rather
+        // than fetched twice: this panel already owns the only call that
+        // answers "has this pool ever traded".
+        onTradesLoaded?.(Array.isArray(real) ? real.length : 0);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setTradesError(err?.message || String(err));
+        // A failed fetch is not evidence of zero trades, so the chart is
+        // told nothing and keeps its own fallback rather than being told
+        // to render "no trades yet" on the strength of a network error.
+        onTradesLoaded?.(null);
+      });
     return () => { cancelled = true; };
   }, [token.poolId]);
 
@@ -836,6 +869,9 @@ function TokenDetailView({ token, onBack, P, theme }) {
   // consistency. This is illustrative, not a real swap quote.
   const TOTAL_SUPPLY = 1_000_000_000;
   const ETH_USD_PRICE = 3120;
+  // null until the trade list resolves — see DexScreenerChart on why the
+  // chart must not claim "no trades yet" before it actually knows.
+  const [tradeCount, setTradeCount] = useState(null);
   const pricePerToken = liveProgress.marketCapUsd / TOTAL_SUPPLY;
   const amtNum = parseFloat(amount) || 0;
   const usdValue = side === "buy" ? amtNum * ETH_USD_PRICE : amtNum * pricePerToken;
@@ -933,7 +969,12 @@ function TokenDetailView({ token, onBack, P, theme }) {
         </div>
       </div>
 
-      <DexScreenerChart tokenAddress={token.tokenAddress} hasTrades={liveProgress.marketCapUsd > 0} theme={theme} P={P} />
+      <DexScreenerChart
+        tokenAddress={token.tokenAddress}
+        hasTrades={tradeCount === null ? (liveProgress.marketCapUsd > 0 ? true : null) : tradeCount > 0 || liveProgress.marketCapUsd > 0}
+        theme={theme}
+        P={P}
+      />
       <a
         href={`https://dexscreener.com/robinhood/${token.tokenAddress}`}
         target="_blank"
@@ -1094,7 +1135,7 @@ function TokenDetailView({ token, onBack, P, theme }) {
         )}
       </div>
 
-      <TokenActivityPanel token={token} P={P} />
+      <TokenActivityPanel token={token} P={P} onTradesLoaded={setTradeCount} />
     </div>
   );
 }

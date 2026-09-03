@@ -134,4 +134,52 @@ check("an unrecognized error never dumps more than its first line", () => {
   assert.strictEqual(message, "Something new");
 });
 
+
+// ---------------------------------------------------------------------
+// The chart's "has this pool been traded" gate.
+//
+// This shipped wrong: it read `marketCapUsd > 0`, on the reasoning that
+// market cap is the sum of accrued trading fees and so $0 proves nothing
+// ever traded. A real token then showed "No trades yet" directly above a
+// panel listing six real swaps — because trades of 0.00002-0.0003 ETH
+// accrue fees that still round to $0.
+//
+// It is exactly the class of bug worth pinning: nothing throws, the page
+// renders cleanly, and the only symptom is a chart that silently refuses
+// to appear on a token that has been trading for weeks.
+// ---------------------------------------------------------------------
+
+// The rule both surfaces now implement.
+function chartGate({ tradeCount, marketCapUsd }) {
+  if (tradeCount === null) return marketCapUsd > 0 ? true : null;
+  return tradeCount > 0 || marketCapUsd > 0;
+}
+
+check("a traded pool shows its chart even when market cap rounds to $0", () => {
+  // The exact reported case: real swaps, $0 cap.
+  assert.strictEqual(chartGate({ tradeCount: 6, marketCapUsd: 0 }), true);
+});
+
+check("a genuinely untraded pool still shows the empty state", () => {
+  assert.strictEqual(chartGate({ tradeCount: 0, marketCapUsd: 0 }), false);
+});
+
+check("market cap alone is still enough to show the chart", () => {
+  // A nonzero cap can only exist if trading happened, so it is a valid
+  // yes — it was never a valid *no*.
+  assert.strictEqual(chartGate({ tradeCount: null, marketCapUsd: 1200 }), true);
+});
+
+check("while the trade list is loading the chart claims neither way", () => {
+  // Rendering "No trades yet" here would be the same wrong claim,
+  // arriving a second earlier.
+  assert.strictEqual(chartGate({ tradeCount: null, marketCapUsd: 0 }), null);
+});
+
+check("a failed trade fetch is not treated as proof of zero trades", () => {
+  // The panel reports null rather than 0 when the request fails, so this
+  // must resolve to "unknown", never to the empty state.
+  assert.strictEqual(chartGate({ tradeCount: null, marketCapUsd: 0 }), null);
+});
+
 console.log(`\n${n}/${n} checks passed`);
