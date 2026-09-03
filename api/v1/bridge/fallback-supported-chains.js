@@ -44,6 +44,7 @@
 
 import { checkRateLimit } from "../../rateLimit.js";
 import { okxSignRequest } from "./fallback-quote.js";
+import { applyCors } from "../../cors.js";
 
 const OKX_CHAINS_PATH = "/api/v6/dex/aggregator/supported/chain";
 const CACHE_TTL_MS = 30 * 60_000; // real chain support changes rarely — longer TTL than relay-chains.js's own 5min is fine here
@@ -52,8 +53,11 @@ let cachedChainIds = null;
 let cachedAt = 0;
 
 export default async function handler(request, response) {
-  response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "GET");
+  // Allowlisted rather than wildcard — see api/cors.js for what
+  // that closes, what is deliberately left public, and why no
+  // existing caller breaks. Also answers the preflight this
+  // endpoint never had a handler for.
+  if (applyCors(request, response, { methods: "GET" })) return;
 
   if (request.method !== "GET") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports GET." });

@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint . --ext js,jsx",
     "build:extension": "node extension/build.mjs",
-    "package:extension": "node extension/package.mjs"
+    "package:extension": "node extension/package.mjs",
+    "verify": "for f in scripts/verify-*.mjs; do echo \"\u2014 $f\"; node \"$f\" || exit 1; done"
   },
   "dependencies": {
     "@arbitrum/sdk": "^4.0.2",

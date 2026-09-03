@@ -28,6 +28,7 @@
 
 import { checkRateLimit } from "../../rateLimit.js";
 import { DEV_FEE_WALLET, DEV_FEE_PCT } from "../../../src/devFeeWallets.js";
+import { applyCors } from "../../cors.js";
 
 const RELAY_QUOTE_URL = "https://api.relay.link/quote/v2";
 
@@ -49,18 +50,38 @@ const RELAY_QUOTE_URL = "https://api.relay.link/quote/v2";
 // that flat rate for a large trade, never raises it).
 const MAX_FEE_BPS = Math.round(DEV_FEE_PCT * 10000);
 
-function sanitizeAppFees(appFees) {
-  if (!Array.isArray(appFees)) return appFees;
+//
+// Exported so scripts/verify-fee-tampering.mjs can prove the two
+// properties directly, which a later security audit asked for by name:
+// an attacker-supplied feeWallet cannot be reached, and an
+// attacker-supplied feeBps cannot be inflated. A control with no test
+// is a control that can be refactored away by accident.
+export function sanitizeAppFees(appFees) {
+  // A non-array appFees is not something this app's own client can
+  // produce. Dropping it entirely (rather than passing it through
+  // unvalidated, as this used to) is the safe direction: the worst
+  // outcome is a quote that collects no protocol fee, which costs
+  // Mango and never the user.
+  if (!Array.isArray(appFees)) return undefined;
+  // Rebuilt field by field rather than spread. The old `{ ...entry }`
+  // carried every attacker-supplied key straight through to Relay's
+  // API alongside the two this function actually controls; nothing
+  // needed those keys, and no allowlist is simpler than an allowlist
+  // of two.
   return appFees.map((entry) => ({
-    ...entry,
     recipient: DEV_FEE_WALLET,
-    fee: String(Math.max(0, Math.min(Number(entry?.fee) || 0, MAX_FEE_BPS))),
+    // Math.round, not truncation: a fractional bps is not a thing
+    // Relay accepts, and String(12.7) would have been forwarded as-is.
+    fee: String(Math.round(Math.max(0, Math.min(Number(entry?.fee) || 0, MAX_FEE_BPS)))),
   }));
 }
 
 export default async function handler(request, response) {
-  response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Methods", "POST");
+  // Allowlisted rather than wildcard — see api/cors.js for what
+  // that closes, what is deliberately left public, and why no
+  // existing caller breaks. Also answers the preflight this
+  // endpoint never had a handler for.
+  if (applyCors(request, response, { methods: "POST" })) return;
 
   if (request.method !== "POST") {
     return response.status(405).json({ error: "Method not allowed. This endpoint only supports POST." });

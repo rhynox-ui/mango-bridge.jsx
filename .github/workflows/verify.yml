@@ -1,0 +1,92 @@
+name: Verify
+
+# This repository had no CI at all before this. Everything below already
+# existed as scripts a person had to remember to run; the only new thing
+# is that they now run on their own, on every change, so a regression in
+# a security control is caught by the pull request rather than by a user.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: nothing here writes to the repository.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to full commit SHAs, not tags. A tag is
+      # mutable — whoever controls the action repo can repoint v4 at new
+      # code, which then runs with this job's token. The trailing
+      # comment is the human-readable version; update both together.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` — not `npm install`. It installs exactly what the
+      # lockfile pins and fails if package.json and the lockfile have
+      # drifted apart, which is the lockfile-integrity check the audit
+      # asked for (finding #7).
+      - run: npm ci
+
+      - name: Offline verification suite
+        run: npm run verify
+
+      # No lint step. `npm run lint` is in package.json but this repo has
+      # no ESLint config file, so the script errors out on any input —
+      # adding it here would ship a check that is red on its first run
+      # and stays red, which trains everyone to ignore the whole
+      # workflow. Adding a real config is worth doing and is its own
+      # change, not a side effect of this one.
+      - name: Build
+        run: npm run build
+
+  audit:
+    runs-on: ubuntu-latest
+    # Reports, never blocks. This tree carries known advisories deep
+    # inside the WalletConnect/Solana stacks that cannot be resolved
+    # without a major version bump of the wallet layer — see
+    # dependabot.yml on why those are handled deliberately rather than
+    # automatically. Failing every pull request on them would train
+    # everyone to ignore a red check, which is worse than an amber one
+    # somebody reads. The job exists so the count is visible and a NEW
+    # advisory is noticeable.
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: npm audit (production dependencies)
+        run: npm audit --omit=dev || true
+      - name: Fail only on a NEW critical advisory in a direct dependency
+        run: |
+          # Deep transitive advisories are reported above and triaged by
+          # hand. This step is the one that should actually get someone's
+          # attention: a critical advisory in something this repo depends
+          # on directly, which is fixable here and now.
+          npm audit --omit=dev --json > audit.json || true
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const direct = new Set(Object.keys(pkg.dependencies || {}));
+            const report = JSON.parse(fs.readFileSync("audit.json", "utf8"));
+            const hits = Object.entries(report.vulnerabilities || {})
+              .filter(([name, v]) => v.severity === "critical" && direct.has(name));
+            if (hits.length === 0) {
+              console.log("No critical advisories in direct dependencies.");
+              process.exit(0);
+            }
+            for (const [name, v] of hits) console.error(`CRITICAL: ${name} (${v.severity})`);
+            process.exit(1);
+          '

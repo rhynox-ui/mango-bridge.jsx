@@ -1,0 +1,58 @@
+# Dependabot — the audit's finding #7 ("a package.json review alone does
+# not establish whether the resolved dependency tree is vulnerability-
+# free") turned into something that keeps checking rather than a
+# one-time scan that goes stale the week after it is read.
+#
+# Grouped, weekly, and capped on purpose. This is a wallet: an
+# unreviewed flood of individual bumps to signing, routing and
+# cryptographic packages is its own supply-chain risk, and a queue
+# nobody reads gets ignored wholesale. Security updates are deliberately
+# separated from routine version bumps so the ones that matter are not
+# buried among them.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Everything security-relevant, in one reviewable PR per week.
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      # Routine bumps, split so a build-tooling change is never mixed in
+      # with a change to something that touches a private key.
+      build-tooling:
+        applies-to: version-updates
+        patterns:
+          - vite
+          - "@vitejs/*"
+          - eslint
+          - "eslint-*"
+          - postcss
+          - autoprefixer
+          - tailwindcss
+    ignore:
+      # Majors on the wallet/chain stack are never a drive-by merge —
+      # they change signing and connection behaviour and need a real
+      # device test. Bumped deliberately, not by bot.
+      - dependency-name: "@reown/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@solana/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@walletconnect/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: wagmi
+        update-types: ["version-update:semver-major"]
+      - dependency-name: viem
+        update-types: ["version-update:semver-major"]
+      - dependency-name: ethers
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

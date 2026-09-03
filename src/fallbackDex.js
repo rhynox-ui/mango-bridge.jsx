@@ -35,6 +35,7 @@ import { formatUnits } from "viem";
 import { readContract, writeContract, sendTransaction, waitForTransactionReceipt } from "wagmi/actions";
 import { config } from "./wagmi.js";
 import { appFeeBps, DEV_FEE_WALLET } from "./devFeeWallets.js";
+import { buildTransactionIntent, assertTransactionItemsMatchIntent } from "./txIntentFirewall.js";
 import { uniswapV3SupportsChain, quoteUniswapV3, executeUniswapV3Swap } from "./uniswapV3.js";
 import { uniswapV4SupportsChain, quoteUniswapV4, executeUniswapV4Swap } from "./uniswapV4.js";
 import { sushiswapV2SupportsChain, quoteSushiSwapV2, executeSushiSwapV2Swap } from "./sushiswapV2.js";
@@ -114,6 +115,33 @@ async function executeFallbackQuote({ chainId, account, sellTokenAddress, quote,
       });
       await waitForTransactionReceipt(config, { hash: approveHash, chainId });
     }
+  }
+
+  // Same pre-sign intent check the Relay path runs (txIntentFirewall.js)
+  // — the audit called this out as the identical trust boundary, and it
+  // is: `to`, `data` and `value` here come from a third-party aggregator
+  // through our proxy, and go straight to the user's wallet. The
+  // approval above is already bounded to exactly requiredAmount, so what
+  // this adds is the chain check and the native-value cap.
+  const intentWarnings = assertTransactionItemsMatchIntent(
+    [{ data: { chainId, to: quote.to, data: quote.data, value: quote.value ?? "0" } }],
+    buildTransactionIntent({
+      originChainId: chainId,
+      destinationChainId: chainId,
+      originCurrency: sellTokenAddress,
+      destinationCurrency: sellTokenAddress,
+      // quote.sellAmount is the REQUESTED amount, not the provider's
+      // echo of it: the caller below spreads `{ ...entry.quote,
+      // sellAmount }` so this field is always overwritten with what we
+      // asked for. Checking a response against itself would prove
+      // nothing.
+      amountBaseUnits: quote.sellAmount ?? "0",
+      userAddress: account,
+      recipientAddress: account,
+    }),
+  );
+  for (const warning of intentWarnings) {
+    console.warn(`[txIntentFirewall] ${warning}`);
   }
 
   const swapHash = await sendTransaction(config, {
