@@ -4723,21 +4723,46 @@ export default function MangoBridge() {
   // it's what decides which pill reads as active.
   const isSwapBuySide = fromAsset.symbol === NATIVE_SYMBOL[from];
   // The active pill submits under exactly the CTA's own gating rather
-  // than a second, subtly-different set of conditions.
-  const swapPillReady = canBridge && !routeUnavailable;
+  // than a second, subtly-different set of conditions — plus
+  // `connected`, which the CTA never needed in its own gating because
+  // it simply doesn't render at all until connected (see its comment).
+  // Buy/Sell is always on screen, so it has to carry that check itself
+  // rather than opening the confirmation modal with no wallet behind
+  // it.
+  const swapPillReady = connected && canBridge && !routeUnavailable;
   // Mirrors mobile's pillHint: says why the active pill can't submit,
-  // and renders nothing at all once it can.
-  const swapPillHint = !chainAssetPairValid
-    ? "Choose different assets"
-    : insufficient || swapPillReady
-      ? null
-      : amtNum <= 0
-        ? `Enter an amount to ${isSwapBuySide ? `buy ${toAsset.symbol}` : `sell ${fromAsset.symbol}`}`
-        : routeChecking
-          ? "Finding the best route…"
-          : routeUnavailable
-            ? "No route found for this pair — try a different amount or asset."
-            : null;
+  // and renders nothing at all once it can. On the site it also has to
+  // carry the states mobile has no equivalent for — no wallet
+  // connected, wrong network, the Solana counterparty-address cases —
+  // because Buy/Sell is now the ONLY submit control on this tab (the
+  // shared CTA button below is Bridge-only now), so everything that
+  // used to explain itself in that button's label has to explain
+  // itself here instead. `insufficient` stays absent on purpose: it
+  // already renders its own message under the You pay / You receive
+  // cards, and saying it twice is worse than saying it once.
+  //
+  // Deliberately NOT a second connect action, only a pointer at the
+  // existing one: the header's "Connect" pill stays the single generic
+  // connect entry point, same rule the CTA below already follows.
+  const swapPillHint = !connected
+    ? "Connect your wallet to trade"
+    : !chainAssetPairValid
+      ? "Choose different assets"
+      : insufficient || swapPillReady
+        ? null
+        : onWrongNetwork
+          ? "Switch network to continue"
+          : needsEvmAddressForSolanaSource
+            ? "Connect an EVM wallet to receive on this chain"
+            : needsSolanaAddressForSolanaDest
+              ? "Connect a Solana wallet to receive on this chain"
+              : amtNum <= 0
+                ? `Enter an amount to ${isSwapBuySide ? `buy ${toAsset.symbol}` : `sell ${fromAsset.symbol}`}`
+                : routeChecking
+                  ? "Finding the best route…"
+                  : routeUnavailable
+                    ? "No route found for this pair — try a different amount or asset."
+                    : null;
 
   function persist(newBalances, newHistory) {
     saveJSON("mango:balances", newBalances);
@@ -4999,22 +5024,6 @@ export default function MangoBridge() {
             <MangoWalletTab P={P} />
           ) : (
             <>
-              {/* Swap's chart, ported from the mobile app's own Swap
-                  screen (see SwapChartPanel.jsx). Swap-only by design:
-                  a chart answers "what is this token doing", which is a
-                  same-chain trading question — a Bridge moves one asset
-                  between chains and has no single token to chart. */}
-              {isSwapTab && (
-                <SwapChartPanel
-                  P={P}
-                  chainKey={from}
-                  fromAsset={fromAsset}
-                  toAsset={toAsset}
-                  nativeSymbol={NATIVE_SYMBOL[from]}
-                  tokenAddressFor={swapChartTokenAddress}
-                />
-              )}
-
               {/* SWAP LAYOUT — a direct translation of mango-mobile's
                   own DexScreen.tsx: the same rows in the same order
                   (chain pill + Search + settings, chart, Buy/Sell,
@@ -5054,6 +5063,15 @@ export default function MangoBridge() {
                     </button>
                   </div>
 
+                  {/* Swap's chart, ported from the mobile app's own
+                      Swap screen (see SwapChartPanel.jsx). Swap-only by
+                      design: a chart answers "what is this token
+                      doing", which is a same-chain trading question — a
+                      Bridge moves one asset between chains and has no
+                      single token to chart. Mounted here and ONLY here:
+                      an earlier merge left a second copy of this above
+                      the "Swap on" row, which shipped two identical
+                      charts to the live site. */}
                   <SwapChartPanel
                     P={P}
                     chainKey={from}
@@ -5470,8 +5488,20 @@ export default function MangoBridge() {
                   involved on either side. This CTA now only renders
                   once actually connected — its whole remaining job is
                   canBridge/routeUnavailable gating on the real
-                  transfer itself, never a duplicate way to connect. */}
-              {connected && (
+                  transfer itself, never a duplicate way to connect.
+                  Bridge-only now (!isSwapTab): on the Swap tab this
+                  button duplicated the Buy/Sell pills above it — the
+                  ACTIVE pill already submits through the exact same
+                  setShowModal(true) under the exact same gating — so
+                  the tab carried two controls for one action, the
+                  lower one labelled "Swap assets" rather than the side
+                  the user actually picked. Mobile removed its
+                  equivalent CTA for this same reason (see DexScreen.
+                  tsx's buySellRow comment); this matches it. Every
+                  state the label used to explain on this tab now
+                  explains itself in swapPillHint instead, so nothing
+                  is lost — see its comment. */}
+              {connected && !isSwapTab && (
                 <button
                   disabled={!canBridge || routeUnavailable}
                   onClick={() => setShowModal(true)}
