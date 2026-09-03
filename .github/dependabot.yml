@@ -23,7 +23,9 @@ updates:
         patterns:
           - "*"
       # Routine bumps, split so a build-tooling change is never mixed in
-      # with a change to something that touches a private key.
+      # with a change to something that touches a private key. With
+      # majors excluded above, this group can only ever carry minor and
+      # patch updates, which is what makes grouping safe here.
       build-tooling:
         applies-to: version-updates
         patterns:
@@ -35,21 +37,31 @@ updates:
           - autoprefixer
           - tailwindcss
     ignore:
-      # Majors on the wallet/chain stack are never a drive-by merge —
-      # they change signing and connection behaviour and need a real
-      # device test. Bumped deliberately, not by bot.
-      - dependency-name: "@reown/*"
+      # NO MAJOR VERSION BUMPS, for anything. Not an allowlist of
+      # risky packages — an allowlist is a list of the ones somebody
+      # thought of, and the first run of this config proved that: it
+      # named the wallet/chain packages and missed
+      # @wormhole-foundation/sdk, which Dependabot then offered to take
+      # from 1.24.1 to 6.1.5 (five majors, on the SDK that moves users'
+      # money across chains).
+      #
+      # The same run also opened a grouped build-tooling PR carrying
+      # vite 5 -> 8, tailwindcss 3 -> 4, eslint 8 -> 10 and
+      # @vitejs/plugin-react 4 -> 6 together. It could not install
+      # (eslint 10 against eslint-plugin-react's peer range, which stops
+      # at 9.7) and could not build past that either (Tailwind v4 moved
+      # its PostCSS plugin to @tailwindcss/postcss, so the existing
+      # postcss.config.js is invalid) — both reproduced locally, and
+      # both are exactly the deliberate migration a bot cannot do.
+      # Grouping made it worse: six bumps in one PR that has to be
+      # taken or left whole.
+      #
+      # Minor and patch updates, including security ones, still flow
+      # normally — those are the ones worth having automated. A major
+      # is a migration, and a migration is somebody's decision.
+      - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-      - dependency-name: "@solana/*"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@walletconnect/*"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: wagmi
-        update-types: ["version-update:semver-major"]
-      - dependency-name: viem
-        update-types: ["version-update:semver-major"]
-      - dependency-name: ethers
-        update-types: ["version-update:semver-major"]
+
 
   - package-ecosystem: github-actions
     directory: /
