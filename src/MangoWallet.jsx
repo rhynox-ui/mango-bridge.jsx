@@ -71,6 +71,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { balanceCacheKey, getCachedBalance, setCachedBalance } from "./wallet/balanceCache.js";
+import { buildAggregatedRows } from "./wallet/assetAggregation.js";
 // Resolved by each bundler: Vite emits a hashed /assets URL for the
 // site, esbuild inlines it as a data URI for the extension popup (see
 // extension/build.mjs). Importing rather than hardcoding a path is what
@@ -455,6 +456,99 @@ function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove, onO
           <span>{loading ? "…" : balance !== null ? fmt(balance, balance < 1 ? 4 : 2) : "—"}</span>
         </div>
         <UsdSubtext balance={balance} price={price} P={P} />
+      </div>
+    </button>
+  );
+}
+
+/**
+ * One combined row for an asset that lives on several chains — the real
+ * summed total plus "N networks".
+ *
+ * Fetches every source itself and writes each result into the SAME
+ * shared cache the per-chain rows use (wallet/balanceCache.js, same key
+ * shape), because those rows no longer mount once their chain is folded
+ * in here. That keeps two things working unchanged: the chain sort,
+ * which reads the cache and does not care who populated it, and the
+ * per-chain detail view, which opens on an already-fresh value instead
+ * of flashing a re-fetch.
+ *
+ * Same cache-first behaviour as every other row: cached sources show
+ * immediately, the real fetches still run and still win, and a failed
+ * refresh keeps what was already there rather than blanking it.
+ */
+function AggregatedBalanceRow({ symbol, sources, evmAddress, P, isFirst, forceFresh, onOpen, onValue }) {
+  const keyFor = (src) =>
+    src.kind === "evm-native"
+      ? balanceCacheKey(src.chainKey, "native", evmAddress)
+      : balanceCacheKey(src.chainKey, src.token.address, evmAddress);
+
+  const [balances, setBalances] = useState(() => {
+    const seed = {};
+    for (const src of sources) {
+      const cached = getCachedBalance(keyFor(src));
+      if (cached !== null) seed[src.chainKey] = cached;
+    }
+    return seed;
+  });
+
+  const sourceSig = sources.map((src) => `${src.chainKey}:${src.kind === "evm-native" ? "native" : src.token.address}`).join(",");
+  useEffect(() => {
+    let cancelled = false;
+    for (const src of sources) {
+      const cacheKey = keyFor(src);
+      const fetchOne =
+        src.kind === "evm-native"
+          ? fetchWalletNativeBalance(src.chainKey, evmAddress, { forceFresh })
+          : fetchWalletTokenBalance(src.chainKey, src.token.address, src.token.decimals, evmAddress, { forceFresh });
+      fetchOne
+        .then((b) => {
+          if (cancelled) return;
+          setCachedBalance(cacheKey, b);
+          setBalances((prev) => (prev[src.chainKey] === b ? prev : { ...prev, [src.chainKey]: b }));
+        })
+        // A source that fails keeps whatever it already had. One dead RPC
+        // must not make the whole combined total read lower than it is.
+        .catch(() => {});
+    }
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceSig, evmAddress, forceFresh]);
+
+  const total = useMemo(
+    () => Object.values(balances).reduce((sum, v) => sum + (typeof v === "number" && Number.isFinite(v) ? v : 0), 0),
+    [balances],
+  );
+  const fundedCount = useMemo(() => Object.values(balances).filter((v) => v > 0).length, [balances]);
+  const price = useUsdPrice(symbol);
+  const loading = Object.keys(balances).length === 0;
+
+  useEffect(() => {
+    onValue?.(loading ? null : total * (price ?? 0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total, price, loading]);
+
+  return (
+    <button
+      onClick={onOpen}
+      className="w-full flex items-center justify-between px-4 py-3 text-left"
+      style={{ borderTop: isFirst ? "none" : `1px solid ${P.divider}` }}
+    >
+      <div className="flex items-center gap-2.5 min-w-0">
+        <WalletChainBadge id={sources[0].chainKey} size={24} />
+        <div className="min-w-0">
+          <div className="text-[13px] font-medium truncate" style={{ color: P.textPrimary }}>{symbol}</div>
+          <div className="text-[10.5px]" style={{ color: P.textMuted }}>
+            {fundedCount > 0 ? `${fundedCount} of ${sources.length} networks` : `${sources.length} networks`}
+          </div>
+        </div>
+      </div>
+      <div>
+        <div className="flex items-center gap-1.5 text-[13px] font-mono font-medium" style={{ color: P.textPrimary }}>
+          <span>{loading ? "…" : total.toFixed(4)}</span>
+          <span className="text-[11px] font-sans" style={{ color: P.textMuted }}>{symbol}</span>
+        </div>
+        <UsdSubtext balance={loading ? null : total} price={price} P={P} />
       </div>
     </button>
   );
@@ -2301,6 +2395,17 @@ function WalletDashboard({
     return [...order].sort((a, b) => (chainUsdTotals[b] ?? -1) - (chainUsdTotals[a] ?? -1));
   }, [session.evm, session.solana, chainUsdTotals]);
 
+  // Same-symbol chains folded into one row each — see
+  // buildAggregatedRows. Recomputed only when the chain order actually
+  // changes, so typing or a re-render does not rebuild the list.
+  const displayRows = useMemo(
+    () => buildAggregatedRows(sortedChainOrder, {
+      nativeSymbolFor: (k) => NATIVE_SYMBOL_BY_CHAIN[k],
+      tokensFor: allTokensForChain,
+    }),
+    [sortedChainOrder],
+  );
+
   function handleReceive() {
     navigator.clipboard.writeText(session.evm ? session.evm.address : session.solana.address);
     setJustCopied(true);
@@ -2366,37 +2471,47 @@ function WalletDashboard({
             collapsing to near-nothing if this ever renders somewhere
             very short. */}
         <div style={{ flex: 1, minHeight: "200px", overflowY: "auto" }}>
-          {sortedChainOrder.map((key, i) =>
-            key === "solana" ? (
-              <React.Fragment key={`${key}-${refreshKey}`}>
+          {displayRows.map((row, i) =>
+            row.kind === "aggregate" ? (
+              <AggregatedBalanceRow
+                key={`agg-${row.symbol}-${refreshKey}`}
+                symbol={row.symbol}
+                sources={row.sources}
+                evmAddress={session.evm.address}
+                P={P}
+                isFirst={i === 0}
+                forceFresh={refreshKey > 0}
+                onOpen={() => onOpenAsset(row.sources[0].chainKey, row.symbol)}
+                onValue={(v) => handleAssetValue("aggregate", row.symbol, v)}
+              />
+            ) : row.kind === "solana-native" ? (
+              <React.Fragment key={`sol-native-${refreshKey}`}>
                 <SolanaBalanceRow
                   solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0} onOpen={() => onOpenAsset("solana", "native")}
                   onValue={(v) => handleAssetValue("solana", "native", v)}
                 />
-                {allTokensForChain("solana").map((token) => (
-                  <SplTokenBalanceRow
-                    key={token.mint} token={token} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0}
-                    onRemove={token.isCustom ? () => { removeCustomToken("solana", token.mint); setRefreshKey((k) => k + 1); } : undefined}
-                    onOpen={() => onOpenAsset("solana", token.symbol)}
-                    onValue={(v) => handleAssetValue("solana", token.mint, v)}
-                  />
-                ))}
               </React.Fragment>
+            ) : row.kind === "spl-token" ? (
+              <SplTokenBalanceRow
+                key={`spl-${row.token.mint}-${refreshKey}`} token={row.token} solanaAddress={session.solana.address} P={P} forceFresh={refreshKey > 0}
+                onRemove={row.token.isCustom ? () => { removeCustomToken("solana", row.token.mint); setRefreshKey((k) => k + 1); } : undefined}
+                onOpen={() => onOpenAsset("solana", row.token.symbol)}
+                onValue={(v) => handleAssetValue("solana", row.token.mint, v)}
+              />
+            ) : row.kind === "evm-native" ? (
+              <EvmBalanceRow
+                key={`${row.chainKey}-native-${refreshKey}`}
+                chainKey={row.chainKey} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0}
+                onOpen={() => onOpenAsset(row.chainKey, "native")}
+                onValue={(v) => handleAssetValue(row.chainKey, "native", v)}
+              />
             ) : (
-              <React.Fragment key={`${key}-${refreshKey}`}>
-                <EvmBalanceRow
-                  chainKey={key} evmAddress={session.evm.address} P={P} isFirst={i === 0} forceFresh={refreshKey > 0} onOpen={() => onOpenAsset(key, "native")}
-                  onValue={(v) => handleAssetValue(key, "native", v)}
-                />
-                {allTokensForChain(key).map((token) => (
-                  <TokenBalanceRow
-                    key={token.address} chainKey={key} token={token} evmAddress={session.evm.address} P={P} forceFresh={refreshKey > 0}
-                    onRemove={token.isCustom ? () => { removeCustomToken(key, token.address); setRefreshKey((k) => k + 1); } : undefined}
-                    onOpen={() => onOpenAsset(key, token.symbol)}
-                    onValue={(v) => handleAssetValue(key, token.address, v)}
-                  />
-                ))}
-              </React.Fragment>
+              <TokenBalanceRow
+                key={`${row.chainKey}-${row.token.address}-${refreshKey}`} chainKey={row.chainKey} token={row.token} evmAddress={session.evm.address} P={P} forceFresh={refreshKey > 0}
+                onRemove={row.token.isCustom ? () => { removeCustomToken(row.chainKey, row.token.address); setRefreshKey((k) => k + 1); } : undefined}
+                onOpen={() => onOpenAsset(row.chainKey, row.token.symbol)}
+                onValue={(v) => handleAssetValue(row.chainKey, row.token.address, v)}
+              />
             )
           )}
         </div>
