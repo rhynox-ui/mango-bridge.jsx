@@ -50,7 +50,13 @@ await build({
   inject: [path.join(dir, "shims/buffer-shim.js")],
   define: { "global": "globalThis" },
   plugins: [redirectWalletRpc],
-  loader: { ".jsx": "jsx" },
+  // .png as a data URI so the shared MangoWallet.jsx can `import` its
+  // onboarding artwork and have it work in BOTH bundlers: Vite resolves
+  // the same import to a hashed /assets URL for the site, esbuild inlines
+  // it here. A relative "assets/..." string would have had to resolve
+  // differently in each, which is how one of the two ends up with a
+  // broken image nobody notices until it ships.
+  loader: { ".jsx": "jsx", ".png": "dataurl" },
   jsx: "automatic",
 });
 console.log("Built extension/popup.bundle.js");

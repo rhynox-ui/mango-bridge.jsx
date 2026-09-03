@@ -71,6 +71,11 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { balanceCacheKey, getCachedBalance, setCachedBalance } from "./wallet/balanceCache.js";
+// Resolved by each bundler: Vite emits a hashed /assets URL for the
+// site, esbuild inlines it as a data URI for the extension popup (see
+// extension/build.mjs). Importing rather than hardcoding a path is what
+// lets ONE component serve both without a broken image in one of them.
+import mangoHeroUrl from "./assets/mango-hero.png";
 // Static, named imports only — same convention App.jsx's AssetIcon/ChainIcon
 // already established for this package. A namespace import with dynamic
 // property access (Web3Icons[name]) defeats tree-shaking and can pull the
@@ -81,7 +86,7 @@ import {
   NetworkCelo, NetworkFantom, NetworkMoonbeam, NetworkCronos, NetworkMetisAndromeda, NetworkMode,
   NetworkZora, NetworkMantaPacific, NetworkTaiko, NetworkPolygonZkevm, NetworkFraxtal,
 } from "@web3icons/react";
-import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle, QrCode, X as XIcon, Sun, Moon, Settings as SettingsIcon, FileText, Key as KeyIcon, Clock, Info } from "lucide-react";
+import { Wallet, Eye, EyeOff, Copy, Check, AlertTriangle, Lock, Plus, Download, RefreshCw, Trash2, ArrowLeft, ShieldAlert, ShieldCheck, ExternalLink, ChevronDown, Send as SendIcon, Pencil, Puzzle, QrCode, X as XIcon, Sun, Moon, Settings as SettingsIcon, FileText, Key as KeyIcon, Clock, Info } from "lucide-react";
 import { isAddress, parseUnits } from "viem";
 import { PublicKey } from "@solana/web3.js";
 import jsQR from "jsqr";
@@ -549,34 +554,81 @@ function useExtensionInstalled() {
   return installed;
 }
 
+/**
+ * Wallet onboarding, built to the supplied reference design and matching
+ * mango-mobile's own welcome screen so the two products read as one
+ * wallet.
+ *
+ * This is the screen BOTH the site's Wallet tab and the browser
+ * extension popup show — the extension renders this very component (see
+ * extension/build.mjs), which is why restyling extension/src/popup.js's
+ * plain-DOM renderWelcome did not change what users saw: that path is
+ * only reached through a pending dApp request.
+ *
+ * The custody paragraph is not lost, only shortened: "Self-custodial.
+ * You control your keys." carries the same promise in the design's own
+ * words, and the full explanation still appears on the password step
+ * where it is load-bearing. The extension-detected badge and the "Get
+ * the browser extension" affordance are kept — the design has no
+ * opinion about them and they are real, working features of this
+ * screen, not decoration.
+ */
 function WelcomeScreen({ onCreate, onImport, P }) {
   const [showExtension, setShowExtension] = useState(false);
   const extensionInstalled = useExtensionInstalled();
 
   return (
-    <div className="rounded-2xl p-6 flex flex-col items-center text-center gap-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-      <div className="w-11 h-11 rounded-full flex items-center justify-center" style={{ background: `${P.ctaBg}1A` }}>
-        <Wallet size={19} color={P.ctaBg} />
+    <div className="flex flex-col flex-1 min-h-0">
+      <div className="pt-6 pb-1">
+        <h1 className="font-display font-extrabold tracking-tight text-[34px] leading-[38px] mb-3" style={{ color: P.textPrimary }}>
+          Start your journey
+        </h1>
+        <div className="text-[15px] leading-[24px]" style={{ color: P.textSecondary }}>New here? Let&rsquo;s build your wallet.</div>
+        <div className="text-[15px] leading-[24px]" style={{ color: P.textSecondary }}>Already have one? Just import it.</div>
       </div>
-      <div>
-        <div className="font-display text-[16px] font-semibold mb-1" style={{ color: P.textPrimary }}>Mango Wallet</div>
-        <div className="text-[12.5px] leading-relaxed" style={{ color: P.textMuted }}>
-          A self-custodial wallet, generated and stored only in this browser. Mango never sees your recovery phrase or private keys — not encrypted, not in any form.
+
+      {/* Grows into whatever space is left and shrinks on a short popup
+          rather than pushing the buttons off the bottom — the extension
+          popup is capped at 600px tall. The art is drawn on a light
+          ground (its contact shadow is "white, darkened", not an object
+          with its own colour), so on a dark theme it is given that
+          ground back instead of glowing. */}
+      <div className="flex-1 min-h-0 flex items-center justify-center py-3">
+        <div
+          className="w-full max-w-[240px] flex items-center justify-center rounded-[22px]"
+          style={{ background: P.bg === "#FFFFFF" || P.bg === "#FAFAFA" ? "transparent" : "#F5F5F6" }}
+        >
+          <img src={mangoHeroUrl} alt="" className="w-full block" />
         </div>
       </div>
-      <div className="w-full flex flex-col gap-2 mt-2">
+
+      <div className="w-full flex flex-col gap-2.5 shrink-0">
         {extensionInstalled && (
-          <div className="flex items-center justify-center gap-1.5 text-[11.5px] mb-1" style={{ color: P.ctaBg }}>
+          <div className="flex items-center justify-center gap-1.5 text-[11.5px]" style={{ color: P.ctaBg }}>
             <Check size={12} /> Browser extension detected
           </div>
         )}
-        <PrimaryButton onClick={onCreate} P={P}>Create a new wallet</PrimaryButton>
-        <button onClick={onImport} className="w-full py-3 rounded-full text-[13.5px] font-medium" style={{ background: P.pillBg, color: P.textPrimary }}>
-          I already have a recovery phrase
+        <button
+          onClick={onCreate}
+          className="w-full h-[46px] rounded-full text-[15px] font-bold"
+          style={{ background: P.ctaBg, color: P.ctaText, border: `1px solid ${P.ctaBg}` }}
+        >
+          Create new wallet
         </button>
+        <button
+          onClick={onImport}
+          className="w-full h-[46px] rounded-full text-[15px] font-bold"
+          style={{ background: "transparent", color: P.textPrimary, border: `1px solid ${P.panelBorder}` }}
+        >
+          Import existing wallet
+        </button>
+        <div className="flex items-center justify-center gap-1.5 text-[13px] pt-0.5" style={{ color: P.textSecondary }}>
+          <ShieldCheck size={14} />
+          <span>Self-custodial. You control your keys.</span>
+        </div>
         {!extensionInstalled && (
-          <button onClick={() => setShowExtension(true)} className="w-full py-2.5 rounded-full text-[12.5px] font-medium flex items-center justify-center gap-1.5" style={{ color: P.textMuted }}>
-            <Puzzle size={13} /> Get the browser extension
+          <button onClick={() => setShowExtension(true)} className="w-full text-[12px] font-medium flex items-center justify-center gap-1.5" style={{ color: P.textMuted }}>
+            <Puzzle size={12} /> Get the browser extension
           </button>
         )}
       </div>
