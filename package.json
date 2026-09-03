@@ -32,7 +32,7 @@
     "@upstash/redis": "^1.38.2",
     "@vercel/blob": "^2.7.0",
     "@web3icons/react": "^4.1.17",
-    "@wormhole-foundation/sdk": "^1.9.0",
+    "@wormhole-foundation/sdk": "^6.1.5",
     "bip39": "^3.1.0",
     "bn.js": "^5.2.5",
     "bs58": "^6.0.0",
