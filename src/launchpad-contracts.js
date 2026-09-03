@@ -1,5 +1,5 @@
-import { readContract, writeContract, waitForTransactionReceipt } from "wagmi/actions";
-import { keccak256, encodeAbiParameters, parseAbiParameters, decodeEventLog } from "viem";
+import { readContract, writeContract, waitForTransactionReceipt, estimateFeesPerGas, estimateGas } from "wagmi/actions";
+import { keccak256, encodeAbiParameters, parseAbiParameters, decodeEventLog, encodeFunctionData } from "viem";
 import { config } from "./wagmi.js";
 
 // ============================================================================
@@ -385,6 +385,60 @@ export async function getTradeQuote({ tokenAddress, side, amountIn, slippagePerc
   const minAmountOut = estimatedAmountOut - (estimatedAmountOut * slippageBps) / 10_000n;
 
   return { currentSqrtPriceX96, sqrtPriceLimitX96, poolId, estimatedAmountOut, minAmountOut: minAmountOut < 0n ? 0n : minAmountOut };
+}
+
+
+// ============================================================================
+// Gas reserve for the percentage / MAX buttons
+// ============================================================================
+
+// A launchpad trade is a router call that runs a swap, not a plain
+// transfer, so the amount of ETH it needs left over for gas is an order
+// of magnitude larger than a 21,000-gas send. The Launchpad used to
+// reserve a flat 0.0005 ETH, which is a guess: too generous on a cheap
+// block, and not generous enough on an expensive one. Worse, a guess
+// cannot tell the user WHY their trade will not fit.
+//
+// Reserving what the call actually costs fixes both. When the estimate
+// cannot run — no pool, RPC down, or a balance already too small to
+// simulate against — the flat constant is still the fallback, so this
+// never makes the buttons stop working.
+export const FALLBACK_TRADE_GAS = 400_000n;
+export const FALLBACK_GAS_RESERVE_ETH = 0.0005;
+
+export async function estimateLaunchpadTradeFee({ tokenAddress, side, amountWei, account, slippagePercent = 10 }) {
+  try {
+    const { maxFeePerGas } = await estimateFeesPerGas(config, { chainId: ROBINHOOD_CHAIN_ID });
+    let gas = FALLBACK_TRADE_GAS;
+    try {
+      const { sqrtPriceLimitX96, minAmountOut } = await getTradeQuote({ tokenAddress, side, amountIn: amountWei, slippagePercent });
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+      const data = encodeFunctionData({
+        abi: ROUTER_ABI,
+        functionName: side === "buy" ? "buy" : "sell",
+        args: side === "buy"
+          ? [tokenAddress, minAmountOut, sqrtPriceLimitX96, deadline, account]
+          : [tokenAddress, amountWei, minAmountOut, sqrtPriceLimitX96, deadline, account],
+      });
+      gas = await estimateGas(config, {
+        chainId: ROBINHOOD_CHAIN_ID,
+        account,
+        to: LAUNCHPAD_ROUTER_ADDRESS,
+        data,
+        ...(side === "buy" ? { value: amountWei } : {}),
+      });
+    } catch {
+      gas = FALLBACK_TRADE_GAS;
+    }
+    // 25% headroom: gas price moves between pressing MAX and confirming,
+    // and a reserve that no longer covers the fee by then is no reserve.
+    const feeWei = (gas * maxFeePerGas * 125n) / 100n;
+    return { gas, feeWei, feeNative: Number(feeWei) / 1e18, estimated: true };
+  } catch {
+    // Even the fee-per-gas read failed. The flat constant is all that is
+    // left, and it is still better than reserving nothing.
+    return { gas: FALLBACK_TRADE_GAS, feeWei: 0n, feeNative: FALLBACK_GAS_RESERVE_ETH, estimated: false };
+  }
 }
 
 // ============================================================================

@@ -4,7 +4,8 @@ import { useAccount, useBalance, useSignMessage, useSwitchChain } from "wagmi";
 import { Plus, X, ArrowLeft, Rocket, Users, Search, BarChart3, Copy, ExternalLink, Check, AlertTriangle, Share2 } from "lucide-react";
 import { PALETTE, GAIN, GAIN_DEEP, fmt, timeAgo } from "./theme.js";
 import { ChainBadge } from "./chainBadges.jsx";
-import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getLaunchStats, getProtocolStats, ROBINHOOD_CHAIN_ID } from "./launchpad-contracts.js";
+import { launchToken, getRealLaunches, buyTokenReal, sellTokenReal, getTokenBalance, uploadTokenLogo, saveTokenLogo, getRecentTrades, getTokenHolders, getLaunchProgress, getUserPortfolio, getLaunchStats, getProtocolStats, ROBINHOOD_CHAIN_ID, estimateLaunchpadTradeFee, FALLBACK_GAS_RESERVE_ETH } from "./launchpad-contracts.js";
+import { describeTradeError } from "./launchpadTradeErrors.js";
 
 // Slippage tolerance at/above this shows an explicit warning in the trade
 // card — a wide tolerance should be a decision the user actually sees, not
@@ -478,15 +479,34 @@ function HolderConcentrationBar({ holders, P }) {
 // through from the app's own light/dark toggle so the embed actually
 // matches instead of always forcing one look.
 //
-// Gated on hasTrades rather than always attempting the iframe: this app's
-// marketCapUsd is literally the sum of accrued trading fees (see
-// CreateLaunchModal/TokenDetailView comments elsewhere in this file), so
-// $0 means zero trades ever happened, by construction — not an estimate.
-// A pair DexScreener has never seen a swap for won't have a chart to show,
-// so this shows the same honest "no trades yet" language used everywhere
-// else in this file instead of embedding a guaranteed-empty iframe.
+// Gated on whether this pool has actually been traded, rather than always
+// attempting the iframe: a pair DexScreener has never seen a swap for has
+// no chart to draw, so the honest "no trades yet" language beats an
+// embed guaranteed to be blank.
+//
+// WHAT THAT GATE USED TO BE, and why it was wrong. It read
+// `marketCapUsd > 0`, on the stated reasoning that market cap here is the
+// sum of accrued trading fees and so $0 proves no trade ever happened "by
+// construction". That premise does not hold: a real token was observed
+// showing "No trades yet" directly above a Recent Trades panel listing
+// six real swaps. Tiny trades — the ones in that report were 0.00002 to
+// 0.0003 ETH — accrue fees that still round to $0, so a $0 cap means
+// "nothing worth a cent has accrued", not "nothing has happened".
+//
+// The gate now uses the trade list itself, which is the thing actually
+// being asked about. `hasTrades` is deliberately tri-state: `null` means
+// the trade list is still loading, and the chart must NOT claim "no
+// trades yet" during that window — that claim is exactly the bug, just
+// arriving a second earlier.
 function DexScreenerChart({ tokenAddress, hasTrades, theme, P }) {
   const [loaded, setLoaded] = useState(false);
+  if (hasTrades === null) {
+    return (
+      <div className="rounded-2xl p-4 mb-3 flex items-center justify-center text-[12px]" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, height: 260, color: P.textMuted }}>
+        Loading chart…
+      </div>
+    );
+  }
   if (!hasTrades) {
     return (
       <div className="rounded-2xl p-4 mb-3 flex flex-col items-center justify-center text-center gap-1.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, height: 260 }}>
@@ -514,7 +534,7 @@ function DexScreenerChart({ tokenAddress, hasTrades, theme, P }) {
   );
 }
 
-function TokenActivityPanel({ token, P }) {
+function TokenActivityPanel({ token, P, onTradesLoaded }) {
   const [tab, setTab] = useState("trades");
   const [trades, setTrades] = useState(null);
   const [holders, setHolders] = useState(null);
@@ -530,8 +550,22 @@ function TokenActivityPanel({ token, P }) {
     setTradesError(null);
     let cancelled = false;
     getRecentTrades({ poolId: token.poolId })
-      .then((real) => { if (!cancelled) setTrades(real); })
-      .catch((err) => { if (!cancelled) setTradesError(err?.message || String(err)); });
+      .then((real) => {
+        if (cancelled) return;
+        setTrades(real);
+        // The chart above gates on this. It is reported from here rather
+        // than fetched twice: this panel already owns the only call that
+        // answers "has this pool ever traded".
+        onTradesLoaded?.(Array.isArray(real) ? real.length : 0);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setTradesError(err?.message || String(err));
+        // A failed fetch is not evidence of zero trades, so the chart is
+        // told nothing and keeps its own fallback rather than being told
+        // to render "no trades yet" on the strength of a network error.
+        onTradesLoaded?.(null);
+      });
     return () => { cancelled = true; };
   }, [token.poolId]);
 
@@ -761,20 +795,53 @@ function TokenDetailView({ token, onBack, P, theme }) {
     return () => { cancelled = true; };
   }, [address, token.tokenAddress, tradeResult]);
 
-  // Small gas buffer reserved on 100% ETH buys, so the transaction doesn't
-  // fail from having nothing left to pay gas with.
-  const GAS_BUFFER_ETH = 0.0005;
+  // What a trade on this token actually costs in gas, measured from the
+  // real router call rather than guessed at. This started life as a flat
+  // 0.0005 ETH buffer, which is both too much on a cheap block and too
+  // little on an expensive one — and, being a constant, could never tell
+  // the user why their trade would not fit. Held in state so the
+  // percentage buttons and the affordability check below read the same
+  // number without hitting the RPC on every keystroke.
+  const [gasReserveEth, setGasReserveEth] = useState(FALLBACK_GAS_RESERVE_ETH);
+  const ethBalanceNum = ethBalanceData ? parseFloat(ethBalanceData.formatted) : 0;
+
+  useEffect(() => {
+    if (!address) return;
+    let cancelled = false;
+    // Simulated against a fraction of the balance, not all of it: a
+    // simulation of "spend every last wei" is precisely the one that
+    // fails for lack of gas, and would fall back instead of measuring.
+    const probeWei = side === "buy"
+      ? BigInt(Math.floor(ethBalanceNum * 0.5 * 1e18))
+      : (tokenBalance ?? 0n);
+    estimateLaunchpadTradeFee({ tokenAddress: token.tokenAddress, side, amountWei: probeWei, account: address, slippagePercent })
+      .then(({ feeNative }) => { if (!cancelled) setGasReserveEth(feeNative); })
+      .catch(() => { /* keeps the previous reserve — never drops to zero */ });
+    return () => { cancelled = true; };
+  }, [token.tokenAddress, side, address, ethBalanceNum, slippagePercent, tokenBalance]);
 
   function setPercentAmount(pct) {
     if (side === "buy") {
-      const balEth = ethBalanceData ? parseFloat(ethBalanceData.formatted) : 0;
-      const usable = Math.max(0, balEth - GAS_BUFFER_ETH);
+      const usable = Math.max(0, ethBalanceNum - gasReserveEth);
       setAmount((usable * (pct / 100)).toFixed(6));
     } else {
       const balTokens = Number(tokenBalance) / 1e18;
       setAmount((balTokens * (pct / 100)).toFixed(6));
     }
   }
+
+  // Affordability, decided here rather than discovered on-chain. A buy
+  // spends principal AND gas from the same balance; a sell spends only
+  // gas, but a wallet holding tokens and no ETH still cannot pay for the
+  // transaction. Either way the user gets a sentence instead of a revert.
+  const amtNumForGate = parseFloat(amount) || 0;
+  const ethNeeded = side === "buy" ? amtNumForGate + gasReserveEth : gasReserveEth;
+  const canAffordGas = !address || ethBalanceNum >= ethNeeded;
+  const insufficientReason = canAffordGas
+    ? null
+    : side === "buy"
+      ? `Not enough ETH — this needs about ${ethNeeded.toFixed(6)} ETH including gas, and this wallet holds ${ethBalanceNum.toFixed(6)}.`
+      : `Not enough ETH for gas — selling still costs about ${gasReserveEth.toFixed(6)} ETH, and this wallet holds ${ethBalanceNum.toFixed(6)}.`;
 
   async function handleTrade() {
     setTradeError(null);
@@ -788,7 +855,8 @@ function TokenDetailView({ token, onBack, P, theme }) {
       await refreshProgress();
       await refetchEthBalance();
     } catch (err) {
-      setTradeError(err?.shortMessage || err?.message || String(err));
+      // Never viem's raw dump — see launchpadTradeErrors.js.
+      setTradeError(describeTradeError(err).message);
     } finally {
       setTrading(false);
     }
@@ -801,6 +869,9 @@ function TokenDetailView({ token, onBack, P, theme }) {
   // consistency. This is illustrative, not a real swap quote.
   const TOTAL_SUPPLY = 1_000_000_000;
   const ETH_USD_PRICE = 3120;
+  // null until the trade list resolves — see DexScreenerChart on why the
+  // chart must not claim "no trades yet" before it actually knows.
+  const [tradeCount, setTradeCount] = useState(null);
   const pricePerToken = liveProgress.marketCapUsd / TOTAL_SUPPLY;
   const amtNum = parseFloat(amount) || 0;
   const usdValue = side === "buy" ? amtNum * ETH_USD_PRICE : amtNum * pricePerToken;
@@ -898,7 +969,12 @@ function TokenDetailView({ token, onBack, P, theme }) {
         </div>
       </div>
 
-      <DexScreenerChart tokenAddress={token.tokenAddress} hasTrades={liveProgress.marketCapUsd > 0} theme={theme} P={P} />
+      <DexScreenerChart
+        tokenAddress={token.tokenAddress}
+        hasTrades={tradeCount === null ? (liveProgress.marketCapUsd > 0 ? true : null) : tradeCount > 0 || liveProgress.marketCapUsd > 0}
+        theme={theme}
+        P={P}
+      />
       <a
         href={`https://dexscreener.com/robinhood/${token.tokenAddress}`}
         target="_blank"
@@ -976,7 +1052,7 @@ function TokenDetailView({ token, onBack, P, theme }) {
             {isConnected && (
               <span className="text-[10px] font-mono truncate" style={{ color: P.textMuted }}>
                 {side === "buy"
-                  ? ethBalanceLoading ? "Loading…" : `Balance: ${parseFloat(ethBalanceData?.formatted || "0").toFixed(4)} ETH`
+                  ? ethBalanceLoading ? "Loading…" : `Balance: ${ethBalanceNum > 0 && ethBalanceNum < 0.0001 ? ethBalanceNum.toFixed(8) : ethBalanceNum.toFixed(4)} ETH`
                   : tokenBalanceLoading ? "Loading…" : `Balance: ${fmt(Number(tokenBalance) / 1e18, 0)} ${token.symbol}`}
               </span>
             )}
@@ -1020,12 +1096,20 @@ function TokenDetailView({ token, onBack, P, theme }) {
         ) : (
           <button
             onClick={handleTrade}
-            disabled={!amount || trading}
+            disabled={!amount || amtNumForGate <= 0 || !canAffordGas || trading}
             className="w-full py-2.5 rounded-full font-display font-semibold text-[13.5px]"
             style={{ background: amount && !trading ? (side === "buy" ? P.ctaBg : "#D92D20") : P.pillBg, color: amount && !trading ? (side === "buy" ? P.ctaText : "#fff") : P.textMuted }}
           >
             {trading ? "Trading…" : `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}`}
           </button>
+        )}
+        {/* Says why the button is dead, before anything is signed —
+            rather than leaving the chain to reject it and the wallet to
+            report it as an unreadable revert. */}
+        {insufficientReason && amtNumForGate > 0 && (
+          <div className="mt-2 rounded-lg px-3 py-2 text-[11px]" style={{ background: "#FBE8E8", border: "1px solid #F0C7C7", color: "#B42318" }}>
+            {insufficientReason}
+          </div>
         )}
         {/* Real call against the deployed Router — computes a live price
             limit from StateView using the slippage % selected above, before
@@ -1051,7 +1135,7 @@ function TokenDetailView({ token, onBack, P, theme }) {
         )}
       </div>
 
-      <TokenActivityPanel token={token} P={P} />
+      <TokenActivityPanel token={token} P={P} onTradesLoaded={setTradeCount} />
     </div>
   );
 }
