@@ -22,9 +22,9 @@ jobs:
       # mutable — whoever controls the action repo can repoint v4 at new
       # code, which then runs with this job's token. The trailing
       # comment is the human-readable version; update both together.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -44,8 +44,22 @@ jobs:
       # and stays red, which trains everyone to ignore the whole
       # workflow. Adding a real config is worth doing and is its own
       # change, not a side effect of this one.
+      # --max-old-space-size, because this build genuinely needs it: the
+      # bundle is ~6.5 MB with a ~23 MB source map, and on the runner's
+      # default Node heap the build died with "FATAL ERROR: Reached heap
+      # limit Allocation failed - JavaScript heap out of memory" (exit
+      # 134) after ~60s. That was every run of this workflow since it
+      # landed — the workflow's own fault, not the code's; the same
+      # build passes locally and on Vercel, both of which allow it more
+      # memory. 6 GB on a 16 GB runner.
+      #
+      # Deliberately not "fixed" by turning off source maps in CI: that
+      # would make this check pass by building something other than what
+      # ships, which is the wrong kind of green.
       - name: Build
         run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
 
   audit:
     runs-on: ubuntu-latest
@@ -61,8 +75,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
