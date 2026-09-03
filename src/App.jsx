@@ -85,6 +85,9 @@ import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
 import { fetchOkxSupportedChainIds, CONFIRMED_FALLBACK_ONLY_CHAIN_IDS } from "./fallbackChains.js";
 import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL, WALLET_ONLY_EVM_CHAINS } from "./wallet/walletChains.js";
+import SwapChartPanel from "./SwapChartPanel.jsx";
+import { NATIVE_SYMBOL } from "./chainData.js";
+import { UNISWAP_V3_ADDRESSES } from "./uniswapV3.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
 import { LaunchpadTab } from "./Launchpad.jsx";
 import { MangoWalletTab } from "./MangoWallet.jsx";
@@ -3891,6 +3894,37 @@ export default function MangoBridge() {
   const toAsset = toCustomToken
     ? { symbol: toCustomToken.symbol, name: toCustomToken.symbol, decimals: 4, price: 0, color: "#8C9BAE", custom: true, address: toCustomToken.address, onchainDecimals: toCustomToken.decimals }
     : ASSETS[toAssetIdx];
+
+  // The address the Swap chart should look up for a given asset.
+  //
+  // A native asset needs its WRAPPED contract here, not the routing
+  // identifier. currencyAddress() deliberately returns the zero address
+  // for EVM natives and native SOL (11111...) for Solana — correct for
+  // asking Relay to move value, useless for asking DexScreener about a
+  // token, since neither is a tradable contract anyone indexes. WETH /
+  // WBNB / WSOL trade at parity with their native asset, so charting
+  // those is exact rather than an approximation.
+  //
+  // Same split mango-mobile documents on its own chart: the router
+  // needs the native identifier, the chart needs an indexed token, and
+  // conflating the two is what made bridges deliver wrapped SOL.
+  const swapChartTokenAddress = useCallback(
+    (asset) => {
+      if (!asset) return null;
+      if (asset.custom && asset.address) return asset.address;
+      if (asset.symbol !== NATIVE_SYMBOL[from]) {
+        try {
+          return currencyAddress(from, asset.symbol);
+        } catch {
+          return null;
+        }
+      }
+      if (from === "solana") return "So11111111111111111111111111111111111111112";
+      const chainId = MAINNET_CHAIN_IDS[from];
+      return UNISWAP_V3_ADDRESSES[chainId]?.wrappedNative ?? null;
+    },
+    [from]
+  );
   // Real bug fix, directly requested ("we can't rely on symbol... no
   // token can ever match the same [address]"): matching by symbol alone
   // is exactly the fragile identity check the AssetDropdown fixes above
@@ -4786,6 +4820,29 @@ export default function MangoBridge() {
     if (spendableBalance !== null) setAmount(String(spendableBalance));
   }
 
+  /**
+   * The 25/50/75% row the mobile Swap screen has, sharing setMax's own
+   * exact-precision path rather than a second implementation.
+   *
+   * Percentages go through the bigint whenever there is one, for the
+   * same reason MAX does: routing a balance through a JS number rounds
+   * it, and rounding UP past the real balance is what made MAX sells
+   * revert on-chain with "ERC20: transfer amount exceeds balance". A
+   * fraction of a rounded number carries that same error. 100 is exact
+   * in bigint division, so the split costs nothing.
+   */
+  function setPercent(pct) {
+    if (pct >= 100) {
+      setMax();
+      return;
+    }
+    if (spendableBaseUnits !== null) {
+      setAmount(formatUnits((spendableBaseUnits * BigInt(pct)) / 100n, balanceDecimals));
+      return;
+    }
+    if (spendableBalance !== null) setAmount(String((spendableBalance * pct) / 100));
+  }
+
   function handleWithdrawalInitiated({ l2TxHash, l2Timestamp, amount: amt, account: acct, chainType, l2Key }) {
     const entry = { id: Date.now(), l2TxHash, l2Timestamp, amount: amt, account: acct, initiatedAt: Date.now(), chainType, l2Key, status: chainType === "arb" ? "waiting-to-finalize" : "waiting-to-prove" };
     const next = [entry, ...withdrawals];
@@ -4894,6 +4951,22 @@ export default function MangoBridge() {
             <MangoWalletTab P={P} />
           ) : (
             <>
+              {/* Swap's chart, ported from the mobile app's own Swap
+                  screen (see SwapChartPanel.jsx). Swap-only by design:
+                  a chart answers "what is this token doing", which is a
+                  same-chain trading question — a Bridge moves one asset
+                  between chains and has no single token to chart. */}
+              {isSwapTab && (
+                <SwapChartPanel
+                  P={P}
+                  chainKey={from}
+                  fromAsset={fromAsset}
+                  toAsset={toAsset}
+                  nativeSymbol={NATIVE_SYMBOL[from]}
+                  tokenAddressFor={swapChartTokenAddress}
+                />
+              )}
+
               {/* You send */}
               <div className="rounded-2xl p-4 shadow-sm" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                 <div className="flex items-center justify-between mb-2.5">
@@ -4928,6 +5001,29 @@ export default function MangoBridge() {
                   <button onClick={setMax} disabled={availableBalance === null} className="text-[10.5px] font-bold px-2 py-1 rounded-md mr-2 shrink-0" style={{ background: availableBalance === null ? P.pillBg : `${P.ctaBg}1A`, color: availableBalance === null ? P.textMuted : P.ctaBg, opacity: availableBalance === null ? 0.6 : 1 }}>MAX</button>
                   <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} allowCustomToken={isSwapTab} discoveredLogos={discoveredAssetLogos} />
                 </div>
+                {/* Ported from the mobile Swap screen's own percent row.
+                    Swap-only: it's a trading affordance ("put a quarter
+                    of my stack in"), and Bridge already has MAX in the
+                    input for the one case that matters there. */}
+                {isSwapTab && (
+                  <div className="flex gap-1.5 mt-2">
+                    {[25, 50, 75, 100].map((pct) => (
+                      <button
+                        key={pct}
+                        onClick={() => setPercent(pct)}
+                        disabled={availableBalance === null}
+                        className="flex-1 rounded-lg py-1.5 text-[11px] font-bold transition-colors"
+                        style={{
+                          background: P.pillBg,
+                          color: availableBalance === null ? P.textMuted : P.textPrimary,
+                          opacity: availableBalance === null ? 0.6 : 1,
+                        }}
+                      >
+                        {pct === 100 ? "MAX" : `${pct}%`}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>Insufficient balance on {CHAINS[from].name}</div>}
               </div>
 
