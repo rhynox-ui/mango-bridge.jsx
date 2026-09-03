@@ -70,6 +70,7 @@
 //   lifted out of each independent row).
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { balanceCacheKey, getCachedBalance, setCachedBalance } from "./wallet/balanceCache.js";
 // Static, named imports only — same convention App.jsx's AssetIcon/ChainIcon
 // already established for this package. A namespace import with dynamic
 // property access (Web3Icons[name]) defeats tree-shaking and can pull the
@@ -321,16 +322,27 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh, onOpen, o
   // polling from contending with real bridge activity for the same RPC
   // endpoints. forceFresh (true only right after the manual refresh button)
   // bypasses walletRpc.js's 15s cache; every other mount reads through it.
-  const [balance, setBalance] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Cache-first: show the last known balance immediately instead of "…"
+  // while the real fetch runs. Matters most in the extension popup,
+  // which is destroyed and rebuilt on every icon click — see
+  // wallet/balanceCache.js. The fetch below still always runs and always
+  // wins; this only changes what is on screen while it is in flight.
+  const cacheKey = balanceCacheKey(chainKey, "native", evmAddress);
+  const [balance, setBalance] = useState(() => getCachedBalance(cacheKey));
+  const [loading, setLoading] = useState(() => getCachedBalance(cacheKey) === null);
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    const cached = getCachedBalance(cacheKey);
+    if (cached !== null) setBalance(cached);
+    setLoading(cached === null);
     fetchWalletNativeBalance(chainKey, evmAddress, { forceFresh })
-      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); } })
-      .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
+      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); setCachedBalance(cacheKey, b); } })
+      // A failed refresh keeps the cached number rather than blanking a
+      // balance the user already saw — a transient RPC error should not
+      // read as "your funds are gone".
+      .catch(() => { if (!cancelled) { if (cached === null) setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [chainKey, evmAddress, forceFresh]);
+  }, [chainKey, evmAddress, forceFresh, cacheKey]);
   const price = useUsdPrice(NATIVE_SYMBOL_BY_CHAIN[chainKey]);
   // Reports this row's own USD value up to WalletDashboard so it can sort
   // chains you actually hold something on above ones you don't — see that
@@ -364,16 +376,20 @@ function EvmBalanceRow({ chainKey, evmAddress, P, isFirst, forceFresh, onOpen, o
 }
 
 function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove, onOpen, onValue }) {
-  const [balance, setBalance] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Cache-first — see EvmBalanceRow above and wallet/balanceCache.js.
+  const cacheKey = balanceCacheKey(chainKey, token.address, evmAddress);
+  const [balance, setBalance] = useState(() => getCachedBalance(cacheKey));
+  const [loading, setLoading] = useState(() => getCachedBalance(cacheKey) === null);
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    const cached = getCachedBalance(cacheKey);
+    if (cached !== null) setBalance(cached);
+    setLoading(cached === null);
     fetchWalletTokenBalance(chainKey, token.address, token.decimals, evmAddress, { forceFresh })
-      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); } })
-      .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
+      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); setCachedBalance(cacheKey, b); } })
+      .catch(() => { if (!cancelled) { if (cached === null) setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [chainKey, token.address, token.decimals, evmAddress, forceFresh]);
+  }, [chainKey, token.address, token.decimals, evmAddress, forceFresh, cacheKey]);
   const price = useUsdPrice(token.symbol);
   useEffect(() => {
     onValue?.(balance != null ? balance * (price ?? 0) : null);
@@ -400,16 +416,20 @@ function TokenBalanceRow({ chainKey, token, evmAddress, P, forceFresh, onRemove,
 }
 
 function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove, onOpen, onValue }) {
-  const [balance, setBalance] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Cache-first — see EvmBalanceRow above and wallet/balanceCache.js.
+  const cacheKey = balanceCacheKey("solana", token.mint, solanaAddress);
+  const [balance, setBalance] = useState(() => getCachedBalance(cacheKey));
+  const [loading, setLoading] = useState(() => getCachedBalance(cacheKey) === null);
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    const cached = getCachedBalance(cacheKey);
+    if (cached !== null) setBalance(cached);
+    setLoading(cached === null);
     fetchWalletSplTokenBalance(token.mint, token.decimals, solanaAddress, { forceFresh })
-      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); } })
-      .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
+      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); setCachedBalance(cacheKey, b); } })
+      .catch(() => { if (!cancelled) { if (cached === null) setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [token.mint, token.decimals, solanaAddress, forceFresh]);
+  }, [token.mint, token.decimals, solanaAddress, forceFresh, cacheKey]);
   const price = useUsdPrice(token.symbol);
   useEffect(() => {
     onValue?.(balance != null ? balance * (price ?? 0) : null);
@@ -436,16 +456,20 @@ function SplTokenBalanceRow({ token, solanaAddress, P, forceFresh, onRemove, onO
 }
 
 function SolanaBalanceRow({ solanaAddress, P, forceFresh, onOpen, onValue }) {
-  const [balance, setBalance] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Cache-first — see EvmBalanceRow above and wallet/balanceCache.js.
+  const cacheKey = balanceCacheKey("solana", "native", solanaAddress);
+  const [balance, setBalance] = useState(() => getCachedBalance(cacheKey));
+  const [loading, setLoading] = useState(() => getCachedBalance(cacheKey) === null);
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    const cached = getCachedBalance(cacheKey);
+    if (cached !== null) setBalance(cached);
+    setLoading(cached === null);
     fetchWalletSolanaBalance(solanaAddress, { forceFresh })
-      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); } })
-      .catch(() => { if (!cancelled) { setBalance(null); setLoading(false); } });
+      .then((b) => { if (!cancelled) { setBalance(b); setLoading(false); setCachedBalance(cacheKey, b); } })
+      .catch(() => { if (!cancelled) { if (cached === null) setBalance(null); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [solanaAddress, forceFresh]);
+  }, [solanaAddress, forceFresh, cacheKey]);
   const price = useUsdPrice("SOL");
   useEffect(() => {
     onValue?.(balance != null ? balance * (price ?? 0) : null);
@@ -2184,6 +2208,30 @@ function WalletDashboard({
       return { ...prev, [mapKey]: value };
     });
   }, []);
+  // The aggregate portfolio USD total. This file's own header listed it
+  // as "Not yet built: an aggregate portfolio USD total (needs balance
+  // state lifted out of each independent row)" — but that lifting had
+  // already happened for the chain sort below (assetUsdValues, fed by
+  // every row's onValue), so the total was one reduce away. Ported to
+  // match mango-mobile's PortfolioBar, which shows the same number in
+  // the same place.
+  //
+  // Deliberately sums only what has actually reported: a row still
+  // fetching contributes nothing rather than a zero, so the figure
+  // climbs to the real total as rows land instead of starting at $0.00
+  // and looking like an empty wallet. hasAnyValue distinguishes "still
+  // loading everything" from "genuinely holds nothing".
+  const portfolioUsd = useMemo(() => {
+    let sum = 0;
+    for (const value of Object.values(assetUsdValues)) {
+      if (typeof value === "number" && Number.isFinite(value)) sum += value;
+    }
+    return sum;
+  }, [assetUsdValues]);
+  const hasAnyValue = useMemo(
+    () => Object.values(assetUsdValues).some((v) => typeof v === "number" && Number.isFinite(v)),
+    [assetUsdValues],
+  );
   const chainUsdTotals = useMemo(() => {
     const totals = {};
     for (const [mapKey, value] of Object.entries(assetUsdValues)) {
@@ -2237,7 +2285,16 @@ function WalletDashboard({
 
       <div className="rounded-2xl overflow-hidden flex flex-col flex-1 min-h-0" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
         <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: `1px solid ${P.divider}` }}>
-          <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>Balances</span>
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>Balances</span>
+            {/* Portfolio total. "…" while nothing has reported yet rather
+                than $0.00, which on a funded wallet would be wrong for
+                the first second and is the exact thing that makes a
+                wallet look broken on open. */}
+            <span className="font-display text-[14px] font-semibold truncate" style={{ color: P.textPrimary }}>
+              {hasAnyValue ? `$${fmt(portfolioUsd, 2)}` : "…"}
+            </span>
+          </div>
           <div className="flex items-center gap-3">
             <button onClick={() => setShowManage(true)} style={{ color: P.textMuted }} title="Add token or network">
               <Plus size={14} />
