@@ -4999,7 +4999,13 @@ export default function MangoBridge() {
 
       {/* Body */}
       <div className="flex justify-center px-4 py-8 relative" style={{ zIndex: 1 }}>
-        <div className="w-full max-w-[420px]">
+        {/* 420px is the phone-shaped column the whole site was built
+            around; on a monitor it left the page reading as a phone app
+            centred in empty space ("the page just zooms out"). Only the
+            Swap tab widens, because it is the only one with a second
+            thing worth showing side by side — a chart. Every other tab
+            keeps the exact column it has today. */}
+        <div className={`w-full ${isSwapTab ? "max-w-[420px] lg:max-w-[960px]" : "max-w-[420px]"}`}>
           {tab === "history" && (
             <div className="flex gap-1 mb-3 p-1 rounded-xl w-fit" style={{ background: P.panel }}>
               {[{ id: "transfers", label: "Transfers" }, { id: "withdrawals", label: "Withdrawals" }].map((s) => (
@@ -5024,19 +5030,30 @@ export default function MangoBridge() {
             <MangoWalletTab P={P} />
           ) : (
             <>
-              {/* SWAP LAYOUT — a direct translation of mango-mobile's
-                  own DexScreen.tsx: the same rows in the same order
-                  (chain pill + Search + settings, chart, Buy/Sell,
-                  hint, quick-percent, then You pay / You receive
-                  side-by-side), carrying its real style values across
-                  rather than approximating them by eye — 999px pills,
-                  gain/danger-bordered Buy/Sell, 14px cards, the 10px
-                  uppercase card labels with 0.6 letter-spacing.
-                  Bridge's own layout below is untouched: it needs two
-                  chain pickers and a destination address, neither of
-                  which a same-chain swap has. */}
-              {isSwapTab ? (
-                <>
+              {/* DESKTOP LAYOUT, and the reason the chart lives out here
+                  rather than inside the Swap branch below.
+
+                  The site was built mobile-first and pinned to a 420px
+                  column at every screen size, so on a monitor it read as
+                  a phone app centred in empty space — "the page just
+                  zooms out", as reported. On lg+ the Swap tab now widens
+                  and splits: chart on the left, the whole trading form on
+                  the right, which is the layout that actually uses a
+                  desktop.
+
+                  ONE mount, moved by grid placement — never a second,
+                  desktop-only copy hidden behind a media query. A
+                  duplicate mount is exactly the bug that shipped two
+                  identical charts to production once already, and a
+                  CSS-hidden twin would still mount, still fetch, and
+                  still be one wrong class away from being visible.
+
+                  Hoisting the chain-pill row with it keeps the stacked
+                  mobile order byte-identical: chain row, chart, Buy/Sell.
+                  On desktop those two simply become the left column. */}
+              <div className={isSwapTab ? "lg:grid lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-6 lg:items-start" : ""}>
+              {isSwapTab && (
+                <div className="lg:sticky lg:top-8">
                   <div className="flex items-center gap-1.5 mb-1">
                     <div className="flex-1 flex items-center gap-1.5 rounded-full px-2.5 py-1" style={{ background: P.pillBg }}>
                       <span className="text-[10.5px] mr-px" style={{ color: P.textMuted }}>Swap on</span>
@@ -5080,6 +5097,27 @@ export default function MangoBridge() {
                     nativeSymbol={NATIVE_SYMBOL[from]}
                     tokenAddressFor={swapChartTokenAddress}
                   />
+                </div>
+              )}
+
+              {/* The form column. min-w-0 so a long token name or a wide
+                  number cannot blow the grid track out — the classic
+                  way a two-column grid silently starts overflowing. */}
+              <div className="min-w-0">
+
+              {/* SWAP LAYOUT — a direct translation of mango-mobile's
+                  own DexScreen.tsx: the same rows in the same order
+                  (chain pill + Search + settings, chart, Buy/Sell,
+                  hint, quick-percent, then You pay / You receive
+                  side-by-side), carrying its real style values across
+                  rather than approximating them by eye — 999px pills,
+                  gain/danger-bordered Buy/Sell, 14px cards, the 10px
+                  uppercase card labels with 0.6 letter-spacing.
+                  Bridge's own layout below is untouched: it needs two
+                  chain pickers and a destination address, neither of
+                  which a same-chain swap has. */}
+              {isSwapTab ? (
+                <>
 
                   {/* Buy/Sell does double duty exactly as on mobile:
                       the INACTIVE side flips direction (the same swap()
@@ -5527,6 +5565,8 @@ export default function MangoBridge() {
               <div className="text-center mt-4 text-[11.5px]" style={{ color: P.textMuted }}>
                 Powered by Relay Protocol. Only verified routes are enabled. Estimated arrival time and fees are shown before you confirm.
               </div>
+              </div>{/* /form column */}
+              </div>{/* /desktop grid */}
             </>
           )}
           <DownloadApkRow P={P} />

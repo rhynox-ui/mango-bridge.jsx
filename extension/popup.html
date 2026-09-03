@@ -110,6 +110,56 @@
   #root.legacy .origin-badge { font-size: 11px; color: var(--mango-textSecondary); word-break: break-all; }
   #root.legacy .link { color: #FF9A2E; text-decoration: none; font-size: 12px; cursor: pointer; }
   #root.legacy a.link { display: block; text-align: center; }
+  /* ---- Wallet onboarding ("Start your journey") -------------------
+     Every number here is the reference design's own measurement scaled
+     to this popup's 400px width. The reference renders at 1024px wide,
+     so each value is (reference px / 1024) * 400 — width is the right
+     anchor because it is the dimension the design's proportions are
+     built on, and a popup is far shorter than the phone frame the
+     reference was drawn in.
+       text margin  82 -> 32     button margin 62 -> 24
+       headline     92 -> 36     subtitle      35 -> 14 (line 58 -> 23)
+       art width   612 -> 239    button height 110 -> 43
+       button gap   27 -> 11     footer text    36 -> 14              */
+  /* #root carries `padding:16px; min-height:100vh`, so a child that is
+     itself 100vh tall makes the popup 632px in a 600px window and clips
+     the footer — measured, not assumed. This screen supplies its own
+     margins, so it cancels the root padding with a negative margin and
+     takes its height from flex instead of the viewport. */
+  #root.legacy .welcome { display: flex; flex-direction: column; flex: 1; margin: -16px; padding: 0 0 10px; }
+  /* 26px, not the reference's proportional 40: a browser popup is
+     capped at 600px tall and the design was drawn in a much taller
+     phone frame, so the top space is where the difference has to come
+     out. At 40 the footer line clipped off the bottom edge — measured,
+     not guessed. */
+  #root.legacy .welcome-head { padding: 30px 32px 0; }
+  #root.legacy .welcome-title {
+    font-family: "Space Grotesk", "Inter", sans-serif;
+    font-size: 36px; line-height: 40px; font-weight: 700; letter-spacing: -1.1px;
+    color: var(--mango-textPrimary); margin: 0 0 15px;
+  }
+  #root.legacy .welcome-sub { font-size: 14px; line-height: 23px; color: var(--mango-textSecondary); }
+  #root.legacy .welcome-art { flex: 1; display: flex; align-items: center; justify-content: center; padding-top: 22px; min-height: 90px; }
+  /* The art is drawn ON a light ground — its contact shadow is "white,
+     darkened", not an object with its own colour — so on a dark popup it
+     is given that ground back rather than glowing. In light mode the
+     tile matches the page and is invisible. */
+  #root.legacy .welcome-art-tile { width: 239px; max-width: 100%; border-radius: 22px; display: flex; align-items: center; justify-content: center; }
+  #root.legacy.dark .welcome-art-tile { background: #F5F5F6; }
+  #root.legacy .welcome-art-tile img { width: 100%; display: block; max-height: 100%; object-fit: contain; }
+  #root.legacy .welcome-actions { padding: 0 24px; }
+  #root.legacy .welcome-actions button {
+    width: 100%; height: 43px; border-radius: 22px; border: 1px solid;
+    font-family: "Inter", sans-serif; font-size: 14px; font-weight: 700; letter-spacing: -0.1px;
+    margin: 0; cursor: pointer;
+  }
+  #root.legacy .welcome-actions .welcome-create { background: var(--mango-ctaBg); color: var(--mango-ctaText); border-color: var(--mango-ctaBg); }
+  #root.legacy .welcome-actions .welcome-import { background: var(--mango-bg); color: var(--mango-textPrimary); border-color: var(--mango-panelBorder); margin-top: 11px; }
+  #root.legacy .welcome-footer {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    margin-top: 15px; color: var(--mango-textSecondary); font-size: 14px;
+  }
+
   #root.legacy .icon-circle {
     width: 44px; height: 44px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
     background: rgba(255, 154, 46, 0.1); margin: 0 auto 12px;
