@@ -260,6 +260,17 @@ function iconCircle(svgMarkup) {
   wrap.innerHTML = svgMarkup;
   return wrap;
 }
+// Same fixed-literal-SVG rule as iconCircle above: this only ever
+// receives a string written in this file, never anything from a dApp.
+// Separate from iconCircle because the footer glyph sits inline next to
+// text rather than inside a tinted circle.
+function inlineSvg(svgMarkup, color) {
+  const span = document.createElement("span");
+  span.style.display = "block";
+  if (color) span.style.color = color;
+  span.innerHTML = svgMarkup;
+  return span;
+}
 const WALLET_ICON_SVG = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#E8801A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>';
 // Real brand mark — same path data as src/MangoLogo.jsx — in place of a
 // generic padlock on the returning-user Unlock screen (see renderUnlock
@@ -278,15 +289,55 @@ const MANGO_LOGO_ICON_SVG = '<svg width="20" height="17" viewBox="0 0 70 60" sty
 // Onboarding + unlock
 // ---------------------------------------------------------------------
 
+// The shield-check next to the footer line. Inline rather than an icon
+// dependency, same as every other glyph in this file.
+const SHIELD_CHECK_SVG =
+  '<svg width="15" height="17" viewBox="0 0 24 26" style="display:block;">' +
+  '<path d="M12 1.5 21 5v8.2c0 5.6-3.8 9.3-9 11.3-5.2-2-9-5.7-9-11.3V5l9-3.5Z" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linejoin="round"/>' +
+  '<path d="M8 12.8l2.8 2.8L16.4 10" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '</svg>';
+
+/**
+ * Wallet onboarding, built to the supplied reference design and matching
+ * the layout used on mobile so the two products read as one wallet.
+ *
+ * The previous version was a centred panel: an icon circle, "Mango
+ * Wallet", a custody paragraph, and two stacked buttons. The design
+ * replaces that with a left-aligned headline, a two-line invitation, the
+ * 3D mango illustration as the middle's focus, two full-width pills and
+ * a one-line reassurance at the foot.
+ *
+ * The illustration is the design's own artwork (assets/mango-hero.png)
+ * rather than the flat brand mark — mango, orbit rings, sparkles, dots
+ * and contact shadow as one image, so it cannot drift from the design a
+ * piece at a time. package.mjs zips the whole extension directory, so
+ * adding the file is all that is needed to ship it.
+ *
+ * The custody paragraph is not lost, only moved: "Self-custodial. You
+ * control your keys." carries the same promise in the design's own
+ * words, and the full explanation still appears on the password step
+ * where it is actually load-bearing.
+ */
 function renderWelcome(onDone) {
   mount(
-    h("div", { class: "panel", style: "display:flex;flex-direction:column;align-items:center;text-align:center;" },
-      iconCircle(WALLET_ICON_SVG),
-      h("h1", {}, "Mango Wallet"),
-      h("p", {}, "Self-custodial, generated and stored only in this browser extension. Mango never sees your recovery phrase or private keys."),
-      h("div", { style: "width:100%;margin-top:8px;" },
-        h("button", { class: "btn-primary", onclick: () => renderCreateReveal(onDone) }, "Create a new wallet"),
-        h("button", { class: "btn-secondary", onclick: () => renderImportPhrase(onDone) }, "I already have a recovery phrase"),
+    h("div", { class: "welcome" },
+      h("div", { class: "welcome-head" },
+        h("h1", { class: "welcome-title" }, "Start your journey"),
+        h("div", { class: "welcome-sub" }, "New here? Let\u2019s build your wallet."),
+        h("div", { class: "welcome-sub" }, "Already have one? Just import it."),
+      ),
+      h("div", { class: "welcome-art" },
+        h("div", { class: "welcome-art-tile" },
+          h("img", { src: "assets/mango-hero.png", alt: "" }),
+        ),
+      ),
+      h("div", { class: "welcome-actions" },
+        h("button", { class: "welcome-create", onclick: () => renderCreateReveal(onDone) }, "Create new wallet"),
+        h("button", { class: "welcome-import", onclick: () => renderImportPhrase(onDone) }, "Import existing wallet"),
+        h("div", { class: "welcome-footer" },
+          inlineSvg(SHIELD_CHECK_SVG),
+          h("span", {}, "Self-custodial. You control your keys."),
+        ),
       ),
     ),
   );
