@@ -69,6 +69,8 @@ import {
   Menu,
   Mail,
   Download,
+  Search,
+  Settings,
 } from "lucide-react";
 import { isCctpSupportedPair, runCctpTransfer, CCTP_CHAINS, DEV_FEE_PCT } from "./cctp.js";
 import { appFeeBps } from "./devFeeWallets.js";
@@ -182,6 +184,14 @@ const CHAINS = new Proxy({}, {
   getOwnPropertyDescriptor(_, key) { return Reflect.getOwnPropertyDescriptor(getChains(), key); },
 });
 const CHAIN_ORDER = ["ethereum", "base", "bnb", "robinhood", "stable", "solana", "arbitrum", "avalanche", "abstract", "hyperevm", "ink", "plasma", "unichain", "xlayer"];
+
+// Buy/Sell pill colours, taken from mango-mobile's own palette.js
+// (GAIN and DANGER) rather than picked to look similar — this app's
+// palette has no gain/danger entry, and the Swap layout is a port, so
+// the two apps' pills should be the same colour rather than nearly.
+// DANGER is already the literal this file uses for every error state.
+const SWAP_GAIN = "#00D67D";
+const SWAP_DANGER = "#D92D20";
 
 // Real, network-aware address validation. EVM uses viem's own isAddress
 // (proper format + checksum validation, not a hand-rolled regex). Solana
@@ -1127,8 +1137,21 @@ function AssetIcon({ symbol, size = 18, chainId, address, logoUrl }) {
 // pool — falls back to manual symbol entry (splDecimals/splSymbolInput
 // below) rather than blocking the add entirely: decimals already
 // confirmed it's a real mint, there's just no live name for it yet.
-function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true, discoveredLogos }) {
+function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true, discoveredLogos, openSignal }) {
   const [open, setOpen] = useState(false);
+  // Lets something OUTSIDE this component open the picker — the Swap
+  // layout's own "Search" button, which is the mobile app's entry point
+  // for pasting a contract address. A counter rather than a boolean so
+  // repeated presses re-open it, and skipping 0 means mounting doesn't
+  // pop the menu open. Every existing call site passes nothing and is
+  // unaffected.
+  useEffect(() => {
+    if (openSignal) {
+      setOpen(true);
+      onOpen?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal]);
   const [openUpward, setOpenUpward] = useState(false);
   const [query, setQuery] = useState("");
   const [customTokensForChain, setCustomTokensForChain] = useState([]);
@@ -4240,6 +4263,10 @@ export default function MangoBridge() {
   // between the two tabs — everything else below is shared.
   const isSwapTab = tab === "swap";
 
+  // Counter, not a boolean, so pressing Search twice re-opens the
+  // picker; AssetDropdown ignores 0 so mounting doesn't pop it open.
+  const [toAssetPickerSignal, setToAssetPickerSignal] = useState(0);
+
   // Real bug fix: from/to default independently ("base"/"ethereum") and
   // only get forced equal when the user actually touches the chain
   // picker (handleSwapChainChange) — landing directly on the Swap tab
@@ -4691,6 +4718,27 @@ export default function MangoBridge() {
   const chainAssetPairValid = isSwapTab ? from === to && fromAsset.symbol !== toAsset.symbol : from !== to;
   const canBridge = amtNum > 0 && chainAssetPairValid && !insufficient && !onWrongNetwork && !needsEvmAddressForSolanaSource && !needsSolanaAddressForSolanaDest && (isSwapTab || !sendToOther || isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana));
 
+  // Buy = paying the chain's native asset to acquire the other side;
+  // Sell = the reverse. Same rule mobile's isNativeAsset encodes, and
+  // it's what decides which pill reads as active.
+  const isSwapBuySide = fromAsset.symbol === NATIVE_SYMBOL[from];
+  // The active pill submits under exactly the CTA's own gating rather
+  // than a second, subtly-different set of conditions.
+  const swapPillReady = canBridge && !routeUnavailable;
+  // Mirrors mobile's pillHint: says why the active pill can't submit,
+  // and renders nothing at all once it can.
+  const swapPillHint = !chainAssetPairValid
+    ? "Choose different assets"
+    : insufficient || swapPillReady
+      ? null
+      : amtNum <= 0
+        ? `Enter an amount to ${isSwapBuySide ? `buy ${toAsset.symbol}` : `sell ${fromAsset.symbol}`}`
+        : routeChecking
+          ? "Finding the best route…"
+          : routeUnavailable
+            ? "No route found for this pair — try a different amount or asset."
+            : null;
+
   function persist(newBalances, newHistory) {
     saveJSON("mango:balances", newBalances);
     saveJSON("mango:history", newHistory);
@@ -4967,6 +5015,175 @@ export default function MangoBridge() {
                 />
               )}
 
+              {/* SWAP LAYOUT — a direct translation of mango-mobile's
+                  own DexScreen.tsx: the same rows in the same order
+                  (chain pill + Search + settings, chart, Buy/Sell,
+                  hint, quick-percent, then You pay / You receive
+                  side-by-side), carrying its real style values across
+                  rather than approximating them by eye — 999px pills,
+                  gain/danger-bordered Buy/Sell, 14px cards, the 10px
+                  uppercase card labels with 0.6 letter-spacing.
+                  Bridge's own layout below is untouched: it needs two
+                  chain pickers and a destination address, neither of
+                  which a same-chain swap has. */}
+              {isSwapTab ? (
+                <>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="flex-1 flex items-center gap-1.5 rounded-full px-2.5 py-1" style={{ background: P.pillBg }}>
+                      <span className="text-[10.5px] mr-px" style={{ color: P.textMuted }}>Swap on</span>
+                      <ChainDropdown value={from} onChange={handleSwapChainChange} P={P} chainOrder={swapChainOrder} />
+                    </div>
+                    {/* Same job as mobile's: opens the very same asset
+                        picker the "You receive" pill uses, so pasting a
+                        contract address is reachable from up here too. */}
+                    <button
+                      onClick={() => setToAssetPickerSignal((n) => n + 1)}
+                      className="flex items-center gap-1 h-[26px] rounded-[13px] px-2.5 shrink-0"
+                      style={{ background: P.pillBg }}
+                    >
+                      <Search size={12} color={P.textSecondary} />
+                      <span className="text-[11px] font-semibold" style={{ color: P.textSecondary }}>Search</span>
+                    </button>
+                    <button
+                      onClick={() => setDetailsOpen((o) => !o)}
+                      className="w-[26px] h-[26px] rounded-[13px] flex items-center justify-center shrink-0"
+                      style={{ background: P.pillBg }}
+                      aria-label="Swap details"
+                    >
+                      <Settings size={13} color={P.textMuted} />
+                    </button>
+                  </div>
+
+                  <SwapChartPanel
+                    P={P}
+                    chainKey={from}
+                    fromAsset={fromAsset}
+                    toAsset={toAsset}
+                    nativeSymbol={NATIVE_SYMBOL[from]}
+                    tokenAddressFor={swapChartTokenAddress}
+                  />
+
+                  {/* Buy/Sell does double duty exactly as on mobile:
+                      the INACTIVE side flips direction (the same swap()
+                      the ⇅ button calls), the ACTIVE side submits (the
+                      same setShowModal(true) the CTA below does), and
+                      the active side dims under the CTA's own
+                      canBridge/routeUnavailable gating so it never
+                      looks tappable while doing nothing. The CTA
+                      itself stays: on the site it also carries states
+                      mobile has no equivalent for (wrong network,
+                      route checking, address validation), and removing
+                      it would lose them. */}
+                  <div className="flex gap-2 mt-2 mb-2">
+                    <button
+                      onClick={() => (!isSwapBuySide ? swap() : swapPillReady && setShowModal(true))}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-full"
+                      style={{
+                        background: isSwapBuySide ? SWAP_GAIN : P.panel,
+                        border: `1px solid ${SWAP_GAIN}`,
+                        opacity: isSwapBuySide && !swapPillReady ? 0.4 : 1,
+                        cursor: isSwapBuySide && !swapPillReady ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <span className="text-[14px] font-extrabold" style={{ color: isSwapBuySide ? "#fff" : SWAP_GAIN }}>↗</span>
+                      <span className="text-[13.5px] font-bold" style={{ color: isSwapBuySide ? "#fff" : SWAP_GAIN }}>Buy</span>
+                    </button>
+                    <button
+                      onClick={() => (isSwapBuySide ? swap() : swapPillReady && setShowModal(true))}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-full"
+                      style={{
+                        background: !isSwapBuySide ? SWAP_DANGER : P.panel,
+                        border: `1px solid ${SWAP_DANGER}`,
+                        opacity: !isSwapBuySide && !swapPillReady ? 0.4 : 1,
+                        cursor: !isSwapBuySide && !swapPillReady ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <span className="text-[14px] font-extrabold" style={{ color: !isSwapBuySide ? "#fff" : SWAP_DANGER }}>↘</span>
+                      <span className="text-[13.5px] font-bold" style={{ color: !isSwapBuySide ? "#fff" : SWAP_DANGER }}>Sell</span>
+                    </button>
+                  </div>
+
+                  {/* Only rendered while the active pill genuinely
+                      can't submit — costs no height once it can, and
+                      is exactly when a silent pill would read as
+                      broken. Same rule as mobile's pillHint. */}
+                  {swapPillHint !== null && (
+                    <div className="text-[11px] text-center -mt-1 mb-1.5" style={{ color: P.textMuted }}>{swapPillHint}</div>
+                  )}
+
+                  {/* 25/50/75 set the amount straight off the balance;
+                      MAX routes through setMax so a native asset keeps
+                      its real gas reservation. Custom is a status
+                      indicator, not a mode switch — this form's amount
+                      field is editable at any time, so Custom just
+                      lights up when a real amount is present. */}
+                  <div className="flex gap-1.5 mb-2">
+                    {[25, 50, 75, 100].map((pct) => (
+                      <button
+                        key={pct}
+                        onClick={() => setPercent(pct)}
+                        disabled={availableBalance === null}
+                        className="flex-1 rounded-full py-[7px] text-[11px] font-semibold"
+                        style={{ background: P.pillBg, color: P.textSecondary, opacity: availableBalance === null ? 0.5 : 1 }}
+                      >
+                        {pct === 100 ? "MAX" : `${pct}%`}
+                      </button>
+                    ))}
+                    <div
+                      className="flex-1 rounded-full py-[7px] text-[11px] font-semibold text-center"
+                      style={{ background: amtNum > 0 ? P.ctaBg : P.pillBg, color: amtNum > 0 ? P.ctaText : P.textSecondary }}
+                    >
+                      Custom
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <div className="flex-1 rounded-[14px] p-3" style={{ background: P.panel, border: `1px solid ${insufficient ? "#D92D20" : P.panelBorder}` }}>
+                      <div className="text-[10px] font-bold uppercase mb-2" style={{ color: P.textMuted, letterSpacing: "0.6px" }}>You pay</div>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} allowCustomToken discoveredLogos={discoveredAssetLogos} />
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={amount}
+                          onChange={(e) => setAmount(e.target.value)}
+                          placeholder="0"
+                          className="font-display bg-transparent text-[19px] font-semibold w-full text-right min-w-0"
+                          style={{ color: P.textPrimary }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-1.5 mt-1 text-[10px]" style={{ color: P.textMuted }}>
+                        <span className="font-semibold">{}</span>
+                        <span className="truncate">
+                          {usingLiveBalance && (liveBalanceLoading ? "…" : availableBalance !== null ? `${fmt(availableBalance, fromAsset.decimals)} avail.` : "")}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex-1 rounded-[14px] p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+                      <div className="text-[10px] font-bold uppercase mb-2" style={{ color: P.textMuted, letterSpacing: "0.6px" }}>You receive</div>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken discoveredLogos={discoveredAssetLogos} openSignal={toAssetPickerSignal} />
+                        <span className="font-display text-[19px] font-semibold truncate" style={{ color: amtNum > 0 && received !== null ? P.textPrimary : P.textMuted }}>
+                          {amtNum > 0 ? (received !== null ? fmt(received, 4) : "—") : "—"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-end gap-1.5 mt-1 text-[10px]" style={{ color: P.textMuted }}>
+                        <span className="truncate">
+                          {usingLiveBalanceTo && (liveBalanceLoadingTo ? "…" : "")}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>Insufficient balance on {CHAINS[from].name}</div>}
+                  {receivedRoundsToZero && (
+                    <div className="text-[11.5px] mt-1.5" style={{ color: "#F0B84D" }}>
+                      This amount would return next to nothing at the current rate — try a larger amount, or this token/pair may not have a working route yet.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
               {/* You send */}
               <div className="rounded-2xl p-4 shadow-sm" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                 <div className="flex items-center justify-between mb-2.5">
@@ -5073,6 +5290,9 @@ export default function MangoBridge() {
                   </div>
                 )}
               </div>
+
+                </>
+              )}
 
               {/* ETA / details collapsible */}
               <button onClick={() => setDetailsOpen((o) => !o)} className="w-full flex items-center justify-between mt-3 px-4 py-2.5 rounded-xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
