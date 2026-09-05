@@ -3769,6 +3769,16 @@ export default function MangoBridge() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sendToOther, setSendToOther] = useState(false);
   const [destAddress, setDestAddress] = useState("");
+  // Hidden from the UI: it read as "you must connect a Solana wallet to
+  // receive SOL" right next to the same-wallet "Connect Solana Wallet"
+  // prompt, which is genuinely confusing for the common case (bridging
+  // into your own connected wallet, no external address needed at all).
+  // sendToOther/destAddress and everything downstream that branches on
+  // them (recipientAddress, canBridge, the two "needs a wallet" panels)
+  // are untouched and still correct — with the checkbox unreachable,
+  // sendToOther simply never becomes true, so those all take their
+  // normal same-wallet path. Flip this back to re-show the section.
+  const ENABLE_SEND_TO_OTHER_ADDRESS = false;
 
   const { address, isConnected, chainId: connectedChainId, connector: evmConnector } = useAccount();
   // Real UX gap closed, live-directed (compare against mango-mobile's
@@ -5456,7 +5466,7 @@ export default function MangoBridge() {
                   lands back in the connected wallet, same reasoning
                   mobile's own DexScreen.tsx gives for not offering this
                   section at all on its swap screen. */}
-              {!isSwapTab && (
+              {ENABLE_SEND_TO_OTHER_ADDRESS && !isSwapTab && (
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <label className="flex items-center gap-2.5 cursor-pointer">
                     <input type="checkbox" checked={sendToOther} onChange={(e) => setSendToOther(e.target.checked)} className="w-4 h-4 rounded" style={{ accentColor: P.ctaBg }} />
