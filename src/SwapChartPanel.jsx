@@ -1,40 +1,44 @@
 // src/SwapChartPanel.jsx
 //
-// The Swap tab's chart panel — DexScreener's embedded chart with the
-// interval pills above it and live MC / Volume / Holders chips over it.
+// The Swap tab's chart panel — DexScreener's own embedded chart, plus a
+// Holders button above it (the one control here that isn't already
+// somewhere in the embed's own UI).
 //
 // PORTED from mango-mobile's Swap screen (src/components/DexScreenerChart.tsx
 // plus the chart-side state in src/wallet/DexScreen.tsx), reusing the
 // same data modules rather than re-deriving anything: dexScreenerChart.js
-// for pair resolution and the embed URL, geckoTerminal.js for the stats,
-// goplusTokenSecurity.js for holders. Those three came across from
-// mobile unchanged, so the two apps show the same numbers from the same
-// sources.
+// for pair resolution and the embed URL, goplusTokenSecurity.js for
+// holders. Both came across from mobile unchanged, so the two apps show
+// the same numbers from the same sources.
 //
 // What differs from mobile, and only because the platform differs: the
 // embed goes in an <iframe> instead of a react-native-webview, and the
 // holders list is a plain overlay panel instead of a bottom sheet.
-// Everything about WHICH token is charted, which pair is picked, and
-// what is shown when data is missing is identical.
+//
+// This used to also carry its own interval-pill row and absolutely
+// positioned MC/Vol/Holders chips over the embed — removed, same fix as
+// mobile's: DexScreener's own embedded page already shows its own
+// timeframe selector and its own volume/price header, so those were
+// pure duplicates, and worse, visually collided with DexScreener's real
+// controls once the canvas underneath became a real page with its own
+// header rather than blank space. See the render below for what's left.
 
 import { useEffect, useMemo, useState } from "react";
 import { resolveDexScreenerPair, dexScreenerEmbedUrl } from "./dexScreenerChart.js";
-import { fetchPoolMarketStats, geckoTerminalNetworkForChain } from "./geckoTerminal.js";
 import { checkTokenSecurity, checkSolanaTokenSecurity } from "./goplusTokenSecurity.js";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
 
 const CHART_BG = "#0B0B0D";
 const CHART_AXIS_TEXT = "#7A7A80";
-const INTERVALS = ["15m", "1H", "4H", "1D"];
+// DexScreener's own embedded page picks its own timeframe now (see the
+// removed interval-pill row below) — this only sets which window it
+// opens on.
+const DEFAULT_INTERVAL = "1H";
 
 function fmtCompact(n) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return n.toFixed(0);
-}
-
-function fmtUsd(n) {
-  return `$${fmtCompact(n)}`;
 }
 
 /**
@@ -55,10 +59,8 @@ function chartedSide({ fromAsset, toAsset, nativeSymbol }) {
 }
 
 export default function SwapChartPanel({ P, chainKey, fromAsset, toAsset, nativeSymbol, tokenAddressFor }) {
-  const [interval, setInterval] = useState("1H");
   const [pair, setPair] = useState(null);
   const [resolving, setResolving] = useState(true);
-  const [stats, setStats] = useState(null);
   const [security, setSecurity] = useState(null);
   const [holdersOpen, setHoldersOpen] = useState(false);
 
@@ -90,28 +92,6 @@ export default function SwapChartPanel({ P, chainKey, fromAsset, toAsset, native
     };
   }, [chainKey, tokenAddress]);
 
-  // Read once per pool/chain change, deliberately not polled — see
-  // geckoTerminal.js's own header on the rate limit that punished
-  // exactly that on mobile.
-  useEffect(() => {
-    if (!tokenAddress) {
-      setStats(null);
-      return;
-    }
-    const network = geckoTerminalNetworkForChain(chainKey);
-    if (!network) {
-      setStats(null);
-      return;
-    }
-    let cancelled = false;
-    fetchPoolMarketStats({ network, poolAddress: tokenAddress }).then((result) => {
-      if (!cancelled) setStats(result);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [chainKey, tokenAddress]);
-
   useEffect(() => {
     if (!tokenAddress) {
       setSecurity(null);
@@ -132,28 +112,37 @@ export default function SwapChartPanel({ P, chainKey, fromAsset, toAsset, native
     };
   }, [chainKey, tokenAddress, solana]);
 
-  const embedUrl = pair ? dexScreenerEmbedUrl({ ...pair, intervalLabel: interval }) : null;
+  const embedUrl = pair ? dexScreenerEmbedUrl({ ...pair, intervalLabel: DEFAULT_INTERVAL }) : null;
   const holders = security?.holders ?? null;
   const holderCount = security?.holderCount ?? null;
   const hasHolders = (holders?.length ?? 0) > 0;
 
   return (
     <div className="mb-3">
-      <div className="flex gap-1 mb-2">
-        {INTERVALS.map((label) => (
+      {/* The interval-pill row and the Vol/MC chips this used to render
+          here are gone — DexScreener's own embedded page already shows
+          its own timeframe selector and its own volume/price header
+          (visible inside the iframe itself), so this app's copies were
+          pure duplicates. Worse than redundant: absolutely positioned on
+          top of an iframe whose own header now occupies that same top
+          strip, they visually collided with DexScreener's real controls
+          instead of floating over blank canvas the way they did before
+          this became an embed. Holders is the one real, otherwise-
+          unreachable feature that lived in that overlay (opens the
+          holders panel below, which nothing else here can reach) — moved
+          to a plain row above the chart instead of an overlapping chip.
+          Same fix as mobile's Swap chart (src/components/DexScreenerChart.tsx). */}
+      {(holderCount != null || hasHolders) && (
+        <div className="flex justify-end mb-2">
           <button
-            key={label}
-            onClick={() => setInterval(label)}
-            className="flex-1 rounded-full py-1.5 text-[10.5px] font-bold transition-colors"
-            style={{
-              background: label === interval ? P.pillBg : "transparent",
-              color: label === interval ? P.textPrimary : P.textMuted,
-            }}
+            onClick={() => setHoldersOpen(true)}
+            className="rounded-full px-2.5 py-1 text-[10.5px] font-bold"
+            style={{ background: P.pillBg, color: P.textPrimary }}
           >
-            {label}
+            {holderCount != null ? `Holders ${fmtCompact(holderCount)}` : "Top holders"} ▾
           </button>
-        ))}
-      </div>
+        </div>
+      )}
 
       <div
         className="relative rounded-2xl overflow-hidden"
@@ -172,9 +161,9 @@ export default function SwapChartPanel({ P, chainKey, fromAsset, toAsset, native
           </div>
         )}
         {!!embedUrl && (
-          // Keyed on the full URL so an interval change actually
-          // reloads the embed rather than leaving the pills looking live
-          // while the chart stays on whatever loaded first.
+          // Keyed on the full URL so a pair/interval change actually
+          // reloads the embed rather than leaving the chart on whatever
+          // loaded first.
           <iframe
             key={embedUrl}
             src={embedUrl}
@@ -188,39 +177,6 @@ export default function SwapChartPanel({ P, chainKey, fromAsset, toAsset, native
             referrerPolicy="no-referrer"
             loading="lazy"
           />
-        )}
-
-        {/* MC / Vol / Holders — this app's own data over the embed, in
-            the same corners mobile puts them. Absolute so they cost no
-            layout height. */}
-        {stats?.volume24hUsd != null && (
-          <div className="absolute top-2 left-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold font-mono" style={{ background: "rgba(0,0,0,0.35)", color: "#C9C9CE" }}>
-            <span style={{ color: CHART_AXIS_TEXT }}>Vol</span> {fmtUsd(stats.volume24hUsd)}
-          </div>
-        )}
-        {stats?.marketCapUsd != null && (
-          <div className="absolute top-2 right-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold font-mono" style={{ background: "rgba(0,0,0,0.35)", color: "#C9C9CE" }}>
-            <span style={{ color: CHART_AXIS_TEXT }}>MC</span> {fmtUsd(stats.marketCapUsd)}
-            {stats.priceChange24hPct != null && (
-              <span style={{ color: stats.priceChange24hPct >= 0 ? "#0ECB81" : "#D92D20" }}>
-                {"  "}
-                {stats.priceChange24hPct >= 0 ? "▲" : "▼"} {Math.abs(stats.priceChange24hPct).toFixed(2)}%
-              </span>
-            )}
-          </div>
-        )}
-        {(holderCount != null || hasHolders) && (
-          <button
-            onClick={() => setHoldersOpen(true)}
-            className="absolute right-2 rounded-md px-1.5 py-0.5 text-[10px] font-bold font-mono"
-            style={{ top: 32, background: "rgba(0,0,0,0.35)", color: "#F5F5F6" }}
-          >
-            {/* No number on Solana, because GoPlus's Solana result has
-                no holder_count field at all — showing the label without
-                a figure is honest; inventing one, or hiding real holder
-                data because one field is missing, are both worse. */}
-            {holderCount != null ? `Holders ${fmtCompact(holderCount)} ▾` : "Top holders ▾"}
-          </button>
         )}
 
         {holdersOpen && (
