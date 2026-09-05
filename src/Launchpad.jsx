@@ -478,13 +478,18 @@ function HolderConcentrationBar({ holders, P }) {
 // through from the app's own light/dark toggle so the embed actually
 // matches instead of always forcing one look.
 //
-// Gated on hasTrades rather than always attempting the iframe: this app's
-// marketCapUsd is literally the sum of accrued trading fees (see
-// CreateLaunchModal/TokenDetailView comments elsewhere in this file), so
-// $0 means zero trades ever happened, by construction — not an estimate.
-// A pair DexScreener has never seen a swap for won't have a chart to show,
-// so this shows the same honest "no trades yet" language used everywhere
+// Gated on hasTrades rather than always attempting the iframe: a pair
+// DexScreener has never seen a swap for won't have a chart to show, so
+// this shows the same honest "no trades yet" language used everywhere
 // else in this file instead of embedding a guaranteed-empty iframe.
+//
+// hasTrades is NOT just marketCapUsd > 0 any more (TokenDetailView's own
+// call site ORs in the real trade list too) — that premise doesn't hold.
+// Real bug, live-reported: a token with real recorded trades (visible in
+// this same page's "Recent Trades" tab) still showed "No trades yet" on
+// the chart, because tiny trades accrue a fee that still rounds
+// marketCapUsd to $0 — a $0 cap means "nothing worth a cent has
+// accrued", not "nothing has happened".
 function DexScreenerChart({ tokenAddress, hasTrades, theme, P }) {
   const [loaded, setLoaded] = useState(false);
   if (!hasTrades) {
@@ -514,26 +519,15 @@ function DexScreenerChart({ tokenAddress, hasTrades, theme, P }) {
   );
 }
 
-function TokenActivityPanel({ token, P }) {
+function TokenActivityPanel({ token, P, trades, tradesError }) {
   const [tab, setTab] = useState("trades");
-  const [trades, setTrades] = useState(null);
   const [holders, setHolders] = useState(null);
-  const [tradesError, setTradesError] = useState(null);
   const [holdersError, setHoldersError] = useState(null);
 
-  // Keyed on the token's own address — automatically refetches whenever
-  // the user switches to a different token from Explore, and doesn't
-  // block the Buy/Sell widget above, since this loads independently after
-  // the rest of the page has already rendered.
-  useEffect(() => {
-    setTrades(null);
-    setTradesError(null);
-    let cancelled = false;
-    getRecentTrades({ poolId: token.poolId })
-      .then((real) => { if (!cancelled) setTrades(real); })
-      .catch((err) => { if (!cancelled) setTradesError(err?.message || String(err)); });
-    return () => { cancelled = true; };
-  }, [token.poolId]);
+  // trades/tradesError are now fetched once by the parent (TokenDetailView),
+  // which also needs the real trade list for DexScreenerChart's own
+  // hasTrades gate — see its own comment for why. Passed down as props
+  // instead of fetched here a second time.
 
   useEffect(() => {
     setHolders(null);
@@ -664,6 +658,27 @@ function TokenDetailView({ token, onBack, P, theme }) {
     graduationThresholdUsd: token.graduationThresholdUsd,
     graduated: token.graduated,
   });
+
+  // Lifted up from TokenActivityPanel (which used to fetch this itself)
+  // so DexScreenerChart's own hasTrades gate below can see the real
+  // trade list too, not just marketCapUsd. Real bug, live-reported: a
+  // token with real recorded trades (visible in this same panel's own
+  // "Recent Trades" tab) still showed "No trades yet" on the chart,
+  // because tiny trades accrue a fee that still rounds marketCapUsd to
+  // $0 -- a $0 cap means "nothing worth a cent has accrued", not
+  // "nothing has happened". One fetch, shared by both, rather than
+  // querying the same trade list twice.
+  const [trades, setTrades] = useState(null);
+  const [tradesError, setTradesError] = useState(null);
+  useEffect(() => {
+    setTrades(null);
+    setTradesError(null);
+    let cancelled = false;
+    getRecentTrades({ poolId: token.poolId })
+      .then((real) => { if (!cancelled) setTrades(real); })
+      .catch((err) => { if (!cancelled) setTradesError(err?.message || String(err)); });
+    return () => { cancelled = true; };
+  }, [token.poolId]);
 
   async function refreshProgress() {
     try {
@@ -898,7 +913,7 @@ function TokenDetailView({ token, onBack, P, theme }) {
         </div>
       </div>
 
-      <DexScreenerChart tokenAddress={token.tokenAddress} hasTrades={liveProgress.marketCapUsd > 0} theme={theme} P={P} />
+      <DexScreenerChart tokenAddress={token.tokenAddress} hasTrades={liveProgress.marketCapUsd > 0 || (trades?.length ?? 0) > 0} theme={theme} P={P} />
       <a
         href={`https://dexscreener.com/robinhood/${token.tokenAddress}`}
         target="_blank"
@@ -1051,7 +1066,7 @@ function TokenDetailView({ token, onBack, P, theme }) {
         )}
       </div>
 
-      <TokenActivityPanel token={token} P={P} />
+      <TokenActivityPanel token={token} P={P} trades={trades} tradesError={tradesError} />
     </div>
   );
 }
