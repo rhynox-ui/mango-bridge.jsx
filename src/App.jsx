@@ -3797,33 +3797,39 @@ export default function MangoBridge() {
   const [showNetworkSelector, setShowNetworkSelector] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Real gap, user-reported: this site never had a working slippage
-  // control at all — the gear icon only ever opened the read-only
-  // details panel (route/gas/fee) far down the form, below the pay/
-  // receive cards. Putting the real slippage control in that same panel
-  // (an earlier pass at this fix) turned out to have the same
-  // discoverability bug: the gear sits at the TOP of the form, but the
-  // panel it opened rendered at the BOTTOM, out of view without
-  // scrolling — reported back as "still not working." settingsOpen is
-  // its own state now, opening its own small popover anchored directly
-  // under the gear (see that button's own mount site), same pattern as
-  // AssetDropdown/the Top-holders popover, so the response to tapping it
-  // is visible exactly where the tap happened.
+  // control at all. Two earlier passes at this fix both had a real
+  // discoverability problem — first the control lived in the read-only
+  // details panel far down the form (out of view below the gear that
+  // opened it), then a small anchored popover under the gear itself,
+  // both reported back as "still not working." Ported wholesale from
+  // mobile's own SwapSettingsSheet.tsx instead of iterating on a site-
+  // only design again: a real, full-width bottom sheet sliding up over
+  // the whole page (see its own mount site near the other top-level
+  // modals) — impossible to miss regardless of where on the form the
+  // gear happens to sit.
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsRef = useRef(null);
-  useEffect(() => {
-    if (!settingsOpen) return;
-    function onDoc(e) {
-      if (settingsRef.current && !settingsRef.current.contains(e.target)) setSettingsOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [settingsOpen]);
   // null = Auto, Relay's own front-running-aware default (no
   // slippageTolerance sent at all — see relaybridge.js's own getRelayQuote
   // header). Swap-only, same as mobile's own SwapSettingsSheet — Bridge
   // always passes undefined, matching BridgeScreen.tsx's own choice.
+  // This is the COMMITTED value, only ever changed by Save inside the
+  // sheet — same draft/commit split mobile's own sheet uses, so picking
+  // a preset or typing Custom doesn't affect a live quote until saved,
+  // and closing without saving is a real no-op, never a half-applied
+  // change.
   const [slippageBps, setSlippageBps] = useState(null);
-  const [slippageCustomText, setSlippageCustomText] = useState("");
+  const [draftSlippageBps, setDraftSlippageBps] = useState(null);
+  const [draftSlippageCustomText, setDraftSlippageCustomText] = useState("");
+  const SLIPPAGE_PRESETS_ARE_CUSTOM = (bps) => bps !== null && !SLIPPAGE_PRESETS_BPS.includes(bps);
+  // Re-snapshot from the real committed value every time the sheet
+  // opens — never carries a stale/discarded draft into the next open,
+  // same as mobile's own sheet.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    setDraftSlippageBps(slippageBps);
+    setDraftSlippageCustomText(SLIPPAGE_PRESETS_ARE_CUSTOM(slippageBps) ? String(Number(slippageBps) / 100) : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOpen]);
   const [sendToOther, setSendToOther] = useState(false);
   const [destAddress, setDestAddress] = useState("");
   // Hidden from the UI: it read as "you must connect a Solana wallet to
@@ -5175,61 +5181,14 @@ export default function MangoBridge() {
                         discoveredLogos={discoveredAssetLogos}
                       />
                     </div>
-                    <div className="relative shrink-0" ref={settingsRef}>
-                      <button
-                        onClick={() => setSettingsOpen((o) => !o)}
-                        className="w-[26px] h-[26px] rounded-[13px] flex items-center justify-center"
-                        style={{ background: P.pillBg }}
-                        aria-label="Swap settings"
-                      >
-                        <Settings size={13} color={P.textMuted} />
-                      </button>
-                      {/* Real slippage control, anchored right under the
-                          gear that opens it — the whole point of this fix.
-                          Same presets/parsing as mobile's own
-                          SwapSettingsSheet.tsx; each tap commits
-                          immediately (no draft/commit split — there's no
-                          separate sheet to close without saving). */}
-                      {settingsOpen && (
-                        <div
-                          className="absolute right-0 top-full mt-2 z-50 w-64 rounded-xl shadow-2xl p-3 flex flex-col gap-2"
-                          style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}
-                        >
-                          <div className="flex items-center justify-between text-[12.5px]">
-                            <span className="font-semibold" style={{ color: P.textPrimary }}>Slippage</span>
-                            <span className="font-mono" style={{ color: P.textSecondary }}>{slippagePresetLabel(slippageBps)}</span>
-                          </div>
-                          <div className="flex gap-1.5">
-                            {SLIPPAGE_PRESETS_BPS.map((preset) => (
-                              <button
-                                key={preset ?? "auto"}
-                                onClick={() => { setSlippageBps(preset); setSlippageCustomText(""); }}
-                                className="flex-1 rounded-lg py-1.5 text-[11.5px] font-semibold"
-                                style={{
-                                  background: slippageBps === preset ? P.ctaBg : P.pillBg,
-                                  color: slippageBps === preset ? P.ctaText : P.textSecondary,
-                                }}
-                              >
-                                {slippagePresetLabel(preset)}
-                              </button>
-                            ))}
-                          </div>
-                          <input
-                            value={slippageCustomText}
-                            onChange={(e) => {
-                              setSlippageCustomText(e.target.value);
-                              setSlippageBps(bpsFromPercentInput(e.target.value));
-                            }}
-                            placeholder="Custom %"
-                            className="w-full px-2.5 py-1.5 rounded-lg text-[11.5px] text-right"
-                            style={{ background: P.input, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
-                          />
-                          {slippageBps !== null && Number(slippageBps) > 500 && (
-                            <div className="text-[10.5px]" style={{ color: "#D92D20" }}>High slippage — you may receive significantly less than quoted.</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                    <button
+                      onClick={() => setSettingsOpen(true)}
+                      className="w-[26px] h-[26px] rounded-[13px] flex items-center justify-center shrink-0"
+                      style={{ background: P.pillBg }}
+                      aria-label="Swap settings"
+                    >
+                      <Settings size={13} color={P.textMuted} />
+                    </button>
                   </div>
 
                   {/* Swap's chart, ported from the mobile app's own
@@ -5790,6 +5749,90 @@ export default function MangoBridge() {
           onPendingHash={handlePendingHash}
           P={P}
         />
+      )}
+      {/* Real Swap Settings bottom sheet — ported wholesale from mobile's
+          own SwapSettingsSheet.tsx (see settingsOpen's own comment for
+          why this replaced two earlier, less-visible designs). Draft/
+          commit: opening snapshots the real committed slippageBps into
+          draftSlippageBps; picking a preset or typing Custom only edits
+          the draft. Save is what actually calls setSlippageBps and
+          closes; the backdrop and Close (×) both just close without
+          saving, discarding the draft. */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-[100] flex items-end" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setSettingsOpen(false)}>
+          <div className="w-full rounded-t-3xl px-5 pb-8" style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-center py-2.5">
+              <div className="w-9 h-1 rounded-full" style={{ background: P.panelBorder }} />
+            </div>
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-[17px] font-extrabold" style={{ color: P.textPrimary }}>Swap Settings</span>
+              <span className="rounded-full px-2.5 py-1 text-[11.5px] font-bold" style={{ background: P.pillBg, color: P.textPrimary }}>
+                Active: {slippagePresetLabel(slippageBps)}
+              </span>
+            </div>
+
+            <div className="text-[11.5px] font-bold mb-2" style={{ color: P.textMuted }}>Slippage</div>
+            <div className="flex gap-1.5 mb-2">
+              {SLIPPAGE_PRESETS_BPS.map((preset) => (
+                <button
+                  key={preset ?? "auto"}
+                  onClick={() => { setDraftSlippageBps(preset); setDraftSlippageCustomText(""); }}
+                  className="flex-1 rounded-xl py-2.5 text-[13px] font-bold"
+                  style={{
+                    background: draftSlippageBps === preset && !SLIPPAGE_PRESETS_ARE_CUSTOM(draftSlippageBps) ? P.ctaBg : P.pillBg,
+                    color: draftSlippageBps === preset && !SLIPPAGE_PRESETS_ARE_CUSTOM(draftSlippageBps) ? P.ctaText : P.textSecondary,
+                  }}
+                >
+                  {slippagePresetLabel(preset)}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 mb-3">
+              <button
+                onClick={() => setDraftSlippageCustomText(draftSlippageCustomText || (draftSlippageBps ? String(Number(draftSlippageBps) / 100) : ""))}
+                className="rounded-xl py-2.5 px-4 text-[13px] font-bold shrink-0"
+                style={{
+                  background: SLIPPAGE_PRESETS_ARE_CUSTOM(draftSlippageBps) ? P.ctaBg : P.pillBg,
+                  color: SLIPPAGE_PRESETS_ARE_CUSTOM(draftSlippageBps) ? P.ctaText : P.textSecondary,
+                }}
+              >
+                Custom
+              </button>
+              <input
+                value={draftSlippageCustomText}
+                onChange={(e) => {
+                  setDraftSlippageCustomText(e.target.value);
+                  setDraftSlippageBps(bpsFromPercentInput(e.target.value));
+                }}
+                placeholder="0.00"
+                className="flex-1 min-w-0 text-right text-[13px] font-semibold"
+                style={{ background: "transparent", border: "none", color: P.textPrimary }}
+              />
+              <span className="text-[13px] font-bold" style={{ color: P.textPrimary }}>%</span>
+            </div>
+            {draftSlippageCustomText.length > 0 && draftSlippageBps === null && (
+              <div className="text-[11.5px] mb-2" style={{ color: "#D92D20" }}>Enter a value between 0.01 and 100.</div>
+            )}
+            {draftSlippageBps !== null && Number(draftSlippageBps) > 500 && (
+              <div className="text-[11.5px] mb-2" style={{ color: "#D92D20" }}>High slippage tolerance — you may receive significantly less than quoted.</div>
+            )}
+
+            <div className="text-[11px] mb-4" style={{ color: P.textMuted, fontFamily: "monospace" }}>
+              Minimum received = quoted × (1 − {draftSlippageBps !== null ? `${(Number(draftSlippageBps) / 100).toString()}%` : "0%"})
+            </div>
+
+            <button
+              onClick={() => { setSlippageBps(draftSlippageBps); setSettingsOpen(false); }}
+              className="w-full rounded-2xl py-[15px] text-[14.5px] font-extrabold"
+              style={{ background: P.ctaBg, color: P.ctaText }}
+            >
+              Save
+            </button>
+            <div className="text-center text-[10.5px] mt-2.5" style={{ color: P.textMuted }}>
+              Closing without saving keeps {slippagePresetLabel(slippageBps)} active
+            </div>
+          </div>
+        </div>
       )}
       {showDocs && <DocsModal onClose={() => setShowDocs(false)} P={P} />}
       {showAdminReferrals && <AdminReferralsPage onClose={() => setShowAdminReferrals(false)} />}
