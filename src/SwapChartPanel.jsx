@@ -214,13 +214,6 @@ export default function SwapChartPanel({ P, chainKey, fromAsset, toAsset, native
                     ))
                   )}
                 </div>
-                {/* Solana's wording is a real distinction, not pedantry:
-                    GoPlus identifies Solana holders by TOKEN ACCOUNT and
-                    carries no owner field, so these are not wallet
-                    addresses. */}
-                <div className="text-[10px] text-center px-4 py-3 shrink-0" style={{ color: CHART_AXIS_TEXT }}>
-                  Top 10 {solana ? "token accounts" : "holders"} only, via GoPlus Security — not the full holder list.
-                </div>
               </div>
             )}
           </div>
