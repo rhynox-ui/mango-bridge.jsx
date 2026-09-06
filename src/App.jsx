@@ -3692,6 +3692,15 @@ export default function MangoBridge() {
   }, [relayBasedSwapChainOrder, fallbackOnlySwapChainOrder]);
 
   const [amount, setAmount] = useState("");
+  // Real gap, user-reported: the 25/50/75/MAX row had no active-state
+  // indicator at all — tapping one visibly changed the amount field but
+  // gave no feedback on the row itself that a tap had registered, unlike
+  // every other pill in this app (Buy/Sell, the slippage chips). Tracks
+  // which preset was last tapped so that pill can highlight like the
+  // rest; cleared the moment the amount is edited by hand (typed, or a
+  // token/chain switch resets amount elsewhere) so a stale highlight
+  // never claims "still 25%" once the number no longer matches it.
+  const [selectedPercent, setSelectedPercent] = useState(null);
   // Same "bring me back where I left" restore as from/to above — clamped
   // to ASSETS' real bounds since a saved index could be stale after an
   // app update (an asset removed/reordered), rather than trusting
@@ -4992,6 +5001,7 @@ export default function MangoBridge() {
    * in bigint division, so the split costs nothing.
    */
   function setPercent(pct) {
+    setSelectedPercent(pct);
     if (pct >= 100) {
       setMax();
       return;
@@ -5280,10 +5290,16 @@ export default function MangoBridge() {
 
                   {/* 25/50/75 set the amount straight off the balance;
                       MAX routes through setMax so a native asset keeps
-                      its real gas reservation. Custom is a status
-                      indicator, not a mode switch — this form's amount
-                      field is editable at any time, so Custom just
-                      lights up when a real amount is present. */}
+                      its real gas reservation. Real gap fixed, user-
+                      reported: tapping one used to change the amount
+                      with zero feedback on the row itself — same active-
+                      highlight treatment every other pill in this app
+                      already gets (Buy/Sell, the slippage chips), tracked
+                      by selectedPercent (see its own declaration).
+                      Custom is a status indicator, not a fifth preset —
+                      lights up only once the amount no longer matches
+                      any preset (selectedPercent cleared by hand-typing,
+                      see the input's own onChange). */}
                   <div className="flex gap-1.5 mb-2">
                     {[25, 50, 75, 100].map((pct) => (
                       <button
@@ -5291,14 +5307,21 @@ export default function MangoBridge() {
                         onClick={() => setPercent(pct)}
                         disabled={availableBalance === null}
                         className="flex-1 rounded-full py-[7px] text-[11px] font-semibold"
-                        style={{ background: P.pillBg, color: P.textSecondary, opacity: availableBalance === null ? 0.5 : 1 }}
+                        style={{
+                          background: selectedPercent === pct ? P.ctaBg : P.pillBg,
+                          color: selectedPercent === pct ? P.ctaText : P.textSecondary,
+                          opacity: availableBalance === null ? 0.5 : 1,
+                        }}
                       >
                         {pct === 100 ? "MAX" : `${pct}%`}
                       </button>
                     ))}
                     <div
                       className="flex-1 rounded-full py-[7px] text-[11px] font-semibold text-center"
-                      style={{ background: amtNum > 0 ? P.ctaBg : P.pillBg, color: amtNum > 0 ? P.ctaText : P.textSecondary }}
+                      style={{
+                        background: selectedPercent === null && amtNum > 0 ? P.ctaBg : P.pillBg,
+                        color: selectedPercent === null && amtNum > 0 ? P.ctaText : P.textSecondary,
+                      }}
                     >
                       Custom
                     </div>
@@ -5314,7 +5337,7 @@ export default function MangoBridge() {
                           min="0"
                           step="any"
                           value={amount}
-                          onChange={(e) => setAmount(e.target.value)}
+                          onChange={(e) => { setAmount(e.target.value); setSelectedPercent(null); }}
                           placeholder="0"
                           className="font-display bg-transparent text-[19px] font-semibold w-full text-right min-w-0"
                           style={{ color: P.textPrimary }}
@@ -5377,7 +5400,7 @@ export default function MangoBridge() {
                     min="0"
                     step="any"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+                    onChange={(e) => { setAmount(e.target.value); setSelectedPercent(null); }}
                     placeholder="0"
                     className="font-display bg-transparent text-[24px] font-semibold w-full"
                     style={{ color: P.textPrimary }}
