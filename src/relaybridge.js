@@ -49,7 +49,7 @@ async function postRelayQuote(body) {
   throw lastNetworkError ?? new Error("Relay quote request failed without a response.");
 }
 
-export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress, originChainId, originCurrency, destinationChainId, destinationCurrency, originAmountUsd, feeBpsOverride }) {
+export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAsset, amountBaseUnits, userAddress, recipientAddress, originChainId, originCurrency, destinationChainId, destinationCurrency, originAmountUsd, feeBpsOverride, slippageTolerance }) {
   const resolvedDestinationChainId = destinationChainId ?? MAINNET_CHAIN_IDS[toChainKey];
   const body = {
     user: userAddress,
@@ -61,6 +61,11 @@ export async function getRelayQuote({ fromChainKey, toChainKey, fromAsset, toAss
     amount: amountBaseUnits,
     tradeType: "EXACT_INPUT",
     appFees: [{ recipient: feeRecipientForChainId(), fee: feeBpsOverride ?? appFeeBps(originAmountUsd) }],
+    // Additive only, same as mobile's own relayBridge.js — omitted
+    // entirely on Auto, so leaving slippage on Auto is a real "field not
+    // sent" (Relay's own front-running-aware default) rather than a
+    // client-guessed value.
+    ...(slippageTolerance ? { slippageTolerance } : {}),
   };
   const res = await postRelayQuote(body);
   if (!res.ok) {

@@ -78,6 +78,27 @@ import { appFeeBps } from "./devFeeWallets.js";
 function formatFeePct(rate) {
   return (rate * 100).toFixed(2).replace(/\.?0+$/, "");
 }
+
+// Same real presets and parsing as mobile's own SwapSettingsSheet.tsx —
+// ported, not redesigned, since these are trade-safety parameters, not a
+// cosmetic choice. Bps strings match Relay's own request field exactly,
+// so the selected value passes straight into getRelayQuote() with no
+// conversion. null means "Auto": slippageTolerance is omitted entirely
+// and Relay computes it — a real behavior (its own front-running-aware
+// calculation) a fixed preset can't reproduce, kept as the default.
+const SLIPPAGE_PRESETS_BPS = [null, "50", "100", "300"];
+function slippagePresetLabel(bps) {
+  return bps === null ? "Auto" : `${(Number(bps) / 100).toString()}%`;
+}
+// Parses a user-typed percent string ("2.5") into a Relay-shaped bps
+// string ("250"), same 0–10000 bps range Relay's own schema documents.
+// Returns null for anything unparseable or out of range.
+function bpsFromPercentInput(input) {
+  const pct = Number(input);
+  if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return null;
+  const bps = Math.round(pct * 100);
+  return bps > 0 && bps <= 10000 ? String(bps) : null;
+}
 import { runOpDeposit, initiateOpWithdrawal, getOpWithdrawalStatus, proveOpWithdrawal, finalizeOpWithdrawal, trackWithdrawalByHash } from "./opbridge.js";
 import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeArbWithdrawal, trackArbWithdrawalByHash, runArbErc20Deposit, initiateArbErc20Withdrawal } from "./arbbridge.js";
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
@@ -1137,7 +1158,7 @@ function AssetIcon({ symbol, size = 18, chainId, address, logoUrl }) {
 // pool — falls back to manual symbol entry (splDecimals/splSymbolInput
 // below) rather than blocking the add entirely: decimals already
 // confirmed it's a real mint, there's just no live name for it yet.
-function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true, discoveredLogos, openSignal }) {
+function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true, discoveredLogos, openSignal, hideTrigger = false }) {
   const [open, setOpen] = useState(false);
   // Lets something OUTSIDE this component open the picker — the Swap
   // layout's own "Search" button, which is the mobile app's entry point
@@ -1402,11 +1423,18 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
 
   return (
     <div className="relative shrink-0" ref={ref}>
-      <button onClick={handleToggle} className="flex items-center gap-1.5 pl-2 pr-2.5 py-1.5 rounded-full" style={{ background: P.pillBg }}>
-        <AssetIcon symbol={asset.symbol} size={18} chainId={chainId} address={asset.address} logoUrl={discoveredLogos?.[asset.symbol]} />
-        <span className="text-[14px] font-semibold" style={{ color: P.textPrimary }}>{asset.symbol}</span>
-        <ChevronDown size={14} color={P.textMuted} />
-      </button>
+      {/* hideTrigger: this instance is opened only externally (via
+          openSignal) and never renders its own chip — used for the top
+          Search button's OWN independent instance (see its mount site),
+          so that button's dropdown is never the same open state as the
+          You-receive field's own trigger below. */}
+      {!hideTrigger && (
+        <button onClick={handleToggle} className="flex items-center gap-1.5 pl-2 pr-2.5 py-1.5 rounded-full" style={{ background: P.pillBg }}>
+          <AssetIcon symbol={asset.symbol} size={18} chainId={chainId} address={asset.address} logoUrl={discoveredLogos?.[asset.symbol]} />
+          <span className="text-[14px] font-semibold" style={{ color: P.textPrimary }}>{asset.symbol}</span>
+          <ChevronDown size={14} color={P.textMuted} />
+        </button>
+      )}
       {open && (
         <div
           className={`absolute right-0 z-50 w-64 rounded-xl shadow-2xl flex flex-col ${openUpward ? "bottom-full mb-2" : "top-full mt-2"}`}
@@ -1674,7 +1702,7 @@ function getTransferKind(fromKey, toKey, fromAssetSymbol, toAssetSymbol) {
   return "relay";
 }
 
-function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, receivedRoundsToZero, devFeeAmount, originAmountUsd, destination, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated, onPendingHash, P }) {
+function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, fee, etaLabel, received, receivedRoundsToZero, devFeeAmount, originAmountUsd, destination, slippageTolerance, account, evmAddress, isFromSolana, solanaWallet, onClose, onComplete, onWithdrawalInitiated, onPendingHash, P }) {
   const kind = getTransferKind(from, to, asset, toAsset);
   const isReal = kind !== "simulated";
   // Which OP Stack chain this op-deposit/op-withdraw actually targets —
@@ -2089,6 +2117,7 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           destinationCurrency: toCustom ? toCustom.address : (isWalletOnlyChain(to) ? resolveCurrency(to, toAsset) : undefined),
           amountBaseUnits: totalBaseUnits.toString(), userAddress: account,
           recipientAddress: destination || defaultRecipient,
+          slippageTolerance,
         };
         // Real fallback, same-chain Swap only (from === to — Bridge
         // always has from !== to, so this never fires there): a route
@@ -3767,6 +3796,15 @@ export default function MangoBridge() {
   );
   const [showNetworkSelector, setShowNetworkSelector] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Real gap, user-reported: this site never had a working slippage
+  // control at all — the gear icon only ever opened the read-only
+  // details panel below (route/gas/fee), same panel this now shares.
+  // null = Auto, Relay's own front-running-aware default (no
+  // slippageTolerance sent at all — see relaybridge.js's own getRelayQuote
+  // header). Swap-only, same as mobile's own SwapSettingsSheet — Bridge
+  // always passes undefined, matching BridgeScreen.tsx's own choice.
+  const [slippageBps, setSlippageBps] = useState(null);
+  const [slippageCustomText, setSlippageCustomText] = useState("");
   const [sendToOther, setSendToOther] = useState(false);
   const [destAddress, setDestAddress] = useState("");
   // Hidden from the UI: it read as "you must connect a Solana wallet to
@@ -4273,9 +4311,19 @@ export default function MangoBridge() {
   // between the two tabs — everything else below is shared.
   const isSwapTab = tab === "swap";
 
-  // Counter, not a boolean, so pressing Search twice re-opens the
-  // picker; AssetDropdown ignores 0 so mounting doesn't pop it open.
-  const [toAssetPickerSignal, setToAssetPickerSignal] = useState(0);
+  // Real bug fix, user-reported: the top Search button used to fire the
+  // exact same open state as the You-receive field's own dropdown (one
+  // shared AssetDropdown instance doing double duty) — tapping the top
+  // Search button popped open the You-receive picker specifically,
+  // reading as two different controls with two different jobs sharing
+  // one. topSearchSignal now belongs to a completely separate,
+  // independent AssetDropdown instance mounted just for that button
+  // (hideTrigger, see its own mount site) — a counter, not a boolean, so
+  // pressing Search twice re-opens it, and AssetDropdown ignores 0 so
+  // mounting doesn't pop it open. The You-receive field's own dropdown
+  // keeps opening only from its own inline click, same as it always
+  // has, and never again from anything external.
+  const [topSearchSignal, setTopSearchSignal] = useState(0);
 
   // Real bug fix: from/to default independently ("base"/"ethereum") and
   // only get forced equal when the user actually touches the chain
@@ -4430,6 +4478,10 @@ export default function MangoBridge() {
           // address as the recipient, not whichever wallet happens to
           // be the "account" for the source side.
           recipientAddress: sendToOther ? destAddress : (CHAINS[to]?.isSolana ? activeSolanaAddress : (isFromSolana ? address : activeAccount)),
+          // Swap-only, same reasoning as BridgeModal's own identically-
+          // gated prop — a value picked while on Swap must not silently
+          // carry into a Bridge quote after switching tabs.
+          slippageTolerance: isSwapTab ? (slippageBps ?? undefined) : undefined,
         };
         // Real fix, requested explicitly (2026-08-31): Robinhood Chain
         // same-chain swaps skip Relay's own quote entirely and go
@@ -4570,7 +4622,7 @@ export default function MangoBridge() {
       if (!cancelled) setRouteCheck({ status: "unavailable", message: firstErr?.message || String(firstErr) });
     }, 600); // debounce so we don't fire a request per keystroke
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [kind, amtNum, connected, address, needsEvmAddressForSolanaSource, needsSolanaAddressForSolanaDest, from, to, fromAsset.symbol, toAsset.symbol, amount]);
+  }, [kind, amtNum, connected, address, needsEvmAddressForSolanaSource, needsSolanaAddressForSolanaDest, from, to, fromAsset.symbol, toAsset.symbol, amount, slippageBps]);
   const routeUnavailable = kind === "relay" && routeCheck.status === "unavailable";
   const routeChecking = kind === "relay" && routeCheck.status === "checking";
   // The real quote routeCheck above just fetched — see summarizeQuote's
@@ -5069,22 +5121,46 @@ export default function MangoBridge() {
                       <span className="text-[10.5px] mr-px" style={{ color: P.textMuted }}>Swap on</span>
                       <ChainDropdown value={from} onChange={handleSwapChainChange} P={P} chainOrder={swapChainOrder} />
                     </div>
-                    {/* Same job as mobile's: opens the very same asset
-                        picker the "You receive" pill uses, so pasting a
-                        contract address is reachable from up here too. */}
-                    <button
-                      onClick={() => setToAssetPickerSignal((n) => n + 1)}
-                      className="flex items-center gap-1 h-[26px] rounded-[13px] px-2.5 shrink-0"
-                      style={{ background: P.pillBg }}
-                    >
-                      <Search size={12} color={P.textSecondary} />
-                      <span className="text-[11px] font-semibold" style={{ color: P.textSecondary }}>Search</span>
-                    </button>
+                    {/* Real bug fix, user-reported: this used to fire
+                        toAssetPickerSignal — the exact same open state as
+                        the You-receive field's own dropdown below, one
+                        shared instance doing double duty for two
+                        different jobs (this is a chart/pair search;
+                        You-receive is a single field's own picker).
+                        Fires its OWN independent signal into its OWN
+                        hidden-trigger AssetDropdown mount right below —
+                        selecting a token from either one still lands on
+                        handleToAssetChange (there's only one "traded
+                        token" concept in same-chain Swap), but opening
+                        one can never open, close, or otherwise touch the
+                        other's state. */}
+                    <div className="relative shrink-0">
+                      <button
+                        onClick={() => setTopSearchSignal((n) => n + 1)}
+                        className="flex items-center gap-1 h-[26px] rounded-[13px] px-2.5"
+                        style={{ background: P.pillBg }}
+                      >
+                        <Search size={12} color={P.textSecondary} />
+                        <span className="text-[11px] font-semibold" style={{ color: P.textSecondary }}>Search</span>
+                      </button>
+                      <AssetDropdown
+                        hideTrigger
+                        openSignal={topSearchSignal}
+                        assetIdx={toAssetIdx}
+                        setAssetIdx={handleToAssetChange}
+                        chainId={to}
+                        P={P}
+                        customToken={toCustomToken}
+                        onCustomTokenSelect={handleToCustomTokenSelect}
+                        allowCustomToken
+                        discoveredLogos={discoveredAssetLogos}
+                      />
+                    </div>
                     <button
                       onClick={() => setDetailsOpen((o) => !o)}
                       className="w-[26px] h-[26px] rounded-[13px] flex items-center justify-center shrink-0"
                       style={{ background: P.pillBg }}
-                      aria-label="Swap details"
+                      aria-label="Swap settings"
                     >
                       <Settings size={13} color={P.textMuted} />
                     </button>
@@ -5229,7 +5305,7 @@ export default function MangoBridge() {
                     <div className="flex-1 rounded-[14px] p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                       <div className="text-[10px] font-bold uppercase mb-2" style={{ color: P.textMuted, letterSpacing: "0.6px" }}>You receive</div>
                       <div className="flex items-center justify-between gap-1.5">
-                        <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken discoveredLogos={discoveredAssetLogos} openSignal={toAssetPickerSignal} />
+                        <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken discoveredLogos={discoveredAssetLogos} />
                         <span className="font-display text-[19px] font-semibold truncate" style={{ color: amtNum > 0 && received !== null ? P.textPrimary : P.textMuted }}>
                           {amtNum > 0 ? (received !== null ? fmt(received, 4) : "—") : "—"}
                         </span>
@@ -5374,6 +5450,45 @@ export default function MangoBridge() {
                 <div className="mt-2 px-4 py-3 rounded-xl flex flex-col gap-2" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
                   {isSwapTab ? (
                     <>
+                      {/* Real gap, user-reported: this site never had a
+                          working slippage control at all. Same real
+                          presets and Save-on-tap behavior as mobile's own
+                          SwapSettingsSheet.tsx (no draft/commit split here
+                          — there's no separate sheet to close without
+                          saving, so each tap commits immediately, same as
+                          every other control in this details panel). */}
+                      <div className="flex items-center justify-between text-[12.5px]">
+                        <span style={{ color: P.textSecondary }}>Slippage</span>
+                        <span className="font-mono" style={{ color: P.textPrimary }}>{slippagePresetLabel(slippageBps)}</span>
+                      </div>
+                      <div className="flex gap-1.5">
+                        {SLIPPAGE_PRESETS_BPS.map((preset) => (
+                          <button
+                            key={preset ?? "auto"}
+                            onClick={() => { setSlippageBps(preset); setSlippageCustomText(""); }}
+                            className="flex-1 rounded-lg py-1.5 text-[11.5px] font-semibold"
+                            style={{
+                              background: slippageBps === preset ? P.ctaBg : P.pillBg,
+                              color: slippageBps === preset ? P.ctaText : P.textSecondary,
+                            }}
+                          >
+                            {slippagePresetLabel(preset)}
+                          </button>
+                        ))}
+                        <input
+                          value={slippageCustomText}
+                          onChange={(e) => {
+                            setSlippageCustomText(e.target.value);
+                            setSlippageBps(bpsFromPercentInput(e.target.value));
+                          }}
+                          placeholder="Custom %"
+                          className="flex-1 min-w-0 px-2 py-1.5 rounded-lg text-[11.5px] text-right"
+                          style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+                        />
+                      </div>
+                      {slippageBps !== null && Number(slippageBps) > 500 && (
+                        <div className="text-[11px]" style={{ color: "#D92D20" }}>High slippage tolerance — you may receive significantly less than quoted.</div>
+                      )}
                       <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Route</span><span style={{ color: P.textPrimary }}>{fromAsset.symbol} → {toAsset.symbol} on {CHAINS[from].name}</span></div>
                       <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[from].baseFee, 2)}</span></div>
                     </>
@@ -5632,6 +5747,12 @@ export default function MangoBridge() {
           // carried into a swap that's supposed to always land back in
           // their own wallet.
           destination={!isSwapTab && sendToOther ? destAddress : null}
+          // Same isSwapTab-gating reasoning as destination just above —
+          // slippage is a Swap-only concept (Bridge always passes
+          // undefined, matching mobile's own BridgeScreen.tsx), so a
+          // value picked while on Swap must not silently carry into a
+          // Bridge transfer after switching tabs.
+          slippageTolerance={isSwapTab ? (slippageBps ?? undefined) : undefined}
           account={activeAccount}
           evmAddress={address}
           isFromSolana={isFromSolana}

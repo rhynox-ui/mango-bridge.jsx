@@ -13,7 +13,17 @@
 //
 // What differs from mobile, and only because the platform differs: the
 // embed goes in an <iframe> instead of a react-native-webview, and the
-// holders list is a plain overlay panel instead of a bottom sheet.
+// holders list opens as a small anchored dropdown next to its own button
+// (web's equivalent of a bottom sheet) instead of a real bottom sheet.
+//
+// Real bug fix, live-reported: this dropdown used to be `absolute
+// inset-0` INSIDE the chart's own overflow-hidden box — opening it
+// didn't pop a small list next to the button, it painted a near-opaque
+// layer across the ENTIRE chart, hiding it completely until closed
+// again. Moved out of the chart's box entirely and anchored to the
+// button itself (same click-outside-to-close pattern AssetDropdown
+// already uses elsewhere in App.jsx), so the chart stays visible and the
+// panel can never be clipped by the chart's own overflow-hidden.
 //
 // This used to also carry its own interval-pill row and absolutely
 // positioned MC/Vol/Holders chips over the embed — removed, same fix as
@@ -23,7 +33,7 @@
 // controls once the canvas underneath became a real page with its own
 // header rather than blank space. See the render below for what's left.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { resolveDexScreenerPair, dexScreenerEmbedUrl } from "./dexScreenerChart.js";
 import { checkTokenSecurity, checkSolanaTokenSecurity } from "./goplusTokenSecurity.js";
 import { MAINNET_CHAIN_IDS } from "./chainData.js";
@@ -63,6 +73,23 @@ export default function SwapChartPanel({ P, chainKey, fromAsset, toAsset, native
   const [resolving, setResolving] = useState(true);
   const [security, setSecurity] = useState(null);
   const [holdersOpen, setHoldersOpen] = useState(false);
+  const holdersRef = useRef(null);
+
+  // Real bug fix, live-reported: this panel used to be `absolute inset-0`
+  // INSIDE the chart's own overflow-hidden box, so opening it didn't pop
+  // a small list over the button — it painted a near-opaque layer across
+  // the entire 390px chart, hiding it completely until closed again.
+  // Same click-outside-to-close pattern AssetDropdown already uses
+  // elsewhere in this file, since this is no longer a modal the Close
+  // button is the only way out of.
+  useEffect(() => {
+    if (!holdersOpen) return;
+    function onDoc(e) {
+      if (holdersRef.current && !holdersRef.current.contains(e.target)) setHoldersOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [holdersOpen]);
 
   const charted = useMemo(
     () => chartedSide({ fromAsset, toAsset, nativeSymbol }),
@@ -134,13 +161,69 @@ export default function SwapChartPanel({ P, chainKey, fromAsset, toAsset, native
           Same fix as mobile's Swap chart (src/components/DexScreenerChart.tsx). */}
       {(holderCount != null || hasHolders) && (
         <div className="flex justify-end mb-2">
-          <button
-            onClick={() => setHoldersOpen(true)}
-            className="rounded-full px-2.5 py-1 text-[10.5px] font-bold"
-            style={{ background: P.pillBg, color: P.textPrimary }}
-          >
-            {holderCount != null ? `Holders ${fmtCompact(holderCount)}` : "Top holders"} ▾
-          </button>
+          {/* relative wrapper is the dropdown's own anchor — moved here,
+              OUT of the chart's overflow-hidden box below, so the panel
+              floats next to this button instead of being clipped by (or,
+              before this fix, painted across the whole of) the chart. */}
+          <div className="relative" ref={holdersRef}>
+            <button
+              onClick={() => setHoldersOpen((o) => !o)}
+              className="rounded-full px-2.5 py-1 text-[10.5px] font-bold"
+              style={{ background: P.pillBg, color: P.textPrimary }}
+            >
+              {holderCount != null ? `Holders ${fmtCompact(holderCount)}` : "Top holders"} ▾
+            </button>
+            {holdersOpen && (
+              <div
+                className="absolute right-0 top-full mt-2 z-50 w-80 max-w-[90vw] rounded-xl shadow-2xl flex flex-col"
+                style={{ background: "#0B0B0D", border: `1px solid ${P.panelBorder}`, maxHeight: "min(60vh, 380px)" }}
+              >
+                <div className="flex items-center justify-between px-4 py-3 shrink-0" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                  <span className="text-[13px] font-bold" style={{ color: "#F5F5F6" }}>
+                    Top {charted?.symbol ?? "token"} holders
+                  </span>
+                  <button onClick={() => setHoldersOpen(false)} className="text-[12px] font-semibold" style={{ color: CHART_AXIS_TEXT }}>
+                    Close
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto px-4">
+                  {!hasHolders ? (
+                    <div className="text-[12px] py-6 text-center" style={{ color: CHART_AXIS_TEXT }}>
+                      No holder data available for this token right now.
+                    </div>
+                  ) : (
+                    holders.map((h, i) => (
+                      <div key={h.address} className="flex items-center justify-between py-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="text-[11.5px] font-bold w-6 shrink-0" style={{ color: CHART_AXIS_TEXT }}>#{i + 1}</span>
+                          <div className="min-w-0">
+                            <div className="text-[12.5px] truncate" style={{ color: "#F5F5F6" }}>
+                              {h.tag ?? `${h.address.slice(0, 6)}…${h.address.slice(-4)}`}
+                            </div>
+                            {(h.isLocked || h.isContract) && (
+                              <div className="text-[10.5px]" style={{ color: CHART_AXIS_TEXT }}>
+                                {[h.isLocked && "Locked", h.isContract && "Contract"].filter(Boolean).join(" · ")}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-[12.5px] font-mono shrink-0" style={{ color: "#F5F5F6" }}>
+                          {h.percent != null ? `${h.percent.toFixed(2)}%` : "—"}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+                {/* Solana's wording is a real distinction, not pedantry:
+                    GoPlus identifies Solana holders by TOKEN ACCOUNT and
+                    carries no owner field, so these are not wallet
+                    addresses. */}
+                <div className="text-[10px] text-center px-4 py-3 shrink-0" style={{ color: CHART_AXIS_TEXT }}>
+                  Top 10 {solana ? "token accounts" : "holders"} only, via GoPlus Security — not the full holder list.
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -177,54 +260,6 @@ export default function SwapChartPanel({ P, chainKey, fromAsset, toAsset, native
             referrerPolicy="no-referrer"
             loading="lazy"
           />
-        )}
-
-        {holdersOpen && (
-          <div className="absolute inset-0 flex flex-col" style={{ background: "rgba(0,0,0,0.92)" }}>
-            <div className="flex items-center justify-between px-4 py-3 shrink-0">
-              <span className="text-[13.5px] font-bold" style={{ color: "#F5F5F6" }}>
-                Top {charted?.symbol ?? "token"} holders
-              </span>
-              <button onClick={() => setHoldersOpen(false)} className="text-[12px] font-semibold" style={{ color: CHART_AXIS_TEXT }}>
-                Close
-              </button>
-            </div>
-            <div className="flex-1 min-h-0 overflow-y-auto px-4">
-              {!hasHolders ? (
-                <div className="text-[12px] py-6 text-center" style={{ color: CHART_AXIS_TEXT }}>
-                  No holder data available for this token right now.
-                </div>
-              ) : (
-                holders.map((h, i) => (
-                  <div key={h.address} className="flex items-center justify-between py-2">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="text-[11.5px] font-bold w-6 shrink-0" style={{ color: CHART_AXIS_TEXT }}>#{i + 1}</span>
-                      <div className="min-w-0">
-                        <div className="text-[12.5px] truncate" style={{ color: "#F5F5F6" }}>
-                          {h.tag ?? `${h.address.slice(0, 6)}…${h.address.slice(-4)}`}
-                        </div>
-                        {(h.isLocked || h.isContract) && (
-                          <div className="text-[10.5px]" style={{ color: CHART_AXIS_TEXT }}>
-                            {[h.isLocked && "Locked", h.isContract && "Contract"].filter(Boolean).join(" · ")}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <span className="text-[12.5px] font-mono shrink-0" style={{ color: "#F5F5F6" }}>
-                      {h.percent != null ? `${h.percent.toFixed(2)}%` : "—"}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-            {/* Solana's wording is a real distinction, not pedantry:
-                GoPlus identifies Solana holders by TOKEN ACCOUNT and
-                carries no owner field, so these are not wallet
-                addresses. */}
-            <div className="text-[10px] text-center px-4 py-3 shrink-0" style={{ color: CHART_AXIS_TEXT }}>
-              Top 10 {solana ? "token accounts" : "holders"} only, via GoPlus Security — not the full holder list.
-            </div>
-          </div>
         )}
       </div>
     </div>
