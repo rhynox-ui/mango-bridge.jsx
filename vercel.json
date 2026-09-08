@@ -3,5 +3,11 @@
     "api/**/*.js": {
       "maxDuration": 60
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/token-activity",
+      "destination": "https://mango-api.aliyumansurkwalli92-52b.workers.dev/api/token-activity"
+    }
+  ]
 }
