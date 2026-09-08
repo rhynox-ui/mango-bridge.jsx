@@ -8,6 +8,14 @@
     {
       "source": "/api/token-activity",
       "destination": "https://mango-api.aliyumansurkwalli92-52b.workers.dev/api/token-activity"
+    },
+    {
+      "source": "/api/logo-registry",
+      "destination": "https://mango-api.aliyumansurkwalli92-52b.workers.dev/api/logo-registry"
+    },
+    {
+      "source": "/api/blob-upload",
+      "destination": "https://mango-api.aliyumansurkwalli92-52b.workers.dev/api/blob-upload"
     }
   ]
 }
