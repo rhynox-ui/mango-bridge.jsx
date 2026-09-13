@@ -726,20 +726,22 @@ function SocialLinksRow({ P }) {
   );
 }
 
-// Direct Android APK download — was serving off public/mango-app.apk
-// (same pattern as public/mango-wallet-extension.zip just above it) as a
-// plain same-origin static file. Currently UNUSED (see its call site's
-// own comment below) because that file's size (~96-97MB) exceeds
-// Cloudflare Pages' hard 25MB-per-static-asset limit, which was silently
-// failing every Pages build on this repo. Kept here, not deleted,
-// so re-pointing `href` at a Cloudflare R2 URL is a one-line change once
-// the APK is hosted there instead of checked into this repo.
-// eslint-disable-next-line no-unused-vars
+// Direct Android APK download. Used to serve off public/mango-app.apk as
+// a plain same-origin static file, but that file's size (~96-97MB)
+// exceeds Cloudflare Pages' hard 25MB-per-static-asset limit and was
+// silently failing every Pages build on this repo. Now points at
+// mango-api's own GET /api/download/mango-pro.apk (downloads.js),
+// which streams the file from Cloudflare R2 instead — same relative
+// same-origin /api/... convention every other endpoint here already
+// uses (relaybridge.js, fallbackDex.js, etc.), just a route Cloudflare
+// serves instead of a file Vite bundles. The `download` attribute names
+// the saved file explicitly so a browser doesn't just save it with
+// whatever name the URL ends in.
 function DownloadApkRow({ P }) {
   return (
     <a
-      href="/mango-app.apk"
-      download="mango-app.apk"
+      href="/api/download/mango-pro.apk"
+      download="mango-pro.apk"
       className="flex items-center gap-2 mt-3 px-4 py-2.5 rounded-full text-[12.5px] font-semibold w-fit"
       style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
     >
@@ -5705,14 +5707,7 @@ export default function MangoBridge() {
               </div>{/* /desktop grid */}
             </>
           )}
-          {/* DownloadApkRow removed 2026-09-13: public/mango-app.apk was
-              causing every Cloudflare Pages build on this repo to fail —
-              confirmed via the Pages dashboard's own deploy logs — since
-              Cloudflare Pages hard-caps individual static assets at 25MB
-              and this file was ~96-97MB. Re-enable this once the APK is
-              served from Cloudflare R2 instead (the same pattern
-              blob-upload.js already uses for other large files in this
-              migration) rather than checked into the repo. */}
+          <DownloadApkRow P={P} />
           <SocialLinksRow P={P} />
         </div>
       </div>
