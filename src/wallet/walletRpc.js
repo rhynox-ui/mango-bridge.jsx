@@ -1,0 +1,500 @@
+// src/wallet/walletRpc.js
+//
+// Independent RPC path for Mango Wallet's own balance reads — deliberately
+// NOT routed through wagmi's shared Config/React Query client, which is
+// what the Bridge tab's connected-wallet calls (useBalance, getBalance,
+// readContracts in multiAssetBalances.js) all use. Wallet balance polling
+// covers 13 EVM chains at once every time the tab renders; if that shared
+// the exact same RPC endpoints as a live bridge transaction in progress,
+// the two could contend for the same provider's rate limit right when the
+// bridge needs it most.
+//
+// Both features already have a verified, two-endpoint fallback list per
+// chain (wagmi.js's RPC_FALLBACKS — every URL there is independently
+// sourced from each chain's own docs or a chain registry, not guessed).
+// This reuses those exact endpoints rather than introducing unverified new
+// ones, but reverses which endpoint each feature tries FIRST, and builds a
+// genuinely separate viem client per chain (its own connection, its own
+// cache) — so a burst of wallet reads and a burst of bridge activity don't
+// both open with the same provider at the same moment. The wallet-only
+// chains (Polygon, Optimism, etc. — see walletChains.js) have their own
+// separately-sourced second endpoint (WALLET_ONLY_RPC_FALLBACK), pulled
+// from ethereum-lists/chains rather than guessed.
+
+import { createPublicClient, http, fallback } from "viem";
+import { RPC_FALLBACKS, CHAIN_KEY_TO_WAGMI_MAINNET } from "../wagmi.js";
+import { solanaRpcUrls } from "../solanaRpc.js";
+import { WALLET_ONLY_EVM_CHAINS, WALLET_ONLY_RPC_FALLBACK } from "./walletChains.js";
+import { loadCustomNetworks, viemChainForCustomNetwork } from "./customNetworks.js";
+
+const ERC20_BALANCE_ABI = [
+  { type: "function", name: "balanceOf", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
+];
+const ERC20_METADATA_ABI = [
+  { type: "function", name: "symbol", inputs: [], outputs: [{ type: "string" }], stateMutability: "view" },
+  { type: "function", name: "decimals", inputs: [], outputs: [{ type: "uint8" }], stateMutability: "view" },
+];
+
+// Wallet-visible EVM chains = every chain the Bridge already knows about,
+// PLUS the wallet-only additions in walletChains.js (Polygon, Optimism,
+// etc.) that the Bridge doesn't yet support routing/fees for.
+const ALL_WALLET_CHAINS = { ...CHAIN_KEY_TO_WAGMI_MAINNET, ...WALLET_ONLY_EVM_CHAINS };
+
+// RPC_FALLBACKS only covers the Bridge's original chains; wallet-only
+// chains get their real second endpoint from WALLET_ONLY_RPC_FALLBACK
+// instead (Monad and Sei have none documented — see that file's comment).
+function extraFallbackUrl(chainId) {
+  return WALLET_ONLY_RPC_FALLBACK[chainId] || null;
+}
+
+const clientCache = new Map();
+
+// Short-lived, in-memory balance cache — same TTL and same reasoning as
+// multiAssetBalances.js's own cache: cuts redundant RPC round trips when
+// this tab re-renders (switching away and back, an unrelated state
+// update remounting a row) within a few seconds, without letting a
+// balance go stale for long. The explicit refresh button bypasses this
+// via forceFresh, same contract as multiAssetBalances.js.
+const BALANCE_CACHE_TTL_MS = 15_000;
+const balanceCache = new Map();
+function getCached(key) {
+  const entry = balanceCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt >= BALANCE_CACHE_TTL_MS) return null;
+  return entry.data;
+}
+function setCached(key, data) {
+  balanceCache.set(key, { data, fetchedAt: Date.now() });
+}
+
+// Permanent cache for on-chain token metadata (symbol/decimals) —
+// genuinely different from the balance cache above: a balance changes
+// constantly and a 15s-stale value is a real risk, but a token's
+// symbol/decimals are fixed the moment its contract/mint is created and
+// can never change afterward, so there's no TTL to expire this — a
+// cache-forever Map, not a short-lived one. EVM keys are lowercased
+// (case-insensitive addresses, same convention this file's balance keys
+// already use); Solana keys are NOT — a mint's base58 address is
+// case-sensitive, and lowercasing it would silently look up a
+// different, wrong address (the exact bug AssetDropdown's own
+// customTokenLogoUrl had before this session's fix).
+//
+// Real improvement, directly requested: this used to be a plain
+// in-memory Map, which meant every RPC/Jupiter/DexScreener lookup this
+// file ever did got thrown away on page reload — a token looked up (but
+// never added) a moment ago, or even a minute before, cost the exact
+// same RPC round-trip again the next time someone pasted the same
+// address, and again after the next reload. Since a token's decimals
+// and symbol genuinely never change (this file's own reasoning above),
+// there's no correctness cost to persisting every successful lookup to
+// localStorage and reusing it forever, the same way customTokens.js
+// already persists added tokens — this just extends that same "cache
+// forever, never revalidate" policy to lookups that were merely
+// verified but never added, closing the gap where those still paid RPC
+// on every repeat search. Backed by a small Map subclass rather than a
+// parallel bookkeeping layer, so every existing .has()/.get()/.set()
+// call site below keeps working completely unchanged.
+const TOKEN_METADATA_STORAGE_KEY = "mango_token_metadata_cache";
+
+function loadPersistedTokenMetadata() {
+  try {
+    const raw = window.localStorage.getItem(TOKEN_METADATA_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? Object.entries(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+class PersistentTokenMetadataCache extends Map {
+  set(key, value) {
+    super.set(key, value);
+    try {
+      window.localStorage.setItem(TOKEN_METADATA_STORAGE_KEY, JSON.stringify(Object.fromEntries(this)));
+    } catch {
+      // storage unavailable or full — this lookup just won't survive a reload, nothing else breaks
+    }
+    return this;
+  }
+}
+
+const tokenMetadataCache = new PersistentTokenMetadataCache(loadPersistedTokenMetadata());
+
+export function getWalletChain(chainKey) {
+  const chain = ALL_WALLET_CHAINS[chainKey];
+  if (chain) return chain;
+  const custom = loadCustomNetworks().find((n) => n.chainKey === chainKey);
+  if (custom) return viemChainForCustomNetwork(custom);
+  throw new Error(`No mainnet chain configured for key "${chainKey}"`);
+}
+
+// Real bug fix: rank:true doesn't just reorder on failure — viem's own
+// rankTransports() (node_modules/viem/_esm/clients/transports/fallback.js)
+// starts an infinite self-recursing loop the moment a chain's client is
+// created, pinging every listed URL again every ~4s FOREVER, independent
+// of whether the app ever reads from that chain again. getWalletPublicClient
+// below caches one client per chain, and this file builds one for every
+// chain the wallet dashboard covers (80+, once WalletHome renders) — so
+// ranking here meant 80+ concurrent forever-loops running in the
+// background for the rest of the session, live-confirmed as a real
+// contributor to the RPC-provider floods hit in production (not just
+// Base's — every chain listed here paid this same continuous tax).
+// Basic fallback-on-error needs none of that: fallback()'s own fetch()
+// already retries the next URL on any failure regardless of rank, so
+// dropping ranking here costs nothing but the "always current fastest"
+// optimization, which isn't worth a permanent background loop per chain
+// for a balance dashboard where a slightly-slower-but-not-actively-
+// unhealthy read is a non-issue. wagmi.js's own transportFor() keeps
+// rank:true — only a handful of chains are ever actively connected
+// there at once (the one the user is bridging/swapping on), a real,
+// bounded cost instead of a wallet-dashboard-wide one.
+function getWalletTransport(chain) {
+  const bridgeUrls = (RPC_FALLBACKS[chain.id] || []).filter(Boolean);
+  if (bridgeUrls.length > 0) {
+    const reversedPriority = [...bridgeUrls].reverse(); // opposite of wagmi.js's transportFor()
+    return fallback(reversedPriority.map((url) => http(url)));
+  }
+  const extraUrl = extraFallbackUrl(chain.id);
+  if (extraUrl) {
+    // No existing Bridge-side ordering to reverse here (these chains
+    // aren't in the Bridge's own list at all) — just the chain's own
+    // wagmi/chains default plus the real second endpoint sourced in
+    // walletChains.js.
+    return fallback([http(), http(extraUrl)]);
+  }
+  return http(); // no second verified endpoint documented for this chain (Monad, Sei) — its own default only
+}
+
+export function getWalletPublicClient(chainKey) {
+  if (clientCache.has(chainKey)) return clientCache.get(chainKey);
+  const chain = getWalletChain(chainKey);
+  const client = createPublicClient({ chain, transport: getWalletTransport(chain) });
+  clientCache.set(chainKey, client);
+  return client;
+}
+
+/**
+ * A viem WalletClient for signing/sending FROM the wallet's own derived
+ * account — same transport (and same "separate from the Bridge" reasoning)
+ * as getWalletPublicClient, just with a local account attached so it can
+ * sign. Not cached (a fresh account import per call is cheap and avoids
+ * holding a signer keyed to a private key past when it's needed).
+ */
+export async function getWalletClientFor(chainKey, privateKeyHex) {
+  const { createWalletClient } = await import("viem");
+  const { privateKeyToAccount } = await import("viem/accounts");
+  const chain = getWalletChain(chainKey);
+  const account = privateKeyToAccount(privateKeyHex);
+  return createWalletClient({ account, chain, transport: getWalletTransport(chain) });
+}
+
+/**
+ * A real Solana Connection using the same reversed-priority endpoint choice
+ * as fetchWalletSolanaBalance — but single-endpoint, deliberately not
+ * wrapped in fallback-and-retry like the read path is. Retrying a SIGNED
+ * broadcast against a second, independently-tracked RPC node risks a real
+ * double-send if the first attempt actually landed but only the
+ * confirmation was lost — same reasoning the Telegram bot's
+ * sendExecution.service.ts already documents for exactly this class of
+ * call.
+ */
+export async function getWalletSolanaConnection() {
+  const { Connection } = await import("@solana/web3.js");
+  const urls = [...solanaRpcUrls()].reverse();
+  return new Connection(urls[0], "confirmed");
+}
+
+/** Native-asset balance for one EVM chain, as a human-readable number. Every native asset this app supports uses 18 decimals. */
+export async function fetchWalletNativeBalance(chainKey, address, { forceFresh = false } = {}) {
+  const key = `evm:${chainKey}:${address}`;
+  if (!forceFresh) {
+    const cached = getCached(key);
+    if (cached !== null) return cached;
+  }
+  const client = getWalletPublicClient(chainKey);
+  const wei = await client.getBalance({ address });
+  const balance = Number(wei) / 1e18;
+  setCached(key, balance);
+  return balance;
+}
+
+/** ERC-20 balance for one token on one chain, as a human-readable number (using the token's own real decimals, not assumed). */
+export async function fetchWalletTokenBalance(chainKey, tokenAddress, decimals, address, { forceFresh = false } = {}) {
+  const key = `evm-token:${chainKey}:${tokenAddress}:${address}`;
+  if (!forceFresh) {
+    const cached = getCached(key);
+    if (cached !== null) return cached;
+  }
+  const client = getWalletPublicClient(chainKey);
+  const raw = await client.readContract({ address: tokenAddress, abi: ERC20_BALANCE_ABI, functionName: "balanceOf", args: [address] });
+  const balance = Number(raw) / 10 ** decimals;
+  setCached(key, balance);
+  return balance;
+}
+
+/**
+ * SOL balance via a reversed-priority endpoint list vs. solanaRpc.js's
+ * withSolanaFallback — PublicNode first here (this codebase's own
+ * established, trusted, keyless RPC provider), SolanaTracker as the
+ * fallback, Alchemy last if a key happens to be configured. Genuine
+ * separation now even without an Alchemy key, unlike before
+ * solanaRpcUrls() had a real second entry (see that file's own
+ * comment).
+ */
+export async function fetchWalletSolanaBalance(address, { forceFresh = false } = {}) {
+  const key = `solana:${address}`;
+  if (!forceFresh) {
+    const cached = getCached(key);
+    if (cached !== null) return cached;
+  }
+  const urls = [...solanaRpcUrls()].reverse();
+  let lastError;
+  for (const url of urls) {
+    try {
+      const { Connection, PublicKey } = await import("@solana/web3.js");
+      const connection = new Connection(url, "confirmed");
+      const lamports = await connection.getBalance(new PublicKey(address));
+      const balance = lamports / 1e9;
+      setCached(key, balance);
+      return balance;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * SPL token balance for one mint, as a human-readable number. Zero is a
+ * REAL, common answer here, not just "no data yet" — most wallets never
+ * have an associated token account (ATA) created for a token they've
+ * never held, and reading a nonexistent ATA is expected to fail; that
+ * failure is treated as balance 0, not surfaced as an error, since from
+ * the user's point of view "you have none of this token" is exactly
+ * correct.
+ *
+ * Real bug fix: same Token-2022 gap fetchSplMintDecimals's own comment
+ * documents — getAssociatedTokenAddress/getAccount both default to the
+ * legacy TOKEN_PROGRAM_ID, which derives and reads the WRONG account
+ * address entirely for a Token-2022 mint (the ATA address itself is
+ * derived FROM the owning program id, not just read under it). Without
+ * this, a real Token-2022 balance wasn't an error to catch — it was a
+ * lookup at the wrong address that always came back "no account", so
+ * every such token silently showed 0 forever, indistinguishable from
+ * genuinely holding none. Tried under TOKEN_2022_PROGRAM_ID as a real
+ * second attempt before falling back to 0, not merely a caught error.
+ */
+export async function fetchWalletSplTokenBalance(mintAddress, decimals, ownerAddress, { forceFresh = false } = {}) {
+  const key = `solana-token:${mintAddress}:${ownerAddress}`;
+  if (!forceFresh) {
+    const cached = getCached(key);
+    if (cached !== null) return cached;
+  }
+  const urls = [...solanaRpcUrls()].reverse();
+  let lastError;
+  for (const url of urls) {
+    try {
+      const [{ Connection, PublicKey }, { getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID }] = await Promise.all([
+        import("@solana/web3.js"),
+        import("@solana/spl-token"),
+      ]);
+      const connection = new Connection(url, "confirmed");
+      const mintPubkey = new PublicKey(mintAddress);
+      const ownerPubkey = new PublicKey(ownerAddress);
+      let balance = null;
+      for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+        try {
+          const ata = await getAssociatedTokenAddress(mintPubkey, ownerPubkey, false, programId);
+          const account = await getAccount(connection, ata, "confirmed", programId);
+          balance = Number(account.amount) / 10 ** decimals;
+          break;
+        } catch {
+          // No ATA under this program — try the other one before
+          // concluding the balance is genuinely zero.
+        }
+      }
+      if (balance === null) balance = 0; // neither program has an ATA for this mint — genuinely zero, not an error
+      setCached(key, balance);
+      return balance;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Real on-chain symbol()/decimals() reads for a user-pasted ERC-20
+ * contract address — the "import custom token" flow. Deliberately no
+ * fallback/guess: if either call reverts (not actually an ERC-20, wrong
+ * chain) this throws, and the caller surfaces that as "couldn't verify
+ * this token," never a fabricated symbol.
+ */
+export async function fetchErc20TokenMetadata(chainKey, tokenAddress) {
+  const key = `evm:${chainKey}:${tokenAddress.toLowerCase()}`;
+  if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
+  const client = getWalletPublicClient(chainKey);
+  let symbol, decimals;
+  try {
+    [symbol, decimals] = await Promise.all([
+      client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
+      client.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "decimals" }),
+    ]);
+  } catch (err) {
+    // Real bug fix, live-confirmed: a raw RPC/viem failure here (a rate-
+    // limited endpoint returning a network error, or viem's own
+    // ContractFunctionExecutionError — a multi-paragraph dump of the
+    // call args and ABI) used to propagate straight up. AssetDropdown's
+    // catch block in App.jsx trusts `err.message` as already
+    // user-facing (`err?.message || "friendly default"` only falls back
+    // when message is empty) — so that raw technical text rendered
+    // directly in the token-search dropdown instead of ever reaching the
+    // friendly default, read live as the custom-token search "doing
+    // nothing" when the actual RPC call was quietly failing behind an
+    // unreadable error. Every raw failure here now becomes the same
+    // clean, actionable message regardless of cause; the real error
+    // still goes to the console for debugging.
+    console.error(`[fetchErc20TokenMetadata] ${chainKey}:${tokenAddress}`, err);
+    throw new Error("Couldn't verify this token — check the address, or try again in a moment.");
+  }
+  const result = { symbol, decimals: Number(decimals) };
+  tokenMetadataCache.set(key, result);
+  return result;
+}
+
+/**
+ * Real, single-call SPL mint metadata via Jupiter's own token indexer
+ * (lite-api.jup.ag — the free tier, no API key needed, same host
+ * Jupiter's own swap UI reads from) — decimals, symbol, and the token
+ * program (Token vs Token-2022) all resolved by whoever indexed the
+ * mint, not guessed here. Preferred over fetchSplMintDecimals/
+ * fetchSplTokenSymbol below for anything Jupiter has indexed: Jupiter
+ * IS Solana's primary swap aggregator, so a token with real trading
+ * activity being absent from its own index is rare, and one indexer
+ * call is more reliable than a raw RPC read against either of
+ * solanaRpcUrls()' two free public endpoints (no dedicated Solana RPC
+ * key configured here — see solanaRpc.js's own comment), which can be
+ * slow or rate-limited under load. Throws (never fabricates) for a
+ * mint Jupiter hasn't indexed yet — callers fall back to the on-chain
+ * path below for that case.
+ */
+export async function fetchSplTokenMetadataJupiter(mintAddress) {
+  const key = `solana-jup:${mintAddress}`;
+  if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
+  const res = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mintAddress)}`);
+  if (!res.ok) throw new Error("Jupiter token lookup failed.");
+  const data = await res.json().catch(() => null);
+  const matched = Array.isArray(data) ? data.find((t) => t.id === mintAddress) : null;
+  if (!matched || typeof matched.decimals !== "number" || !matched.symbol) {
+    throw new Error("Not indexed by Jupiter yet.");
+  }
+  const result = { symbol: matched.symbol.toUpperCase(), decimals: matched.decimals, name: matched.name || matched.symbol };
+  tokenMetadataCache.set(key, result);
+  return result;
+}
+
+/**
+ * Real on-chain decimals for a user-pasted SPL mint address. SPL mints
+ * carry no on-chain symbol/name (that lives in an optional, separate
+ * Metaplex metadata account this project doesn't parse) — the caller
+ * asks the user for a symbol directly, same honest limitation
+ * documented on the "import custom token" UI itself.
+ *
+ * Real bug fix: this used to go through getWalletSolanaConnection()
+ * — a single, non-retried endpoint, deliberately built that way for
+ * signing/broadcasting a real transaction (see that function's own
+ * comment on why retrying a SIGNED call risks a double-send). A mint
+ * lookup is a pure read with no such risk, and every other read in
+ * this file (fetchWalletSolanaBalance/fetchWalletSplTokenBalance)
+ * already retries across solanaRpcUrls() for exactly that reason —
+ * this was the one read path that didn't, so a single flaky/rate-
+ * limited endpoint could reject a genuinely real mint.
+ *
+ * Real bug fix #2: getMint() defaults to the legacy TOKEN_PROGRAM_ID —
+ * a mint actually created under Token-2022 (TOKEN_2022_PROGRAM_ID),
+ * increasingly common for newer pump.fun-style launches that want
+ * transfer-fee/metadata extensions, decodes its account data under a
+ * completely different owner program, so unpackMint's own
+ * info.owner.equals(programId) check throws
+ * TokenInvalidAccountOwnerError — every real Token-2022 mint failed
+ * verification outright, indistinguishable from a genuinely invalid
+ * address. Now retried under TOKEN_2022_PROGRAM_ID on that exact
+ * error before moving to the next RPC URL — the base MintLayout (where
+ * decimals lives) is identical between the two programs, only the
+ * owner and any TLV extension data after it differ, so decoding a
+ * Token-2022 mint this way is exactly as real as the legacy path.
+ */
+export async function fetchSplMintDecimals(mintAddress) {
+  // Not lowercased — see tokenMetadataCache's own comment on why a
+  // Solana mint's case has to stay exactly as given.
+  const key = `solana:${mintAddress}`;
+  if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
+  const [{ getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID }, { Connection, PublicKey }] = await Promise.all([
+    import("@solana/spl-token"),
+    import("@solana/web3.js"),
+  ]);
+  const mintPubkey = new PublicKey(mintAddress);
+  const urls = [...solanaRpcUrls()].reverse();
+  let lastError;
+  for (const url of urls) {
+    const connection = new Connection(url, "confirmed");
+    try {
+      const mint = await getMint(connection, mintPubkey, "confirmed", TOKEN_PROGRAM_ID);
+      tokenMetadataCache.set(key, mint.decimals);
+      return mint.decimals;
+    } catch (err) {
+      if (err?.name !== "TokenInvalidAccountOwnerError") {
+        lastError = err;
+        continue;
+      }
+      try {
+        const mint = await getMint(connection, mintPubkey, "confirmed", TOKEN_2022_PROGRAM_ID);
+        tokenMetadataCache.set(key, mint.decimals);
+        return mint.decimals;
+      } catch (err2) {
+        lastError = err2;
+      }
+    }
+  }
+  // Real bug fix, live-confirmed: this used to `throw lastError` — the
+  // raw error from whichever RPC URL failed last (a network failure like
+  // "TypeError: Failed to fetch", or a rate-limit response). App.jsx's
+  // AssetDropdown catch block trusts `err.message` as already
+  // user-facing, so that raw technical text rendered directly in the
+  // token-search dropdown instead of a clean message — read live as the
+  // custom-token search "doing nothing" when the underlying RPC call was
+  // quietly failing (rate-limited or unreachable) behind an unreadable
+  // error. Every raw failure here now becomes the same clean, actionable
+  // message regardless of cause; the real error still goes to the
+  // console for debugging.
+  console.error(`[fetchSplMintDecimals] ${mintAddress}`, lastError);
+  throw new Error("Couldn't verify this mint — check the address, or try again in a moment.");
+}
+
+/**
+ * Real symbol/name lookup for a verified SPL mint — DexScreener's public
+ * tokens API, the same source customTokenLogoUrl() above already trusts
+ * for this project's custom-token icons. A mint carries no on-chain
+ * symbol itself (fetchSplMintDecimals's own comment on the unparsed
+ * Metaplex metadata account still applies), so this is the only real,
+ * non-guessed source available without asking the user to type one in —
+ * this used to be a manual "type it yourself" text field, which put the
+ * burden of naming a token correctly on the user instead of the app.
+ * A mint DexScreener has never indexed a pair for (brand new, zero
+ * liquidity) genuinely has nothing to report — this throws rather than
+ * fabricating a placeholder symbol, same "not safe to guess" rule
+ * currencyAddress() already enforces elsewhere in this codebase.
+ */
+export async function fetchSplTokenSymbol(mintAddress) {
+  const key = `solana-symbol:${mintAddress}`;
+  if (tokenMetadataCache.has(key)) return tokenMetadataCache.get(key);
+  const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`);
+  if (!res.ok) throw new Error("Couldn't look up this token right now — try again in a moment.");
+  const data = await res.json().catch(() => null);
+  const pair = (data?.pairs || []).find((p) => p.baseToken?.address === mintAddress || p.quoteToken?.address === mintAddress);
+  const matched = pair?.baseToken?.address === mintAddress ? pair.baseToken : pair?.quoteToken?.address === mintAddress ? pair.quoteToken : null;
+  if (!matched?.symbol) throw new Error("This token has no indexed trading pairs yet, so there's no symbol to fetch.");
+  const result = { symbol: matched.symbol.toUpperCase(), name: matched.name || matched.symbol };
+  tokenMetadataCache.set(key, result);
+  return result;
+}

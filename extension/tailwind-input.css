@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Same reset the main site's src/index.css applies, needed here since
+   the extension doesn't load that file — see this repo's own comment
+   there for why box-sizing is set globally. */
+* {
+  box-sizing: border-box;
+}

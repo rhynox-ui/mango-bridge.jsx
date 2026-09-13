@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mango — Delete My Data</title>
+<meta name="description" content="How to delete the referral data Mango Protocol's Android app stores on its servers." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0A0A0B; color: #F5F5F6;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 56px 24px 96px; }
+  h1 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 28px; font-weight: 700; margin: 0 0 6px; }
+  .updated { color: #57575D; font-size: 13px; margin-bottom: 40px; }
+  h2 { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 17px; font-weight: 600; margin: 36px 0 10px; }
+  p { color: #C9C9CC; font-size: 14.5px; margin: 0 0 14px; }
+  ul { color: #C9C9CC; font-size: 14.5px; padding-left: 20px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+  code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; background: #151517; border: 1px solid #232326; border-radius: 4px; padding: 1px 5px; }
+  .callout { background: #151517; border: 1px solid #232326; border-radius: 12px; padding: 16px 18px; margin: 20px 0; }
+  a { color: #FF9A2E; }
+  .back { display: inline-block; margin-top: 40px; font-size: 13px; color: #9A9AA0; text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Delete My Data</h1>
+  <div class="updated">Last updated: August 29, 2026</div>
+
+  <div class="callout">
+    <p style="margin:0">Mango has no traditional user account, so there's almost nothing on our end to delete: your recovery phrase, private keys, and transaction history live entirely on your own device and were never sent to Mango's servers. The one thing Mango's servers do store is described below, and there are two ways to delete it.</p>
+  </div>
+
+  <h2>What this covers</h2>
+  <p>If you've used the Mango app's Referral feature, Mango's servers store a small record tied to your public wallet address: your accumulated referral points, who referred you (if anyone), how many people you've referred, and your daily check-in status. See <a href="/app-privacy.html#delete-your-data">the Privacy Policy's "What we collect" section</a> for the full picture — this is the only server-side data the app creates.</p>
+  <p>This does <strong>not</strong> cover your wallet itself. Your recovery phrase, private keys, and password are generated and encrypted entirely on your device and were never sent to Mango in any form — there's nothing server-side to delete for those. To remove wallet data from your device, uninstall the app or use Reset wallet in Settings.</p>
+
+  <h2>Option 1: Delete it in the app (fastest)</h2>
+  <p>Open the Mango app → Settings → About Mango → <strong>Delete My Data</strong>. Confirm the prompt, then confirm with your biometrics or wallet password. The app signs a message with your wallet proving you own that address, and sends it directly to Mango's server, which deletes your referral record immediately — no waiting, no email round-trip.</p>
+
+  <h2>Option 2: Request it by email</h2>
+  <p>If you'd rather not do this from the app, email <a href="mailto:mango@mangoprotocol.site?subject=Delete%20my%20referral%20data">mango@mangoprotocol.site</a> from any address, including the wallet address you used, and request deletion. We'll permanently delete that referral record within 30 days.</p>
+
+  <h2>What gets deleted</h2>
+  <ul>
+    <li>Your referral points balance and referral count.</li>
+    <li>Your daily check-in cooldown status.</li>
+    <li>The record of who referred you.</li>
+  </ul>
+  <p>This is permanent and cannot be undone. Referral rewards someone else already received because you referred them aren't reversed — the same way deleting your own bank statement doesn't undo a payment someone else already received from you.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this can be sent to <a href="mailto:mango@mangoprotocol.site">mango@mangoprotocol.site</a>, or through Mango's usual channels at <a href="https://mangoprotocol.site">mangoprotocol.site</a>.</p>
+
+  <a class="back" href="https://mangoprotocol.site">← Back to Mango</a>
+</main>
+</body>
+</html>

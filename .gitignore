@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-ssr/
+extension/popup.bundle.js
+extension/popup.bundle.js.map
+extension/popup.css
+.vercel/
+*.local
+.env
+.env.*
+!.env.example
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
