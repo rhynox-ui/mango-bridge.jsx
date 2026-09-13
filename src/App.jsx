@@ -726,13 +726,15 @@ function SocialLinksRow({ P }) {
   );
 }
 
-// Direct Android APK download — the actual signed release APK is checked
-// into public/mango-app.apk (same pattern as public/mango-wallet-extension.zip
-// just above it), so Vite/Vercel serve it as a real static file at this
-// site's own origin. A plain same-origin link, not a link out to GitHub:
-// no sign-in wall, no expiring artifact retention window, works for any
-// visitor. The `download` attribute names the saved file explicitly so a
-// browser doesn't just save it as "mango-app".
+// Direct Android APK download — was serving off public/mango-app.apk
+// (same pattern as public/mango-wallet-extension.zip just above it) as a
+// plain same-origin static file. Currently UNUSED (see its call site's
+// own comment below) because that file's size (~96-97MB) exceeds
+// Cloudflare Pages' hard 25MB-per-static-asset limit, which was silently
+// failing every Pages build on this repo. Kept here, not deleted,
+// so re-pointing `href` at a Cloudflare R2 URL is a one-line change once
+// the APK is hosted there instead of checked into this repo.
+// eslint-disable-next-line no-unused-vars
 function DownloadApkRow({ P }) {
   return (
     <a
@@ -5703,7 +5705,14 @@ export default function MangoBridge() {
               </div>{/* /desktop grid */}
             </>
           )}
-          <DownloadApkRow P={P} />
+          {/* DownloadApkRow removed 2026-09-13: public/mango-app.apk was
+              causing every Cloudflare Pages build on this repo to fail —
+              confirmed via the Pages dashboard's own deploy logs — since
+              Cloudflare Pages hard-caps individual static assets at 25MB
+              and this file was ~96-97MB. Re-enable this once the APK is
+              served from Cloudflare R2 instead (the same pattern
+              blob-upload.js already uses for other large files in this
+              migration) rather than checked into the repo. */}
           <SocialLinksRow P={P} />
         </div>
       </div>
