@@ -17,7 +17,7 @@
     "@okxconnect/solana-provider": "^1.9.1",
     "@okxconnect/universal-provider": "^1.9.1",
     "@pump-fun/pump-sdk": "^1.36.0",
-    "@pump-fun/pump-swap-sdk": "^1.19.0",
+    "@pump-fun/pump-swap-sdk": "^1.20.0",
     "@relayprotocol/relay-sdk": "^7.0.2",
     "@relayprotocol/relay-svm-wallet-adapter": "^21.0.3",
     "@reown/appkit": "^1.8.23",
