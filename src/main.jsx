@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App.jsx";
 import SolanaConnectTest from "./SolanaConnect.jsx";
 import { SolanaWalletProvider } from "./SolanaWalletContext.jsx";
+import { WalletConnectionSync } from "./WalletConnectionSync.jsx";
 import { LIME } from "./theme.js";
 import { config } from "./wagmi.js";
 import "./appkit.js";
@@ -101,6 +102,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <QueryClientProvider client={queryClient}>
         <ErrorBoundary>
           <SolanaWalletProvider>
+            <WalletConnectionSync />
             {isTestRoute ? <SolanaConnectTest /> : <App />}
           </SolanaWalletProvider>
         </ErrorBoundary>
