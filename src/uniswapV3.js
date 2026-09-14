@@ -27,11 +27,20 @@
 // needs its own periphery router on top, e.g. Universal Router) — see
 // this repo's own uniswapV4.js for that.
 
-import { getAddress } from "viem";
+import { getAddress, encodeFunctionData } from "viem";
 import { readContract, writeContract, simulateContract, waitForTransactionReceipt } from "wagmi/actions";
 import { config } from "./wagmi.js";
 
 export const NATIVE_PLACEHOLDER = "0x0000000000000000000000000000000000000000";
+
+// SwapRouter02's own "keep the output in the router" sentinel — same
+// address(2) convention as Universal Router's ADDRESS_THIS (confirmed:
+// SwapRouter02/V3SwapRouter.sol's exactInputInternal special-cases
+// `recipient == Constants.ADDRESS_THIS` to `address(this)`, the exact
+// same constant this repo's own pancakeswapV3.js already uses for its
+// WRAP_ETH recipient). Used below only when a fee is being collected
+// inline — otherwise the swap still pays the user directly, unchanged.
+const ADDRESS_THIS = "0x0000000000000000000000000000000000000002";
 
 // Standing approval, deliberately -- the same posture uniswapV4.js and
 // pancakeswapV3.js already take here via Permit2 (MAX_UINT160). These
@@ -163,6 +172,41 @@ const WRAPPED_NATIVE_ABI = [
   { type: "function", name: "deposit", stateMutability: "payable", inputs: [], outputs: [] },
 ];
 
+const MULTICALL_ABI = [{
+  type: "function",
+  name: "multicall",
+  stateMutability: "payable",
+  inputs: [{ name: "data", type: "bytes[]" }],
+  outputs: [{ name: "results", type: "bytes[]" }],
+}];
+
+// SwapRouter02 inherits PeripheryPaymentsWithFeeExtended (via
+// V3SwapRouter — confirmed directly against Uniswap's own
+// swap-router-contracts source, both the inheritance chain and the
+// base PeripheryPaymentsWithFee.sol implementation). This 4-arg
+// overload defaults its own `recipient` param to msg.sender, which is
+// exactly `account` here since account is who signs and sends this
+// transaction. Splits the router's ENTIRE balance of `token` at
+// execution time (not the quoted estimate) into feeBips/10_000 to
+// feeRecipient and the remainder to msg.sender, atomically, no second
+// transaction. The contract itself hard-reverts on `feeBips > 100`
+// (1%) — Mango's own rate (DEV_FEE_PCT capped at DEV_FEE_MAX_USD) is
+// always well under that, but callers below still only bundle this
+// when feeBips is in-range, never trusting that blindly on code this
+// close to real funds.
+const SWEEP_TOKEN_WITH_FEE_ABI = [{
+  type: "function",
+  name: "sweepTokenWithFee",
+  stateMutability: "payable",
+  inputs: [
+    { name: "token", type: "address" },
+    { name: "amountMinimum", type: "uint256" },
+    { name: "feeBips", type: "uint256" },
+    { name: "feeRecipient", type: "address" },
+  ],
+  outputs: [],
+}];
+
 const ERC20_ALLOWANCE_ABI = [
   { type: "function", name: "allowance", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
   { type: "function", name: "approve", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }], stateMutability: "nonpayable" },
@@ -208,13 +252,21 @@ export async function quoteUniswapV3({ chainId, tokenIn, tokenOut, amountIn }) {
   return best;
 }
 
-export async function executeUniswapV3Swap({ chainId, account, tokenIn, tokenOut, amountIn, fee, minAmountOut }) {
+// feeBips/feeRecipient are optional — omit either (or pass a feeBips
+// outside SwapRouter02's own valid 1-100 range) and this swaps exactly
+// as before, output straight to `account`, no fee. Never a thrown
+// error either way: an out-of-range fee just means no inline
+// collection this trade, same "never let fee logic put the swap
+// itself at risk" principle this repo's other fee code already
+// follows.
+export async function executeUniswapV3Swap({ chainId, account, tokenIn, tokenOut, amountIn, fee, minAmountOut, feeBips, feeRecipient }) {
   const addresses = UNISWAP_V3_ADDRESSES[chainId];
   if (!addresses) {
     throw new Error(`Uniswap V3 isn't configured for chain ${chainId}.`);
   }
   const poolTokenIn = resolvedPoolAddress(chainId, tokenIn);
   const poolTokenOut = resolvedPoolAddress(chainId, tokenOut);
+  const collectFeeInline = Number.isInteger(feeBips) && feeBips > 0 && feeBips <= 100 && Boolean(feeRecipient);
 
   if (isNative(tokenIn)) {
     const wrapHash = await writeContract(config, {
@@ -245,21 +297,44 @@ export async function executeUniswapV3Swap({ chainId, account, tokenIn, tokenOut
     await waitForTransactionReceipt(config, { hash: approveHash, chainId });
   }
 
-  const swapHash = await writeContract(config, {
-    address: addresses.swapRouter02,
-    abi: SWAP_ROUTER_02_ABI,
-    functionName: "exactInputSingle",
-    args: [{
-      tokenIn: poolTokenIn,
-      tokenOut: poolTokenOut,
-      fee,
-      recipient: account,
-      amountIn,
-      amountOutMinimum: minAmountOut,
-      sqrtPriceLimitX96: 0n,
-    }],
-    chainId,
-  });
+  const swapParams = {
+    tokenIn: poolTokenIn,
+    tokenOut: poolTokenOut,
+    fee,
+    recipient: collectFeeInline ? ADDRESS_THIS : account,
+    amountIn,
+    amountOutMinimum: minAmountOut,
+    sqrtPriceLimitX96: 0n,
+  };
+
+  let swapHash;
+  if (collectFeeInline) {
+    const swapCalldata = encodeFunctionData({ abi: SWAP_ROUTER_02_ABI, functionName: "exactInputSingle", args: [swapParams] });
+    // amountMinimum here is the same minAmountOut the swap itself
+    // already enforced — the router's post-swap balance can never be
+    // less than that, so this can never spuriously revert; it's
+    // defense-in-depth, not a new constraint.
+    const sweepCalldata = encodeFunctionData({
+      abi: SWEEP_TOKEN_WITH_FEE_ABI,
+      functionName: "sweepTokenWithFee",
+      args: [poolTokenOut, minAmountOut, BigInt(feeBips), feeRecipient],
+    });
+    swapHash = await writeContract(config, {
+      address: addresses.swapRouter02,
+      abi: MULTICALL_ABI,
+      functionName: "multicall",
+      args: [[swapCalldata, sweepCalldata]],
+      chainId,
+    });
+  } else {
+    swapHash = await writeContract(config, {
+      address: addresses.swapRouter02,
+      abi: SWAP_ROUTER_02_ABI,
+      functionName: "exactInputSingle",
+      args: [swapParams],
+      chainId,
+    });
+  }
   await waitForTransactionReceipt(config, { hash: swapHash, chainId });
-  return { hash: swapHash };
+  return { hash: swapHash, feeCollectedInline: collectFeeInline };
 }

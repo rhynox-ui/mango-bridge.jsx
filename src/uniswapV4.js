@@ -169,8 +169,22 @@ export async function quoteUniswapV4({ chainId, tokenIn, tokenOut, amountIn }) {
   return best;
 }
 
-function encodeV4SwapActions({ poolKey, zeroForOne, amountIn, minAmountOut, currencyIn, currencyOut }) {
-  const actions = encodePacked(["uint8", "uint8", "uint8"], [6, 12, 15]);
+// V4Router's own action set (Actions.sol — verified directly against
+// Uniswap's v4-periphery source, not guessed): 6=SWAP_EXACT_IN_SINGLE,
+// 12=SETTLE_ALL, 14=TAKE, 15=TAKE_ALL, 16=TAKE_PORTION. TAKE_PORTION
+// withdraws feeBips/10_000 of the pool's actual output credit straight
+// to an arbitrary recipient, and is explicitly designed to compose
+// with a following TAKE_ALL for the remainder in the same actions
+// array (confirmed against V4Router.sol's own _handleAction bodies) —
+// this is what makes the fee collection atomic: one execute() call,
+// no second transaction. TAKE_ALL resolves ActionConstants.MSG_SENDER
+// to whoever called Universal Router's execute() (i.e. `account`
+// here), same as it already did before a fee was ever involved.
+function encodeV4SwapActions({ poolKey, zeroForOne, amountIn, minAmountOut, currencyIn, currencyOut, feeBips, feeRecipient }) {
+  const collectFeeInline = Number.isInteger(feeBips) && feeBips > 0 && feeBips <= 10000 && Boolean(feeRecipient);
+  const actions = collectFeeInline
+    ? encodePacked(["uint8", "uint8", "uint8", "uint8"], [6, 12, 16, 15])
+    : encodePacked(["uint8", "uint8", "uint8"], [6, 12, 15]);
 
   const swapParam = encodeAbiParameters(
     [{
@@ -197,18 +211,38 @@ function encodeV4SwapActions({ poolKey, zeroForOne, amountIn, minAmountOut, curr
     [{ name: "currency", type: "address" }, { name: "maxAmount", type: "uint256" }],
     [currencyIn, amountIn],
   );
+  // TAKE_ALL's own minAmount is set to 0 when a fee is being carved
+  // out first: the real slippage floor is already enforced above by
+  // the swap's own amountOutMinimum (minAmountOut, the FULL output) —
+  // TAKE_PORTION + TAKE_ALL together always account for exactly that
+  // same protected total, just split between the fee wallet and the
+  // user, so re-checking minAmountOut again here would only reject
+  // trades that already passed the real check, on the fee-reduced
+  // remainder.
   const takeAllParam = encodeAbiParameters(
     [{ name: "currency", type: "address" }, { name: "minAmount", type: "uint256" }],
-    [currencyOut, minAmountOut],
+    [currencyOut, collectFeeInline ? 0n : minAmountOut],
+  );
+
+  if (!collectFeeInline) {
+    return encodeAbiParameters(
+      [{ type: "bytes" }, { type: "bytes[]" }],
+      [actions, [swapParam, settleAllParam, takeAllParam]],
+    );
+  }
+
+  const takePortionParam = encodeAbiParameters(
+    [{ name: "currency", type: "address" }, { name: "recipient", type: "address" }, { name: "bips", type: "uint256" }],
+    [currencyOut, feeRecipient, BigInt(feeBips)],
   );
 
   return encodeAbiParameters(
     [{ type: "bytes" }, { type: "bytes[]" }],
-    [actions, [swapParam, settleAllParam, takeAllParam]],
+    [actions, [swapParam, settleAllParam, takePortionParam, takeAllParam]],
   );
 }
 
-export async function executeUniswapV4Swap({ chainId, account, tokenIn, tokenOut, amountIn, poolKey, zeroForOne, minAmountOut }) {
+export async function executeUniswapV4Swap({ chainId, account, tokenIn, tokenOut, amountIn, poolKey, zeroForOne, minAmountOut, feeBips, feeRecipient }) {
   const routerAddress = UNIVERSAL_ROUTER_ADDRESSES[chainId];
   if (!routerAddress) {
     throw new Error(`Uniswap V4 isn't configured for chain ${chainId}.`);
@@ -256,7 +290,7 @@ export async function executeUniswapV4Swap({ chainId, account, tokenIn, tokenOut
     }
   }
 
-  const v4Input = encodeV4SwapActions({ poolKey, zeroForOne, amountIn, minAmountOut, currencyIn, currencyOut });
+  const v4Input = encodeV4SwapActions({ poolKey, zeroForOne, amountIn, minAmountOut, currencyIn, currencyOut, feeBips, feeRecipient });
   const commands = encodePacked(["uint8"], [16]);
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 20 * 60);
 
@@ -269,5 +303,6 @@ export async function executeUniswapV4Swap({ chainId, account, tokenIn, tokenOut
     chainId,
   });
   await waitForTransactionReceipt(config, { hash: swapHash, chainId });
-  return { hash: swapHash };
+  const collectFeeInline = Number.isInteger(feeBips) && feeBips > 0 && feeBips <= 10000 && Boolean(feeRecipient);
+  return { hash: swapHash, feeCollectedInline: collectFeeInline };
 }

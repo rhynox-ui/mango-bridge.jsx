@@ -85,6 +85,22 @@ const ERC20_ALLOWANCE_ABI = [
   { type: "function", name: "approve", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }], stateMutability: "nonpayable" },
 ];
 
+// PancakeSwap's Universal Router is a confirmed fork of Uniswap's own
+// (identical execute() signature and command-byte scheme, per this
+// file's own header) — so its top-level Commands.sol enum carries the
+// same PAY_PORTION(0x06)/SWEEP(0x04) entries Uniswap's own router
+// source defines, verified directly rather than assumed. PAY_PORTION
+// sends feeBips/10_000 of the router's OWN balance of `token` (not the
+// quoted estimate — the real balance at execution time) to an
+// arbitrary recipient; SWEEP then sends what's left to MSG_SENDER
+// (address(1), same sentinel convention as ADDRESS_THIS above) — two
+// extra commands appended after the swap in the SAME execute() call,
+// so this never costs a second transaction or signature.
+const MSG_SENDER = "0x0000000000000000000000000000000000000001";
+const ADDRESS_THIS = "0x0000000000000000000000000000000000000002";
+const PAY_PORTION_COMMAND = 6;
+const SWEEP_COMMAND = 4;
+
 const PERMIT2_ALLOWANCE_ABI = [
   { type: "function", name: "allowance", inputs: [{ name: "owner", type: "address" }, { name: "token", type: "address" }, { name: "spender", type: "address" }], outputs: [{ name: "amount", type: "uint160" }, { name: "expiration", type: "uint48" }, { name: "nonce", type: "uint48" }], stateMutability: "view" },
   { type: "function", name: "approve", inputs: [{ name: "token", type: "address" }, { name: "spender", type: "address" }, { name: "amount", type: "uint160" }, { name: "expiration", type: "uint48" }], outputs: [], stateMutability: "nonpayable" },
@@ -149,7 +165,7 @@ export async function quotePancakeSwapV3({ chainId, tokenIn, tokenOut, amountIn 
  * confirmed by the identical execute() signature and command-byte
  * scheme.
  */
-export async function executePancakeSwapV3Swap({ chainId, account, tokenIn, tokenOut, amountIn, fee, minAmountOut }) {
+export async function executePancakeSwapV3Swap({ chainId, account, tokenIn, tokenOut, amountIn, fee, minAmountOut, feeBips, feeRecipient }) {
   const addresses = PANCAKESWAP_V3_ADDRESSES[chainId];
   if (!addresses) {
     throw new Error(`PancakeSwap V3 isn't configured for chain ${chainId}.`);
@@ -157,6 +173,7 @@ export async function executePancakeSwapV3Swap({ chainId, account, tokenIn, toke
   const tokenInIsNative = isNative(tokenIn);
   const poolTokenIn = resolvedPoolAddress(chainId, tokenIn);
   const poolTokenOut = resolvedPoolAddress(chainId, tokenOut);
+  const collectFeeInline = Number.isInteger(feeBips) && feeBips > 0 && feeBips <= 10000 && Boolean(feeRecipient);
 
   if (!tokenInIsNative) {
     const erc20Allowance = await readContract(config, {
@@ -206,27 +223,45 @@ export async function executePancakeSwapV3Swap({ chainId, account, tokenIn, toke
   // verifying against the V4 case.
   const swapInput = encodeAbiParameters(
     [{ name: "recipient", type: "address" }, { name: "amountIn", type: "uint256" }, { name: "amountOutMin", type: "uint256" }, { name: "path", type: "bytes" }, { name: "payerIsUser", type: "bool" }],
-    [account, amountIn, minAmountOut, path, !tokenInIsNative],
+    [collectFeeInline ? ADDRESS_THIS : account, amountIn, minAmountOut, path, !tokenInIsNative],
   );
 
-  let commands;
-  let inputs;
-  if (tokenInIsNative) {
-    // WRAP_ETH (11) then V3_SWAP_EXACT_IN (0) — WRAP_ETH's own params
-    // are (recipient, amountMin); ADDRESS_THIS-equivalent here is
-    // simply the router itself receiving the wrap, then the swap
-    // command spends it — same shape Uniswap's own Universal Router
-    // uses for a native sell ahead of a V3/V4 swap command.
-    const wrapInput = encodeAbiParameters(
-      [{ name: "recipient", type: "address" }, { name: "amountMin", type: "uint256" }],
-      ["0x0000000000000000000000000000000000000002", amountIn], // ADDRESS_THIS sentinel — Universal Router's own convention for "the router itself"
-    );
-    commands = encodePacked(["uint8", "uint8"], [11, 0]);
-    inputs = [wrapInput, swapInput];
-  } else {
-    commands = encodePacked(["uint8"], [0]);
-    inputs = [swapInput];
-  }
+  const swapCommandBytes = tokenInIsNative ? [11, 0] : [0];
+  const swapInputs = tokenInIsNative
+    ? [
+      // WRAP_ETH (11) then V3_SWAP_EXACT_IN (0) — WRAP_ETH's own
+      // params are (recipient, amountMin); the router itself receives
+      // the wrap, then the swap command spends it — same shape
+      // Uniswap's own Universal Router uses for a native sell ahead
+      // of a V3/V4 swap command.
+      encodeAbiParameters(
+        [{ name: "recipient", type: "address" }, { name: "amountMin", type: "uint256" }],
+        [ADDRESS_THIS, amountIn],
+      ),
+      swapInput,
+    ]
+    : [swapInput];
+
+  // Fee carve-out, when requested: the swap above already sent its
+  // output to the router's own balance (ADDRESS_THIS) instead of
+  // straight to account — PAY_PORTION skims feeBips/10_000 of that
+  // real, post-swap balance to feeRecipient, then SWEEP sends what's
+  // left to account (MSG_SENDER), both in this same execute() call.
+  const commandBytes = collectFeeInline ? [...swapCommandBytes, PAY_PORTION_COMMAND, SWEEP_COMMAND] : swapCommandBytes;
+  const commands = encodePacked(commandBytes.map(() => "uint8"), commandBytes);
+  const inputs = collectFeeInline
+    ? [
+      ...swapInputs,
+      encodeAbiParameters(
+        [{ name: "token", type: "address" }, { name: "recipient", type: "address" }, { name: "bips", type: "uint256" }],
+        [poolTokenOut, feeRecipient, BigInt(feeBips)],
+      ),
+      encodeAbiParameters(
+        [{ name: "token", type: "address" }, { name: "recipient", type: "address" }, { name: "amountMinimum", type: "uint256" }],
+        [poolTokenOut, MSG_SENDER, 0n],
+      ),
+    ]
+    : swapInputs;
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 20 * 60);
 
   const swapHash = await writeContract(config, {
@@ -238,5 +273,5 @@ export async function executePancakeSwapV3Swap({ chainId, account, tokenIn, toke
     ...(tokenInIsNative ? { value: amountIn } : {}),
   });
   await waitForTransactionReceipt(config, { hash: swapHash, chainId });
-  return { hash: swapHash };
+  return { hash: swapHash, feeCollectedInline: collectFeeInline };
 }
