@@ -31,15 +31,25 @@
 // leaving a standing approval on a router this app doesn't otherwise
 // touch.
 
-import { formatUnits } from "viem";
+import { formatUnits, parseEther } from "viem";
 import { readContract, writeContract, sendTransaction, waitForTransactionReceipt } from "wagmi/actions";
 import { config } from "./wagmi.js";
 import { appFeeBps, DEV_FEE_WALLET } from "./devFeeWallets.js";
 import { buildTransactionIntent, assertTransactionItemsMatchIntent } from "./txIntentFirewall.js";
+import { MAINNET_CHAIN_IDS, NATIVE_SYMBOL } from "./chainData.js";
+import { fetchWalletPrices } from "./wallet/walletPrices.js";
+import { fetchWalletNativeBalance } from "./wallet/walletRpc.js";
+import { computeFallbackFeeNativeAmount } from "./fallbackFeeSweep.js";
 import { uniswapV3SupportsChain, quoteUniswapV3, executeUniswapV3Swap } from "./uniswapV3.js";
 import { uniswapV4SupportsChain, quoteUniswapV4, executeUniswapV4Swap } from "./uniswapV4.js";
 import { sushiswapV2SupportsChain, quoteSushiSwapV2, executeSushiSwapV2Swap } from "./sushiswapV2.js";
 import { pancakeswapV3SupportsChain, quotePancakeSwapV3, executePancakeSwapV3Swap } from "./pancakeswapV3.js";
+
+// chainId -> chainKey, the reverse of MAINNET_CHAIN_IDS — needed here
+// because fallbackDex.js works in chainId (what wagmi/the quote APIs
+// use) while NATIVE_SYMBOL and fetchWalletNativeBalance are keyed by
+// this app's own chainKey strings.
+const CHAIN_KEY_BY_ID = Object.fromEntries(Object.entries(MAINNET_CHAIN_IDS).map(([key, id]) => [id, key]));
 
 const FALLBACK_QUOTE_URL = "/api/v1/bridge/fallback-quote";
 
@@ -285,6 +295,64 @@ export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmo
   return { provider: winner.provider, buyAmount: winner.buyAmount.toString() };
 }
 
+// Pure fee-sizing math lives in its own module — fallbackFeeSweep.js's
+// own header explains why (this file transitively imports wagmi.js,
+// which needs a Vite-only global at load time, so a plain Node verify
+// script can never import fallbackDex.js directly).
+
+/**
+ * Real fix for a real, confirmed gap: the four no-key DEX providers
+ * above (uniswap-v4/uniswap-v3/sushiswap-v2/pancakeswap-v3) call their
+ * router directly with no fee mechanism of any kind built in —
+ * feeCollectedInline is always false for all four, unlike the keyed
+ * aggregators below, which either enforce it server-side
+ * (fallback-quote.js's own feeBps/feeWallet) or via their own
+ * Integrator Fee. Ported from mango-pro's own
+ * sweepFallbackFeeFromNativeBalance (same gap, same fix, already
+ * shipped and verified there) rather than invented fresh: skims
+ * Mango's fee from the wallet's SPARE NATIVE balance — not the
+ * swapped token itself — converted via a live price, in a second,
+ * separate transaction right after the swap has already succeeded.
+ *
+ * Deliberately best-effort and silent: every early return here (no USD
+ * value to size the fee against, fee too small to be worth a second
+ * tx, no live native price, no fresh balance reading, insufficient
+ * spare balance once the doubled gas reserve is set aside) just means
+ * no fee gets collected this time — never a thrown error, and never
+ * something the caller has to handle. The swap itself already
+ * succeeded before this function is ever called; nothing about
+ * collecting Mango's own cut afterward should ever put that at risk or
+ * surface as a failure to the user.
+ */
+export async function sweepFallbackFeeFromNativeBalance({ chainId, account, originAmountUsd }) {
+  try {
+    const chainKey = CHAIN_KEY_BY_ID[chainId];
+    const nativeSymbol = chainKey ? NATIVE_SYMBOL[chainKey] : undefined;
+    if (!chainKey || !nativeSymbol) return;
+
+    const prices = await fetchWalletPrices().catch(() => null);
+    const nativePriceUsd = prices?.[nativeSymbol];
+
+    const freshBalance = await fetchWalletNativeBalance(chainKey, account, { forceFresh: true }).catch(() => null);
+    if (freshBalance === null || freshBalance === undefined) return;
+
+    const feeToSend = computeFallbackFeeNativeAmount({ originAmountUsd, nativePriceUsd, freshBalanceNative: freshBalance });
+    if (!(feeToSend > 0)) return;
+
+    // toFixed(18) rather than the raw float: parseEther rejects a
+    // value with more than 18 decimal places, which a float division
+    // above can easily produce (e.g. 0.1 / 3 has far more than that).
+    const hash = await sendTransaction(config, { to: DEV_FEE_WALLET, value: parseEther(feeToSend.toFixed(18)), chainId });
+    await waitForTransactionReceipt(config, { hash, chainId });
+  } catch (err) {
+    // Best-effort per this function's own header — a rejected wallet
+    // prompt, a dropped transaction, an RPC hiccup, anything. The swap
+    // this runs after already succeeded; this never becomes the user's
+    // problem.
+    console.warn(`[fallbackDex] fee sweep skipped: ${err?.message ?? String(err)}`);
+  }
+}
+
 // 1% — same default tolerance the rest of this app applies elsewhere
 // when nothing more specific is available. Protects a Uniswap/
 // SushiSwap swap from landing far worse than quoted between the quote
@@ -337,8 +405,11 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           minAmountOut,
         });
         onSwapHashKnown?.(result.hash);
-        // No inline fee collection — same as this provider having no
-        // backend quote to carry a fee field on at all.
+        // No inline fee collection — this provider's router has no fee
+        // mechanism of any kind. sweepFallbackFeeFromNativeBalance is
+        // the real fix for that (its own header has the full reasoning)
+        // — best-effort and silent, never affects this trade's result.
+        await sweepFallbackFeeFromNativeBalance({ chainId, account: takerAddress, originAmountUsd });
         return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
       if (entry.provider === "uniswap-v3") {
@@ -354,6 +425,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           minAmountOut,
         });
         onSwapHashKnown?.(result.hash);
+        await sweepFallbackFeeFromNativeBalance({ chainId, account: takerAddress, originAmountUsd });
         return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
       if (entry.provider === "sushiswap-v2") {
@@ -368,6 +440,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           minAmountOut,
         });
         onSwapHashKnown?.(result.hash);
+        await sweepFallbackFeeFromNativeBalance({ chainId, account: takerAddress, originAmountUsd });
         return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
       if (entry.provider === "pancakeswap-v3") {
@@ -383,6 +456,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           minAmountOut,
         });
         onSwapHashKnown?.(result.hash);
+        await sweepFallbackFeeFromNativeBalance({ chainId, account: takerAddress, originAmountUsd });
         return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
       // Generic provider (1inch/0x/okx/kyberswap) — quote was already
