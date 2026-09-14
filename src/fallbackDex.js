@@ -43,6 +43,30 @@ import { pancakeswapV3SupportsChain, quotePancakeSwapV3, executePancakeSwapV3Swa
 
 const FALLBACK_QUOTE_URL = "/api/v1/bridge/fallback-quote";
 
+// The three no-key routes whose fee now comes out of the swap's own
+// output atomically (see uniswapV3.js/uniswapV4.js/pancakeswapV3.js's
+// own headers) — sushiswap-v2 collects no fee at all (no atomic option
+// exists there, see tryFallbackProviders' own note), and the generic
+// aggregators already return a quote/report that's net of whatever fee
+// they were instructed to take, so neither needs this adjustment.
+const ATOMIC_FEE_PROVIDERS = new Set(["uniswap-v4", "uniswap-v3", "pancakeswap-v3"]);
+
+/**
+ * Real fix for a real, confirmed gap: before this, both the pre-trade
+ * "you will receive" preview and the post-trade reported amount for
+ * these three routes were the GROSS, pre-fee AMM quote — accurate
+ * before the fee became atomic (it used to come from spare native
+ * balance, separate from the swap's own output), no longer accurate
+ * once the fee started coming out of that same output. Applied at the
+ * one place both checkFallbackRoute (preview) and tryFallbackProviders
+ * (post-trade report) both ultimately read from, so neither can drift
+ * out of sync with the other or with what the router actually sends.
+ */
+function netBuyAmountAfterInlineFee(grossBuyAmount, provider, feeBips) {
+  if (!ATOMIC_FEE_PROVIDERS.has(provider) || !(feeBips > 0)) return grossBuyAmount;
+  return grossBuyAmount - (grossBuyAmount * BigInt(feeBips)) / 10000n;
+}
+
 // Tried in this order — ported from mango-mobile's own fallbackDex.js
 // per this repo's own SAS.md durable instruction ("every treatment
 // applies to both repos"): uniswap-v4/uniswap-v3/sushiswap-v2 lead,
@@ -282,7 +306,9 @@ export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmo
   const { entries } = await quoteAllProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, buyDecimals });
   if (entries.length === 0) return null;
   const winner = entries[0];
-  return { provider: winner.provider, buyAmount: winner.buyAmount.toString() };
+  const feeBips = Number(appFeeBps(originAmountUsd));
+  const netBuyAmount = netBuyAmountAfterInlineFee(winner.buyAmount, winner.provider, feeBips);
+  return { provider: winner.provider, buyAmount: netBuyAmount.toString() };
 }
 
 // Real fix for a real, confirmed gap: the three Universal-Router-style
@@ -317,6 +343,21 @@ export async function checkFallbackRoute({ chainId, sellToken, buyToken, sellAmo
 // SushiSwap swap from landing far worse than quoted between the quote
 // call and the swap call below, without being so tight a normal price
 // move between those two calls fails it.
+//
+// What minAmountOut (computed from this, below) actually guarantees:
+// the POOL's output floor — the swap itself can never clear for less
+// than this, protecting against adverse price movement between quote
+// and execution. On uniswap-v4/uniswap-v3/pancakeswap-v3 specifically,
+// Mango's fee is then carved out of THAT same protected output
+// atomically (see each file's own header) — so the amount the user's
+// wallet actually ends up with is minAmountOut × (1 − feeBips/10000),
+// not minAmountOut itself. Nothing here is a regression in the price
+// protection (the pool-level floor is exactly as tight as before the
+// fee became atomic) — this is purely a naming trap: don't read
+// minAmountOut as "what the user gets" for these three routes. The
+// real, fee-adjusted amount the user gets is netBuyAmountAfterInlineFee's
+// own output, computed separately below and used for both the
+// pre-trade preview and the post-trade report.
 const UNISWAP_SLIPPAGE_BPS = 100n;
 
 /**
@@ -374,7 +415,8 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           feeRecipient: DEV_FEE_WALLET,
         });
         onSwapHashKnown?.(result.hash);
-        return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: result.feeCollectedInline };
+        const netBuyAmount = netBuyAmountAfterInlineFee(entry.buyAmount, entry.provider, feeBips);
+        return { provider: entry.provider, hash: result.hash, buyAmount: netBuyAmount.toString(), feeCollectedInline: result.feeCollectedInline };
       }
       if (entry.provider === "uniswap-v3") {
         const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
@@ -391,7 +433,8 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           feeRecipient: DEV_FEE_WALLET,
         });
         onSwapHashKnown?.(result.hash);
-        return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: result.feeCollectedInline };
+        const netBuyAmount = netBuyAmountAfterInlineFee(entry.buyAmount, entry.provider, feeBips);
+        return { provider: entry.provider, hash: result.hash, buyAmount: netBuyAmount.toString(), feeCollectedInline: result.feeCollectedInline };
       }
       if (entry.provider === "sushiswap-v2") {
         const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
@@ -428,7 +471,8 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
           feeRecipient: DEV_FEE_WALLET,
         });
         onSwapHashKnown?.(result.hash);
-        return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: result.feeCollectedInline };
+        const netBuyAmount = netBuyAmountAfterInlineFee(entry.buyAmount, entry.provider, feeBips);
+        return { provider: entry.provider, hash: result.hash, buyAmount: netBuyAmount.toString(), feeCollectedInline: result.feeCollectedInline };
       }
       // Generic provider (1inch/0x/okx/kyberswap) — quote was already
       // fetched by quoteAllProviders above, re-executed against as-is.

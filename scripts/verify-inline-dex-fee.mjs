@@ -214,6 +214,75 @@ check("PAY_PORTION's (token, recipient, bips) and SWEEP's (token, recipient, amo
   assert(sweep[1].toLowerCase() === msgSender.toLowerCase() && sweep[2] === 0n);
 });
 
+check("unwrapWETH9/unwrapWETH9WithFee selectors are independently confirmed, and the multicall pairing for a native-out sell matches the intended branch", () => {
+  const UNWRAP_WETH9_ABI = [{ type: "function", name: "unwrapWETH9", stateMutability: "payable", inputs: [{ name: "amountMinimum", type: "uint256" }, { name: "recipient", type: "address" }], outputs: [] }];
+  const UNWRAP_WETH9_WITH_FEE_ABI = [{ type: "function", name: "unwrapWETH9WithFee", stateMutability: "payable", inputs: [{ name: "amountMinimum", type: "uint256" }, { name: "feeBips", type: "uint256" }, { name: "feeRecipient", type: "address" }], outputs: [] }];
+  const account = "0xadadadadadadadadadadadadadadadadadadadad";
+  const feeRecipient = "0xf07becc2401a646fff10d10b969ef18b03582e88";
+
+  const plainCalldata = encodeFunctionData({ abi: UNWRAP_WETH9_ABI, functionName: "unwrapWETH9", args: [12345n, account] });
+  const expectedPlainSelector = toFunctionSelector("unwrapWETH9(uint256,address)");
+  assert(plainCalldata.startsWith(expectedPlainSelector), `unwrapWETH9 selector ${plainCalldata.slice(0, 10)} != ${expectedPlainSelector}`);
+  const decodedPlain = decodeFunctionData({ abi: UNWRAP_WETH9_ABI, data: plainCalldata });
+  assert(decodedPlain.args[0] === 12345n && decodedPlain.args[1].toLowerCase() === account.toLowerCase());
+
+  const feeCalldata = encodeFunctionData({ abi: UNWRAP_WETH9_WITH_FEE_ABI, functionName: "unwrapWETH9WithFee", args: [12345n, 50n, feeRecipient] });
+  const expectedFeeSelector = toFunctionSelector("unwrapWETH9WithFee(uint256,uint256,address)");
+  assert(feeCalldata.startsWith(expectedFeeSelector), `unwrapWETH9WithFee selector ${feeCalldata.slice(0, 10)} != ${expectedFeeSelector}`);
+  const decodedFee = decodeFunctionData({ abi: UNWRAP_WETH9_WITH_FEE_ABI, data: feeCalldata });
+  assert(decodedFee.args[0] === 12345n && decodedFee.args[1] === 50n && decodedFee.args[2].toLowerCase() === feeRecipient.toLowerCase());
+});
+
+check("PancakeSwap's UNWRAP_WETH(12) command byte and its (recipient, amountMin) params round-trip, for both the plain and fee-collecting native-out tails", () => {
+  const account = "0xadadadadadadadadadadadadadadadadadadadad";
+  const ADDRESS_THIS = "0x0000000000000000000000000000000000000002";
+
+  // Plain native-out (no fee): swap command(s) + UNWRAP_WETH only.
+  const plainTail = encodePacked(["uint8", "uint8"], [0, 12]); // V3_SWAP_EXACT_IN, UNWRAP_WETH
+  assert(plainTail === "0x000c", `expected 0x000c, got ${plainTail}`);
+  const unwrapParams = [{ type: "address", name: "recipient" }, { type: "uint256", name: "amountMin" }];
+  const [decodedRecipient, decodedAmountMin] = decodeAbiParameters(unwrapParams, encodeAbiParameters(unwrapParams, [account, 12345n]));
+  assert(decodedRecipient.toLowerCase() === account.toLowerCase() && decodedAmountMin === 12345n);
+
+  // Fee-collecting native-out: swap + UNWRAP_WETH(12) + PAY_PORTION(6) + SWEEP(4), unwrap recipient is the router itself.
+  const feeTail = encodePacked(["uint8", "uint8", "uint8", "uint8"], [0, 12, 6, 4]);
+  assert(feeTail === "0x000c0604", `expected 0x000c0604, got ${feeTail}`);
+  const [decodedFeeRecipientSlot] = decodeAbiParameters(unwrapParams, encodeAbiParameters(unwrapParams, [ADDRESS_THIS, 12345n]));
+  assert(decodedFeeRecipientSlot.toLowerCase() === ADDRESS_THIS, "the fee-collecting tail's UNWRAP_WETH must send to the router itself (ADDRESS_THIS), not directly to the user");
+});
+
+check("PAY_PORTION/SWEEP accept the native-currency flag (address(0)) as their token param, for a native-out fee carve-out", () => {
+  const NATIVE_PLACEHOLDER = "0x0000000000000000000000000000000000000000";
+  const feeRecipient = "0xf07becc2401a646fff10d10b969ef18b03582e88";
+  const params = [{ type: "address", name: "token" }, { type: "address", name: "recipient" }, { type: "uint256", name: "value" }];
+  const [decodedToken, decodedRecipient, decodedBips] = decodeAbiParameters(params, encodeAbiParameters(params, [NATIVE_PLACEHOLDER, feeRecipient, 50n]));
+  assert(decodedToken.toLowerCase() === NATIVE_PLACEHOLDER && decodedRecipient.toLowerCase() === feeRecipient.toLowerCase() && decodedBips === 50n);
+});
+
+check("netBuyAmountAfterInlineFee's math (mirrored — can't import fallbackDex.js directly, see this file's own header) matches what the router actually delivers", () => {
+  function netBuyAmountAfterInlineFee(grossBuyAmount, provider, feeBips) {
+    const ATOMIC_FEE_PROVIDERS = new Set(["uniswap-v4", "uniswap-v3", "pancakeswap-v3"]);
+    if (!ATOMIC_FEE_PROVIDERS.has(provider) || !(feeBips > 0)) return grossBuyAmount;
+    return grossBuyAmount - (grossBuyAmount * BigInt(feeBips)) / 10000n;
+  }
+  // A $1000-equivalent trade at the flat 50-bips rate: user nets 99.5%.
+  const gross = 1_000_000_000n; // 1000 USDC, 6 decimals
+  assert(netBuyAmountAfterInlineFee(gross, "uniswap-v3", 50) === 995_000_000n);
+  assert(netBuyAmountAfterInlineFee(gross, "uniswap-v4", 50) === 995_000_000n);
+  assert(netBuyAmountAfterInlineFee(gross, "pancakeswap-v3", 50) === 995_000_000n);
+  // sushiswap-v2 collects no fee at all — never adjusted, regardless of feeBips.
+  assert(netBuyAmountAfterInlineFee(gross, "sushiswap-v2", 50) === gross);
+  // A generic aggregator's quote is already net of its own fee handling — never adjusted here either.
+  assert(netBuyAmountAfterInlineFee(gross, "1inch", 50) === gross);
+  // feeBips=0 (no fee this trade) leaves any provider's amount untouched.
+  assert(netBuyAmountAfterInlineFee(gross, "uniswap-v3", 0) === gross);
+
+  const src = readFileSync(srcPath("fallbackDex.js"), "utf8");
+  assert(src.includes("function netBuyAmountAfterInlineFee(grossBuyAmount, provider, feeBips)"), "fallbackDex.js's real function signature no longer matches this mirror — update both together");
+  assert(src.includes('ATOMIC_FEE_PROVIDERS = new Set(["uniswap-v4", "uniswap-v3", "pancakeswap-v3"])'), "the real atomic-fee provider set drifted from this mirror");
+  assert(/checkFallbackRoute[\s\S]{0,400}netBuyAmountAfterInlineFee/.test(src), "checkFallbackRoute (the pre-trade preview) must apply the net-of-fee adjustment");
+});
+
 check("MSG_SENDER/ADDRESS_THIS sentinels used across all three files are the well-known address(1)/address(2)", () => {
   const MSG_SENDER = "0x0000000000000000000000000000000000000001";
   const ADDRESS_THIS = "0x0000000000000000000000000000000000000002";

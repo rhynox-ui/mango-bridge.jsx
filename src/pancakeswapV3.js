@@ -35,7 +35,7 @@
 import { encodeAbiParameters, encodePacked } from "viem";
 import { readContract, writeContract, simulateContract, waitForTransactionReceipt } from "wagmi/actions";
 import { config } from "./wagmi.js";
-import { isNative } from "./uniswapV3.js";
+import { isNative, NATIVE_PLACEHOLDER } from "./uniswapV3.js";
 
 export const PANCAKESWAP_V3_ADDRESSES = {
   4663: {
@@ -100,6 +100,13 @@ const MSG_SENDER = "0x0000000000000000000000000000000000000001";
 const ADDRESS_THIS = "0x0000000000000000000000000000000000000002";
 const PAY_PORTION_COMMAND = 6;
 const SWEEP_COMMAND = 4;
+// UNWRAP_WETH(0x0c) — decodes (address recipient, uint256 amountMin),
+// calls Payments.unwrapWETH9(recipient, amountMin) (confirmed against
+// Uniswap's own Dispatcher.sol source, same fork this file's header
+// already establishes). Closes a real, pre-existing gap: a sell into
+// this chain's native currency left WETH sitting in the wallet, never
+// unwrapped — see executePancakeSwapV3Swap's own tail-commands comment.
+const UNWRAP_WETH_COMMAND = 12;
 
 const PERMIT2_ALLOWANCE_ABI = [
   { type: "function", name: "allowance", inputs: [{ name: "owner", type: "address" }, { name: "token", type: "address" }, { name: "spender", type: "address" }], outputs: [{ name: "amount", type: "uint160" }, { name: "expiration", type: "uint48" }, { name: "nonce", type: "uint48" }], stateMutability: "view" },
@@ -171,9 +178,14 @@ export async function executePancakeSwapV3Swap({ chainId, account, tokenIn, toke
     throw new Error(`PancakeSwap V3 isn't configured for chain ${chainId}.`);
   }
   const tokenInIsNative = isNative(tokenIn);
+  const tokenOutIsNative = isNative(tokenOut);
   const poolTokenIn = resolvedPoolAddress(chainId, tokenIn);
   const poolTokenOut = resolvedPoolAddress(chainId, tokenOut);
   const collectFeeInline = Number.isInteger(feeBips) && feeBips > 0 && feeBips <= 10000 && Boolean(feeRecipient);
+  // A native-out sell needs the router to hold the resulting WETH so it
+  // can be unwrapped afterward — same reason a fee-collecting sell needs
+  // the router to hold the plain output before splitting it.
+  const needsRouterHold = collectFeeInline || tokenOutIsNative;
 
   if (!tokenInIsNative) {
     const erc20Allowance = await readContract(config, {
@@ -223,7 +235,7 @@ export async function executePancakeSwapV3Swap({ chainId, account, tokenIn, toke
   // verifying against the V4 case.
   const swapInput = encodeAbiParameters(
     [{ name: "recipient", type: "address" }, { name: "amountIn", type: "uint256" }, { name: "amountOutMin", type: "uint256" }, { name: "path", type: "bytes" }, { name: "payerIsUser", type: "bool" }],
-    [collectFeeInline ? ADDRESS_THIS : account, amountIn, minAmountOut, path, !tokenInIsNative],
+    [needsRouterHold ? ADDRESS_THIS : account, amountIn, minAmountOut, path, !tokenInIsNative],
   );
 
   const swapCommandBytes = tokenInIsNative ? [11, 0] : [0];
@@ -242,16 +254,37 @@ export async function executePancakeSwapV3Swap({ chainId, account, tokenIn, toke
     ]
     : [swapInput];
 
-  // Fee carve-out, when requested: the swap above already sent its
-  // output to the router's own balance (ADDRESS_THIS) instead of
-  // straight to account — PAY_PORTION skims feeBips/10_000 of that
+  // Tail commands after the swap: unwrap (real, pre-existing gap this
+  // closes — a native-out sell used to leave WETH sitting in the
+  // wallet, never unwrapped to spendable native currency) and/or the
+  // fee carve-out (PAY_PORTION skims feeBips/10_000 of the router's
   // real, post-swap balance to feeRecipient, then SWEEP sends what's
-  // left to account (MSG_SENDER), both in this same execute() call.
-  const commandBytes = collectFeeInline ? [...swapCommandBytes, PAY_PORTION_COMMAND, SWEEP_COMMAND] : swapCommandBytes;
-  const commands = encodePacked(commandBytes.map(() => "uint8"), commandBytes);
-  const inputs = collectFeeInline
-    ? [
-      ...swapInputs,
+  // left to account/MSG_SENDER) — both in this same execute() call, no
+  // second transaction either way. NATIVE_PLACEHOLDER (address(0)) is
+  // Universal Router's own flag for "native currency" in PAY_PORTION/
+  // SWEEP, the same convention confirmed against Uniswap's real
+  // Payments.sol/Constants.sol source (Constants.ETH = address(0)).
+  let tailCommandBytes = [];
+  let tailInputs = [];
+  if (tokenOutIsNative && collectFeeInline) {
+    tailCommandBytes = [UNWRAP_WETH_COMMAND, PAY_PORTION_COMMAND, SWEEP_COMMAND];
+    tailInputs = [
+      encodeAbiParameters([{ name: "recipient", type: "address" }, { name: "amountMin", type: "uint256" }], [ADDRESS_THIS, minAmountOut]),
+      encodeAbiParameters(
+        [{ name: "token", type: "address" }, { name: "recipient", type: "address" }, { name: "bips", type: "uint256" }],
+        [NATIVE_PLACEHOLDER, feeRecipient, BigInt(feeBips)],
+      ),
+      encodeAbiParameters(
+        [{ name: "token", type: "address" }, { name: "recipient", type: "address" }, { name: "amountMinimum", type: "uint256" }],
+        [NATIVE_PLACEHOLDER, MSG_SENDER, 0n],
+      ),
+    ];
+  } else if (tokenOutIsNative) {
+    tailCommandBytes = [UNWRAP_WETH_COMMAND];
+    tailInputs = [encodeAbiParameters([{ name: "recipient", type: "address" }, { name: "amountMin", type: "uint256" }], [account, minAmountOut])];
+  } else if (collectFeeInline) {
+    tailCommandBytes = [PAY_PORTION_COMMAND, SWEEP_COMMAND];
+    tailInputs = [
       encodeAbiParameters(
         [{ name: "token", type: "address" }, { name: "recipient", type: "address" }, { name: "bips", type: "uint256" }],
         [poolTokenOut, feeRecipient, BigInt(feeBips)],
@@ -260,8 +293,11 @@ export async function executePancakeSwapV3Swap({ chainId, account, tokenIn, toke
         [{ name: "token", type: "address" }, { name: "recipient", type: "address" }, { name: "amountMinimum", type: "uint256" }],
         [poolTokenOut, MSG_SENDER, 0n],
       ),
-    ]
-    : swapInputs;
+    ];
+  }
+  const commandBytes = [...swapCommandBytes, ...tailCommandBytes];
+  const commands = encodePacked(commandBytes.map(() => "uint8"), commandBytes);
+  const inputs = [...swapInputs, ...tailInputs];
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 20 * 60);
 
   const swapHash = await writeContract(config, {

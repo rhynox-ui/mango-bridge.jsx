@@ -207,6 +207,43 @@ const SWEEP_TOKEN_WITH_FEE_ABI = [{
   outputs: [],
 }];
 
+// Real, pre-existing gap this closes (confirmed reachable: App.jsx's own
+// resolveCurrency/currencyAddress resolves a same-chain Swap's
+// destination to the native placeholder when the user picks the
+// chain's native asset, which this file's own poolTokenOut resolution
+// already maps to wrappedNative for the SWAP itself — but until now
+// nothing ever unwrapped the router's resulting WETH balance back to
+// spendable native currency, so a sell into native currency silently
+// delivered WETH sitting in the wallet instead). Both are plain
+// PeripheryPayments/PeripheryPaymentsWithFeeExtended functions
+// SwapRouter02 also inherits (confirmed against the same real source as
+// sweepTokenWithFee above) — unwrapWETH9 for the no-fee case,
+// unwrapWETH9WithFee's 3-arg Extended overload (defaults recipient to
+// msg.sender, same convention as sweepTokenWithFee's own 4-arg
+// Extended overload above) when a fee is also being collected.
+const UNWRAP_WETH9_ABI = [{
+  type: "function",
+  name: "unwrapWETH9",
+  stateMutability: "payable",
+  inputs: [
+    { name: "amountMinimum", type: "uint256" },
+    { name: "recipient", type: "address" },
+  ],
+  outputs: [],
+}];
+
+const UNWRAP_WETH9_WITH_FEE_ABI = [{
+  type: "function",
+  name: "unwrapWETH9WithFee",
+  stateMutability: "payable",
+  inputs: [
+    { name: "amountMinimum", type: "uint256" },
+    { name: "feeBips", type: "uint256" },
+    { name: "feeRecipient", type: "address" },
+  ],
+  outputs: [],
+}];
+
 const ERC20_ALLOWANCE_ABI = [
   { type: "function", name: "allowance", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }], stateMutability: "view" },
   { type: "function", name: "approve", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }], stateMutability: "nonpayable" },
@@ -267,6 +304,11 @@ export async function executeUniswapV3Swap({ chainId, account, tokenIn, tokenOut
   const poolTokenIn = resolvedPoolAddress(chainId, tokenIn);
   const poolTokenOut = resolvedPoolAddress(chainId, tokenOut);
   const collectFeeInline = Number.isInteger(feeBips) && feeBips > 0 && feeBips <= 100 && Boolean(feeRecipient);
+  const tokenOutIsNative = isNative(tokenOut);
+  // A native-out sell needs the router to hold the resulting WETH so it
+  // can be unwrapped afterward — same reason a fee-collecting sell needs
+  // the router to hold the plain ERC-20 output before splitting it.
+  const needsMulticall = collectFeeInline || tokenOutIsNative;
 
   if (isNative(tokenIn)) {
     const wrapHash = await writeContract(config, {
@@ -301,29 +343,44 @@ export async function executeUniswapV3Swap({ chainId, account, tokenIn, tokenOut
     tokenIn: poolTokenIn,
     tokenOut: poolTokenOut,
     fee,
-    recipient: collectFeeInline ? ADDRESS_THIS : account,
+    recipient: needsMulticall ? ADDRESS_THIS : account,
     amountIn,
     amountOutMinimum: minAmountOut,
     sqrtPriceLimitX96: 0n,
   };
 
   let swapHash;
-  if (collectFeeInline) {
+  if (needsMulticall) {
     const swapCalldata = encodeFunctionData({ abi: SWAP_ROUTER_02_ABI, functionName: "exactInputSingle", args: [swapParams] });
-    // amountMinimum here is the same minAmountOut the swap itself
-    // already enforced — the router's post-swap balance can never be
-    // less than that, so this can never spuriously revert; it's
-    // defense-in-depth, not a new constraint.
-    const sweepCalldata = encodeFunctionData({
-      abi: SWEEP_TOKEN_WITH_FEE_ABI,
-      functionName: "sweepTokenWithFee",
-      args: [poolTokenOut, minAmountOut, BigInt(feeBips), feeRecipient],
-    });
+    // amountMinimum on every branch below is the same minAmountOut the
+    // swap itself already enforced — the router's post-swap balance can
+    // never be less than that, so none of these can spuriously revert;
+    // it's defense-in-depth, not a new constraint.
+    let secondCalldata;
+    if (tokenOutIsNative && collectFeeInline) {
+      secondCalldata = encodeFunctionData({
+        abi: UNWRAP_WETH9_WITH_FEE_ABI,
+        functionName: "unwrapWETH9WithFee",
+        args: [minAmountOut, BigInt(feeBips), feeRecipient],
+      });
+    } else if (tokenOutIsNative) {
+      secondCalldata = encodeFunctionData({
+        abi: UNWRAP_WETH9_ABI,
+        functionName: "unwrapWETH9",
+        args: [minAmountOut, account],
+      });
+    } else {
+      secondCalldata = encodeFunctionData({
+        abi: SWEEP_TOKEN_WITH_FEE_ABI,
+        functionName: "sweepTokenWithFee",
+        args: [poolTokenOut, minAmountOut, BigInt(feeBips), feeRecipient],
+      });
+    }
     swapHash = await writeContract(config, {
       address: addresses.swapRouter02,
       abi: MULTICALL_ABI,
       functionName: "multicall",
-      args: [[swapCalldata, sweepCalldata]],
+      args: [[swapCalldata, secondCalldata]],
       chainId,
     });
   } else {
