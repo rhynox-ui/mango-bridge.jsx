@@ -105,6 +105,7 @@ import { runArbDeposit, initiateArbWithdrawal, getArbWithdrawalStatus, finalizeA
 import { runWormholeTransfer, runWormholeTransferReverse, resumeWormholeTransfer } from "./wormholebridge.js";
 import { getRelayQuote, executeRelayQuote, canRelayHandle, currencyAddress, MAINNET_CHAIN_IDS, assetDecimalsForChain, unwrapWsolIfPresent } from "./relaybridge.js";
 import { tryFallbackProviders, checkFallbackRoute } from "./fallbackDex.js";
+import { fetchLiveTokenPriceUsd } from "./dexScreenerChart.js";
 import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
 import { fetchOkxSupportedChainIds, CONFIRMED_FALLBACK_ONLY_CHAIN_IDS } from "./fallbackChains.js";
@@ -2187,6 +2188,21 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             return false;
           }
         }
+        // Real gap fix: this app had no price-impact check on any route
+        // at all. Gated directly on Relay's own reported swapImpact/
+        // totalImpact (confirmed against @relayprotocol/relay-sdk's own
+        // api.d.ts, same field already used for display elsewhere in
+        // this app family) — no separate USD computation needed, so
+        // this works identically whether either side is a known ASSETS
+        // entry or a custom token: Relay always knows the real market
+        // it's routing through, even when this app's own price for that
+        // asset is unknown or a stale cosmetic estimate. Same 50%
+        // threshold as mango-pro's own already-shipped gate.
+        function execQuoteHasExtremeImpact(q) {
+          const percentRaw = q?.details?.swapImpact?.percent ?? q?.details?.totalImpact?.percent;
+          const percent = Number(percentRaw);
+          return Number.isFinite(percent) && Math.abs(percent) > 50;
+        }
         let quote;
         let fallbackResult = null;
         // Same skip as the preview effect above — see that call site's
@@ -2208,6 +2224,9 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
           if (execQuoteRoundsToZero(quote)) {
             throw new Error("Relay's route for this pair returns next to nothing at the current rate.");
           }
+          if (execQuoteHasExtremeImpact(quote)) {
+            throw new Error("This trade's price impact is far outside a normal range — refusing to sign. The pool may be too thin for this trade size.");
+          }
         } catch (firstErr) {
           if (from !== to) {
             // Bridge: no same-chain DEX fallback exists (a cross-chain
@@ -2223,6 +2242,9 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
               quote = await getRelayQuote({ ...quoteParams, feeBpsOverride: "0" });
               if (execQuoteRoundsToZero(quote)) {
                 throw new Error("Even the 0%-fee route for this pair returns next to nothing at the current rate.");
+              }
+              if (execQuoteHasExtremeImpact(quote)) {
+                throw new Error("This trade's price impact is far outside a normal range — refusing to sign. The pool may be too thin for this trade size.");
               }
             } catch {
               throw firstErr;
@@ -2254,6 +2276,9 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             if (execQuoteRoundsToZero(quote)) {
               throw new Error("Even the 0%-fee route for this pair returns next to nothing at the current rate.");
             }
+            if (execQuoteHasExtremeImpact(quote)) {
+              throw new Error("This trade's price impact is far outside a normal range — refusing to sign. The pool may be too thin for this trade size.");
+            }
           } catch {
             // Both Relay attempts failed — a genuine route gap, not a
             // fee-margin problem. Real second-source fallback
@@ -2264,6 +2289,42 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
             try {
               const sellTokenAddress = fromCustom ? fromCustom.address : resolveCurrency(from, asset);
               const buyTokenAddress = toCustom ? toCustom.address : resolveCurrency(to, toAsset);
+              // Real gap fix, quote-only preview: tryFallbackProviders
+              // below signs and broadcasts through the user's own
+              // connected wallet the instant it picks a winning route —
+              // MetaMask's own confirm popup shows raw calldata, never a
+              // human-readable price comparison, so this is the only
+              // point an extreme-impact fallback route can still be
+              // refused in terms the user (and this app) can reason
+              // about. Scoped to buying a custom token specifically
+              // (originAmountUsd already known from the priced side
+              // being sold; toCustom's own live price fetched fresh via
+              // DexScreener) — the common real case this fallback exists
+              // for (a thin/new token Relay hasn't indexed). Selling a
+              // custom token INTO a known asset isn't covered here yet —
+              // that needs the SOLD token's own live price, a separate
+              // fetch this pass doesn't add. A real, disclosed gap, not
+              // a guess dressed up as coverage.
+              if (toCustom && originAmountUsd > 0) {
+                const impactPreview = await checkFallbackRoute({
+                  chainId: resolveChainId(from),
+                  sellToken: sellTokenAddress,
+                  buyToken: buyTokenAddress,
+                  sellAmount: totalBaseUnits.toString(),
+                  takerAddress: account,
+                  originAmountUsd,
+                  buyDecimals: execToDecimals,
+                }).catch(() => null);
+                const tokenPriceUsd = impactPreview ? await fetchLiveTokenPriceUsd({ chainKey: to, tokenAddress: toCustom.address }) : null;
+                if (impactPreview && tokenPriceUsd) {
+                  const receivedAmount = Number(formatUnits(BigInt(impactPreview.buyAmount), execToDecimals));
+                  const actualUsdReceived = Number.isFinite(receivedAmount) && receivedAmount > 0 ? receivedAmount * tokenPriceUsd : null;
+                  const priceImpactPct = actualUsdReceived != null ? ((actualUsdReceived - originAmountUsd) / originAmountUsd) * 100 : null;
+                  if (priceImpactPct != null && Math.abs(priceImpactPct) > 50) {
+                    throw new Error("This trade's price impact is far outside a normal range — refusing to sign. The pool may be too thin for this trade size.");
+                  }
+                }
+              }
               fallbackResult = await tryFallbackProviders({
                 chainId: resolveChainId(from),
                 sellToken: sellTokenAddress,

@@ -104,6 +104,49 @@ export async function resolveDexScreenerPair({chainKey, tokenAddress}) {
   }
 }
 
+/**
+ * A token's real, live USD price — same deepest-real-pair-by-liquidity
+ * search as resolveDexScreenerPair above, but returning the price
+ * instead of a chart pointer. New, standalone function (not built on
+ * top of resolveDexScreenerPair) so this file's existing chart-pair
+ * resolution stays completely untouched — this is purely additive.
+ *
+ * Real gap this closes: App.jsx's own ASSETS list only ever has a
+ * price for its small set of built-in assets (and that price is
+ * itself a rough, cosmetic-only estimate — see ASSETS' own header); a
+ * custom/searched token's price is hardcoded to 0. That meant a
+ * price-impact safety check had no way to know what a custom token
+ * was actually worth. Never throws — null for every "no real price
+ * available" case (unmapped chain, network failure, an unindexed
+ * token), same fail-open contract as resolveDexScreenerPair.
+ */
+export async function fetchLiveTokenPriceUsd({chainKey, tokenAddress}) {
+  const chainId = dexScreenerChainForChain(chainKey);
+  if (!chainId || !tokenAddress) return null;
+  try {
+    const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(tokenAddress)}`);
+    if (!response.ok) return null;
+    const body = await response.json();
+    const pairs = Array.isArray(body?.pairs) ? body.pairs : [];
+    let bestPriceUsd = null;
+    let bestLiquidity = -1;
+    for (const pair of pairs) {
+      if (pair?.chainId !== chainId) continue;
+      const liquidity = Number(pair?.liquidity?.usd);
+      const ranked = Number.isFinite(liquidity) ? liquidity : 0;
+      const priceUsd = Number(pair?.priceUsd);
+      if (!Number.isFinite(priceUsd) || priceUsd <= 0) continue;
+      if (ranked > bestLiquidity) {
+        bestLiquidity = ranked;
+        bestPriceUsd = priceUsd;
+      }
+    }
+    return bestPriceUsd;
+  } catch {
+    return null;
+  }
+}
+
 // DexScreener's embed reads the timeframe off the `interval` query
 // param, in minutes, with day expressed as "1D". Keyed off this app's
 // own CANDLE_INTERVALS labels (geckoTerminal.js) so the same four
