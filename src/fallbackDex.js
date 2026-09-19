@@ -368,10 +368,20 @@ const UNISWAP_SLIPPAGE_BPS = 100n;
  * of them have failed — the caller's own catch already has the
  * ORIGINAL Relay error to show instead, since this whole path only
  * ever runs after that one failed first.
+ *
+ * slippageBps is optional — same basis-points shape/unit as Relay's own
+ * slippageTolerance (see relaybridge.js's getRelayQuote and App.jsx's
+ * own Trade Settings picker). Real gap this closes: the Swap tab's
+ * slippage picker already threads slippageBps into every Relay quote,
+ * but this fallback path (taken when Relay has no route at all) always
+ * fell back to the hardcoded 1% below regardless of what the user
+ * picked. Falls back to UNISWAP_SLIPPAGE_BPS when omitted (Auto),
+ * unchanged from before.
  */
-export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, onSwapHashKnown, buyDecimals }) {
+export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, onSwapHashKnown, buyDecimals, slippageBps }) {
   const { entries, failures } = await quoteAllProviders({ chainId, sellToken, buyToken, sellAmount, takerAddress, originAmountUsd, buyDecimals });
   const sellAmountBig = BigInt(sellAmount);
+  const slippageBpsToUse = slippageBps ? BigInt(slippageBps) : UNISWAP_SLIPPAGE_BPS;
 
   // Real bug fix, live-reported: uniswap-v4/uniswap-v3/sushiswap-v2/
   // pancakeswap-v3 each require their own on-chain approval before the
@@ -400,7 +410,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
     if (entry.kind === "onchain" && noKeyDexApprovalSpent) continue;
     try {
       if (entry.provider === "uniswap-v4") {
-        const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        const minAmountOut = entry.buyAmount - (entry.buyAmount * slippageBpsToUse) / 10000n;
         noKeyDexApprovalSpent = true;
         const result = await executeUniswapV4Swap({
           chainId,
@@ -419,7 +429,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         return { provider: entry.provider, hash: result.hash, buyAmount: netBuyAmount.toString(), feeCollectedInline: result.feeCollectedInline };
       }
       if (entry.provider === "uniswap-v3") {
-        const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        const minAmountOut = entry.buyAmount - (entry.buyAmount * slippageBpsToUse) / 10000n;
         noKeyDexApprovalSpent = true;
         const result = await executeUniswapV3Swap({
           chainId,
@@ -437,7 +447,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         return { provider: entry.provider, hash: result.hash, buyAmount: netBuyAmount.toString(), feeCollectedInline: result.feeCollectedInline };
       }
       if (entry.provider === "sushiswap-v2") {
-        const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        const minAmountOut = entry.buyAmount - (entry.buyAmount * slippageBpsToUse) / 10000n;
         noKeyDexApprovalSpent = true;
         const result = await executeSushiSwapV2Swap({
           chainId,
@@ -457,7 +467,7 @@ export async function tryFallbackProviders({ chainId, sellToken, buyToken, sellA
         return { provider: entry.provider, hash: result.hash, buyAmount: entry.buyAmount.toString(), feeCollectedInline: false };
       }
       if (entry.provider === "pancakeswap-v3") {
-        const minAmountOut = entry.buyAmount - (entry.buyAmount * UNISWAP_SLIPPAGE_BPS) / 10000n;
+        const minAmountOut = entry.buyAmount - (entry.buyAmount * slippageBpsToUse) / 10000n;
         noKeyDexApprovalSpent = true;
         const result = await executePancakeSwapV3Swap({
           chainId,

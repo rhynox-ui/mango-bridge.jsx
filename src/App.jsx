@@ -2279,6 +2279,10 @@ function BridgeModal({ from, to, amount, asset, toAsset, fromCustom, toCustom, f
                 // during that wait left no record it had broadcast.
                 onSwapHashKnown: setRealBurnHash,
                 buyDecimals: execToDecimals,
+                // Real gap fix: without this, a Relay failure silently
+                // widened the user's own Trade Settings slippage back
+                // to fallbackDex.js's hardcoded 1% default.
+                slippageBps: slippageTolerance,
               });
             } catch (err) {
               fallbackErr = err;
