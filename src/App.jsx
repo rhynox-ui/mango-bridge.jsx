@@ -69,6 +69,7 @@ import {
   Menu,
   Mail,
   Download,
+  Chrome,
   Search,
   Settings,
 } from "lucide-react";
@@ -747,6 +748,28 @@ function DownloadApkRow({ P }) {
     >
       <Download size={14} color={P.textSecondary} />
       Download Mango APK
+    </a>
+  );
+}
+
+// Direct link to the browser-extension wallet's Chrome Web Store listing.
+// Points at the plain /detail/<id> form (not the /preview URL a
+// not-yet-published listing shows in the developer dashboard) — that's
+// the permanent, public install page every user's browser resolves the
+// same way regardless of the listing's current review state.
+const CHROME_EXTENSION_URL = "https://chromewebstore.google.com/detail/nphpjgifdodfhachompmknpdjnhomkcc";
+
+function DownloadExtensionRow({ P }) {
+  return (
+    <a
+      href={CHROME_EXTENSION_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-2 mt-3 px-4 py-2.5 rounded-full text-[12.5px] font-semibold w-fit"
+      style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
+    >
+      <Chrome size={14} color={P.textSecondary} />
+      Add to Chrome
     </a>
   );
 }
@@ -5707,7 +5730,10 @@ export default function MangoBridge() {
               </div>{/* /desktop grid */}
             </>
           )}
-          <DownloadApkRow P={P} />
+          <div className="flex flex-wrap items-center gap-2">
+            <DownloadApkRow P={P} />
+            <DownloadExtensionRow P={P} />
+          </div>
           <SocialLinksRow P={P} />
         </div>
       </div>
