@@ -739,16 +739,21 @@ function SocialLinksRow({ P }) {
 // serves instead of a file Vite bundles. The `download` attribute names
 // the saved file explicitly so a browser doesn't just save it with
 // whatever name the URL ends in.
-function DownloadApkRow({ P }) {
+// Google Play listing for Mango Pro. The app is now distributed through
+// Google Play rather than the site's direct APK download.
+const MANGO_PRO_PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.mangoprotocol.pro";
+
+function DownloadPlayStoreRow({ P }) {
   return (
     <a
-      href="/api/download/mango-pro.apk"
-      download="mango-pro.apk"
+      href={MANGO_PRO_PLAY_STORE_URL}
+      target="_blank"
+      rel="noopener noreferrer"
       className="flex items-center gap-2 mt-3 px-4 py-2.5 rounded-full text-[12.5px] font-semibold w-fit"
       style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
     >
-      <Download size={14} color={P.textSecondary} />
-      Download Mango APK
+      <ExternalLink size={14} color={P.textSecondary} />
+      Get it on Google Play
     </a>
   );
 }
@@ -5796,7 +5801,7 @@ export default function MangoBridge() {
             </>
           )}
           <div className="flex flex-wrap items-center gap-2">
-            <DownloadApkRow P={P} />
+            <DownloadPlayStoreRow P={P} />
             <DownloadExtensionRow P={P} />
           </div>
           <SocialLinksRow P={P} />
