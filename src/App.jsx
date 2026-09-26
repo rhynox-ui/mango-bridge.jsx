@@ -69,7 +69,6 @@ import {
   Menu,
   Mail,
   Download,
-  Chrome,
   Search,
   Settings,
 } from "lucide-react";
@@ -743,6 +742,37 @@ function SocialLinksRow({ P }) {
 // Google Play rather than the site's direct APK download.
 const MANGO_PRO_PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.mangoprotocol.pro";
 
+// Real, official brand marks — plain colored SVG paths (from Google's own
+// published assets, the same source Iconify's widely-used "logos" set
+// packages as @iconify-json/logos), not lucide's monochrome outline
+// icons. lucide has no Google Play glyph at all (ExternalLink was
+// standing in for it) and its own Chrome icon renders as a flat single-
+// color ring — neither reads as the real, recognizable mark these
+// buttons link out to. Sized to the same 14px slot the old icons used,
+// so the button's own height/padding is unchanged.
+function GooglePlayGlyph({ size = 14 }) {
+  const width = size * (256 / 283);
+  return (
+    <svg width={width} height={size} viewBox="0 0 256 283" aria-hidden="true">
+      <path fill="#EA4335" d="M119.553 134.916L1.06 259.061a32.14 32.14 0 0 0 47.062 19.071l133.327-75.934z" />
+      <path fill="#FBBC04" d="M239.37 113.814L181.715 80.79l-64.898 56.95l65.162 64.28l57.216-32.67a31.345 31.345 0 0 0 0-55.537z" />
+      <path fill="#4285F4" d="M1.06 23.487A30.6 30.6 0 0 0 0 31.61v219.327a32.3 32.3 0 0 0 1.06 8.124l122.555-120.966z" />
+      <path fill="#34A853" d="m120.436 141.274l61.278-60.483L48.564 4.503A32.85 32.85 0 0 0 32.051 0C17.644-.028 4.978 9.534 1.06 23.399z" />
+    </svg>
+  );
+}
+function ChromeGlyph({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 256 256" aria-hidden="true">
+      <path fill="#fff" d="M128.003 199.216c39.335 0 71.221-31.888 71.221-71.223S167.338 56.77 128.003 56.77S56.78 88.658 56.78 127.993s31.887 71.223 71.222 71.223" />
+      <path fill="#229342" d="M35.89 92.997Q27.92 79.192 17.154 64.02a127.98 127.98 0 0 0 110.857 191.981q17.671-24.785 23.996-35.74q12.148-21.042 31.423-60.251v-.015a63.993 63.993 0 0 1-110.857.017Q46.395 111.19 35.89 92.998" />
+      <path fill="#FBC116" d="M128.008 255.996A127.97 127.97 0 0 0 256 127.997A128 128 0 0 0 238.837 64q-36.372-3.585-53.686-3.585q-19.632 0-57.152 3.585l-.014.01a63.99 63.99 0 0 1 55.444 31.987a63.99 63.99 0 0 1-.001 64.01z" />
+      <path fill="#1A73E8" d="M128.003 178.677c27.984 0 50.669-22.685 50.669-50.67s-22.685-50.67-50.67-50.67c-27.983 0-50.669 22.686-50.669 50.67s22.686 50.67 50.67 50.67" />
+      <path fill="#E33B2E" d="M128.003 64.004H238.84a127.973 127.973 0 0 0-221.685.015l55.419 95.99l.015.008a63.993 63.993 0 0 1 55.415-96.014z" />
+    </svg>
+  );
+}
+
 function DownloadPlayStoreRow({ P }) {
   return (
     <a
@@ -752,7 +782,7 @@ function DownloadPlayStoreRow({ P }) {
       className="flex items-center gap-2 mt-3 px-4 py-2.5 rounded-full text-[12.5px] font-semibold w-fit"
       style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
     >
-      <ExternalLink size={14} color={P.textSecondary} />
+      <GooglePlayGlyph size={14} />
       Get it on Google Play
     </a>
   );
@@ -774,7 +804,7 @@ function DownloadExtensionRow({ P }) {
       className="flex items-center gap-2 mt-3 px-4 py-2.5 rounded-full text-[12.5px] font-semibold w-fit"
       style={{ background: P.panel, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}
     >
-      <Chrome size={14} color={P.textSecondary} />
+      <ChromeGlyph size={14} />
       Add to Chrome
     </a>
   );
