@@ -182,7 +182,7 @@ function NearChart({ P, tokenId }) {
   );
 }
 
-export default function NearSwapPanel({ P, slippageBps }) {
+export default function NearSwapPanel({ P, slippageBps, presetToken }) {
   const wallet = useNearWallet();
   const accountId = wallet.account?.accountId;
   const slippage = Number.isFinite(Number(slippageBps)) && slippageBps !== null ? Number(slippageBps) : 100;
@@ -220,6 +220,29 @@ export default function NearSwapPanel({ P, slippageBps }) {
     }
     return m;
   }
+
+  // A token pasted into Swap's Search (App.jsx): buy it with NEAR.
+  const [presetError, setPresetError] = useState(null);
+  useEffect(() => {
+    if (!presetToken?.id) return;
+    let cancelled = false;
+    setPresetError(null);
+    addToken(presetToken.id)
+      .then((m) => {
+        if (cancelled) return;
+        setPayToken(NATIVE_NEAR);
+        setReceiveToken(m.id);
+        setAmount("");
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        const msg = e?.message || "";
+        setPresetError(/fetch|network|timeout/i.test(msg) ? `Couldn't reach NEAR to load ${presetToken.id} — try again in a moment.` : `${presetToken.id}: ${msg || "not a token on NEAR."}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [presetToken?.n]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Balances of the two selected tokens.
   useEffect(() => {
@@ -385,6 +408,7 @@ export default function NearSwapPanel({ P, slippageBps }) {
   return (
     <div className="flex flex-col gap-3">
       <NearChart P={P} tokenId={chartToken} />
+      {presetError && <div className="text-[11.5px] -mt-1" style={{ color: "#D92D20" }}>{presetError}</div>}
 
       {/* No wallet card here: on Swap the header's Connect button is the
           one place to connect (NEAR wallets only when swapping on NEAR),
