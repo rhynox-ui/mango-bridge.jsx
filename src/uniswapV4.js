@@ -38,6 +38,8 @@ export const UNIVERSAL_ROUTER_ADDRESSES = {
   56: "0x8B844f885672f333Bc0042cB669255f93a4C1E6b",
   43114: "0x8B844f885672f333Bc0042cB669255f93a4C1E6b",
   4663: "0x8876789976decbfcbbbe364623c63652db8c0904",
+  // Arc — V2.1.1, from @uniswap/universal-router-sdk 5.14.0 (chain 5042).
+  5042: "0x4fca4a51ab4f23a7447b3284fbd7d73289a89fb1",
 };
 
 // Canonical Permit2 contract — same address on every EVM chain
