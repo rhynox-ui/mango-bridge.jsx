@@ -21,6 +21,7 @@ import { nearView, nearAvailableBalance } from "./nearRpc.js";
 import { useNearWallet } from "./nearWallet.js";
 import { resolveDexScreenerPair, dexScreenerEmbedUrl } from "./dexScreenerChart.js";
 import { fetchIntearRoutes, pickSafeRoute, feeTransaction } from "./intearRouter.js";
+import { classifySwapOutcomes } from "./nearOutcome.js";
 import {
   NATIVE_NEAR,
   NEAR_GAS_RESERVE,
@@ -304,7 +305,7 @@ export default function NearSwapPanel({ P, slippageBps }) {
           : quote.status === "loading"
             ? "Getting a price…"
             : quote.status === "none"
-              ? "No pool for this pair on Rhea"
+              ? "No route for this pair on any NEAR DEX"
               : quote.status === "error"
                 ? "Couldn't get a price — try again"
                 : quote.status !== "ok"
@@ -327,7 +328,7 @@ export default function NearSwapPanel({ P, slippageBps }) {
         const storageCost =
           picked.txs.flatMap((t) => t.actions).filter((a) => a.params?.methodName === "storage_deposit").reduce((sum, a) => sum + BigInt(a.params.deposit), 0n) +
           (feeRegistration?.needed ? feeRegistration.deposit : 0n);
-        setConfirm({ status: "ready", txs, label: picked.label, amountOut: picked.amountOut, minOut: picked.minOut, storageCost, fee, impact: null });
+        setConfirm({ status: "ready", txs, feeIndex: feeTx ? txs.length - 1 : null, label: picked.label, amountOut: picked.amountOut, minOut: picked.minOut, storageCost, fee, impact: null });
       } catch (e) {
         setConfirm({ status: "error", error: e?.message || "Couldn't prepare this swap." });
       }
@@ -342,7 +343,7 @@ export default function NearSwapPanel({ P, slippageBps }) {
       if (q.amountOut <= 0n) throw new Error("This route no longer returns anything.");
       const minOut = minOutFor(q.amountOut, slippage);
       const [userOnOut, userOnWrapIn, feeOnIn] = await Promise.all([
-        registrationNeed(nearView, routingId(receiveToken), accountId),
+        receiveToken === NATIVE_NEAR ? Promise.resolve({ needed: false, deposit: 0n }) : registrationNeed(nearView, routingId(receiveToken), accountId),
         payToken === NATIVE_NEAR ? registrationNeed(nearView, WRAP_NEAR, accountId) : Promise.resolve({ needed: false, deposit: 0n }),
         registrationNeed(nearView, routingId(payToken), NEAR_SWAP_FEE_ACCOUNT),
       ]);
@@ -359,10 +360,15 @@ export default function NearSwapPanel({ P, slippageBps }) {
     setConfirm({ ...c, status: "signing" });
     try {
       const outcomes = await wallet.signAndSendTransactions(c.txs);
-      const list = Array.isArray(outcomes) ? outcomes : [outcomes];
-      const failed = list.find((o) => o?.status && typeof o.status === "object" && "Failure" in o.status);
-      const hashes = list.map((o) => o?.transaction?.hash || o?.transaction_outcome?.id).filter(Boolean);
-      setResult({ ok: !failed, hashes, text: failed ? "The swap transaction failed. Any tokens it didn't use were returned." : `Swapped ${fmtAmount(amountRaw, payMeta.decimals)} ${payMeta.symbol} for at least ${fmtAmount(c.minOut, receiveMeta.decimals)} ${receiveMeta.symbol}.` });
+      const { status, hashes } = classifySwapOutcomes(c.txs, outcomes, { skip: c.feeIndex == null ? [] : [c.feeIndex] });
+      const text = {
+        ok: `Swapped ${fmtAmount(amountRaw, payMeta.decimals)} ${payMeta.symbol} for at least ${fmtAmount(c.minOut, receiveMeta.decimals)} ${receiveMeta.symbol}.`,
+        partial: `Part of your swap went through; the exchange returned the ${payMeta.symbol} it didn't use.`,
+        refunded: `The price moved past your slippage limit, so the exchange cancelled the swap and returned your ${payMeta.symbol}. Network gas and Mango's 0.5% fee aren't refunded.`,
+        failed: "The swap transaction failed. Any tokens it didn't use were returned.",
+        unknown: "Sent. Your wallet didn't report the result — check your balance or the transaction on NearBlocks.",
+      }[status];
+      setResult({ ok: status === "ok" || status === "partial", neutral: status === "unknown", hashes, text });
       setConfirm(null);
       setAmount("");
       setTimeout(() => setBalanceTick((n) => n + 1), 2500);
@@ -468,7 +474,7 @@ export default function NearSwapPanel({ P, slippageBps }) {
       )}
 
       {result && (
-        <div className="rounded-xl px-3.5 py-3 text-[12px] flex flex-col gap-1" style={{ ...box, borderColor: result.ok ? "#00D67D" : "#D92D20" }}>
+        <div className="rounded-xl px-3.5 py-3 text-[12px] flex flex-col gap-1" style={{ ...box, borderColor: result.ok ? "#00D67D" : result.neutral ? P.panelBorder : "#D92D20" }}>
           <div style={{ color: P.textPrimary }}>{result.text}</div>
           {result.hashes.map((h) => (
             <a key={h} href={`https://nearblocks.io/txns/${h}`} target="_blank" rel="noopener noreferrer" style={{ color: P.ctaBg }}>View {short(h)} on NearBlocks</a>

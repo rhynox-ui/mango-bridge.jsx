@@ -181,11 +181,14 @@ await check("NEAR → token: wrap (plus storage if new) in the same transaction,
   assert(swap.methodName === "ft_transfer_call" && BigInt(swap.args.amount) === amountIn - amountIn / 200n);
 });
 
-await check("token → NEAR: unwraps exactly the guaranteed minimum afterwards", () => {
+await check("token → NEAR: the exchange unwraps the whole output (no leftover wNEAR, no wNEAR registration)", () => {
   const route = [{ pool: pools.find((p) => p.id === 2), tokenIn: MEME, tokenOut: WRAP_NEAR }];
-  const txs = buildSwapTransactions({ accountId: "alice.near", payToken: MEME, receiveToken: NATIVE_NEAR, amountIn: 1000n * E18, route, minOut: 777n, userOnOut: { needed: false }, feeOnIn: { needed: false } });
-  const last = txs[txs.length - 1];
-  assert(last.receiverId === WRAP_NEAR && last.actions[0].params.methodName === "near_withdraw" && last.actions[0].params.args.amount === "777");
+  const txs = buildSwapTransactions({ accountId: "alice.near", payToken: MEME, receiveToken: NATIVE_NEAR, amountIn: 1000n * E18, route, minOut: 777n, userOnOut: { needed: true, deposit: 1n }, feeOnIn: { needed: false } });
+  assert(txs.length === 1 && txs[0].receiverId === MEME, "expected one transaction on the input token");
+  const swap = txs[0].actions[txs[0].actions.length - 1].params;
+  const msg = JSON.parse(swap.args.msg);
+  assert(msg.skip_unwrap_near === false && msg.actions[0].min_amount_out === "777", swap.args.msg);
+  assert(!txs.flatMap((t) => t.actions).some((a) => a.params.methodName === "near_withdraw"));
 });
 
 await check("only the tokens, the exchange and wrap.near are ever transaction receivers", () => {
