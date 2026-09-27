@@ -61,6 +61,9 @@ const DEXSCREENER_CHAIN_IDS = {
   plasma: 'plasma',
   unichain: 'unichain',
   xlayer: 'xlayer',
+  // NEAR tokens (Rhea/Ref pools), used by the Swap tab's NEAR panel. A
+  // wrong slug only ever shows "not indexed" — see this file's header.
+  near: 'near',
 };
 
 export function dexScreenerChainForChain(chainKey) {
