@@ -4655,6 +4655,8 @@ export default function MangoBridge() {
   // keeps opening only from its own inline click, same as it always
   // has, and never again from anything external.
   const [topSearchSignal, setTopSearchSignal] = useState(0);
+  // Same Search button on Swap on NEAR: opens the NEAR token search.
+  const [nearSearchSignal, setNearSearchSignal] = useState(0);
 
   // Real bug fix: from/to default independently ("base"/"ethereum") and
   // only get forced equal when the user actually touches the chain
@@ -5479,16 +5481,16 @@ export default function MangoBridge() {
                         token" concept in same-chain Swap), but opening
                         one can never open, close, or otherwise touch the
                         other's state. */}
-                    {!nearSwapOn && (
                     <div className="relative shrink-0">
                       <button
-                        onClick={() => setTopSearchSignal((n) => n + 1)}
+                        onClick={() => (nearSwapOn ? setNearSearchSignal((n) => n + 1) : setTopSearchSignal((n) => n + 1))}
                         className="flex items-center gap-1 h-[26px] rounded-[13px] px-2.5"
                         style={{ background: P.pillBg }}
                       >
                         <Search size={12} color={P.textSecondary} />
                         <span className="text-[11px] font-semibold" style={{ color: P.textSecondary }}>Search</span>
                       </button>
+                      {!nearSwapOn && (
                       <AssetDropdown
                         hideTrigger
                         openSignal={topSearchSignal}
@@ -5502,8 +5504,8 @@ export default function MangoBridge() {
                         allowCustomToken
                         discoveredLogos={discoveredAssetLogos}
                       />
+                      )}
                     </div>
-                    )}
                     <button
                       onClick={() => setSettingsOpen(true)}
                       className="w-[26px] h-[26px] rounded-[13px] flex items-center justify-center shrink-0"
@@ -5541,7 +5543,7 @@ export default function MangoBridge() {
                   way a two-column grid silently starts overflowing. */}
               <div className="min-w-0">
               {nearSwapOn ? (
-                <NearSwapPanel P={P} slippageBps={slippageBps} presetToken={nearSwapPreset} />
+                <NearSwapPanel P={P} slippageBps={slippageBps} presetToken={nearSwapPreset} searchSignal={nearSearchSignal} TokenIcon={NearTokenIcon} />
               ) : nearSendOn ? (
                 <NearSendPanel
                   P={P}
