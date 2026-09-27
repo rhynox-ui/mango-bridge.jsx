@@ -1,3 +1,4 @@
+import "./previewApiOrigin.js";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { WagmiProvider } from "wagmi";
