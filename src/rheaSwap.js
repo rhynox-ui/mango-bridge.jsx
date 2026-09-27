@@ -13,7 +13,9 @@
 // min_amount_out "0", the last hop the slippage-protected minimum), the
 // output token must be storage-registered for the user first, NEAR in is
 // wrapped with near_deposit (plus the storage minimum if unregistered),
-// NEAR out is unwrapped with near_withdraw of the minimum.
+// NEAR out is unwrapped by the exchange itself (skip_unwrap_near: false,
+// ref-exchange v1.9.0+), so the whole output arrives as NEAR — no
+// separate unwrap step, no leftover wNEAR, no wNEAR registration.
 //
 // Quotes: SIMPLE_POOL outputs are computed locally with the exchange's
 // exact integer formula; stable/rated pools use the exchange's own
@@ -246,7 +248,7 @@ export function buildSwapTransactions({ accountId, payToken, receiveToken, amoun
   }));
 
   const txs = [];
-  if (userOnOut?.needed) {
+  if (userOnOut?.needed && receiveToken !== NATIVE_NEAR) {
     txs.push({ receiverId: tokenOut, actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30, userOnOut.deposit)] });
   }
 
@@ -258,11 +260,7 @@ export function buildSwapTransactions({ accountId, payToken, receiveToken, amoun
     if (feeOnIn?.needed) main.push(call("storage_deposit", { account_id: feeAccount, registration_only: true }, 10, feeOnIn.deposit));
     main.push(call("ft_transfer", { receiver_id: feeAccount, amount: fee.toString(), memo: "Mango swap fee" }, 10, ONE_YOCTO));
   }
-  main.push(call("ft_transfer_call", { receiver_id: REF_EXCHANGE, amount: swapAmount.toString(), msg: JSON.stringify({ force: 0, actions }) }, 250, ONE_YOCTO));
+  main.push(call("ft_transfer_call", { receiver_id: REF_EXCHANGE, amount: swapAmount.toString(), msg: JSON.stringify({ force: 0, actions, ...(receiveToken === NATIVE_NEAR ? { skip_unwrap_near: false } : {}) }) }, 250, ONE_YOCTO));
   txs.push({ receiverId: tokenIn, actions: main });
-
-  if (receiveToken === NATIVE_NEAR) {
-    txs.push({ receiverId: WRAP_NEAR, actions: [call("near_withdraw", { amount: minOut.toString() }, 10, ONE_YOCTO)] });
-  }
   return txs;
 }

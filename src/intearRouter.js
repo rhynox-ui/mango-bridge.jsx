@@ -10,13 +10,22 @@
 //
 // Because the transactions come from a third-party API, none of them is
 // signed until assertIntearRouteSafe() has checked it against what the
-// aggregator's own source code can ever produce:
+// aggregator's own source code can ever produce for a plain token-in /
+// token-out request (src/providers/*.rs, src/shared_utils.rs):
 //   - receivers: only those venues' contracts, wrap.near, or the two
-//     tokens being swapped (plus *.aidols.near tokens on Aidols routes);
+//     tokens being swapped (plus *.aidols.near tokens on Aidols routes),
+//     and each method only on the contract that owns it;
 //   - methods: only the ones those venues use — no ft_transfer to a
 //     stranger, no plain Transfer, no key / account / contract actions;
-//   - every ft_transfer_call goes to a known venue, and together they
-//     never move more of the input token than the user entered;
+//   - ft_transfer_call only on the input token, only to a known venue,
+//     and together with unstake / liquid_unstake never moving more of
+//     the input token than the user entered;
+//   - the swap instructions inside each call (the venue's msg /
+//     operations) are read field by field: any field a venue could use to
+//     send the output elsewhere (a recipient, Intear DEX's TransferAsset
+//     or Withdraw-to-someone-else, Rhea's client_echo) is refused, and
+//     the minimums the venue will enforce on-chain must add up to at
+//     least the "minimum received" shown to the user;
 //   - attached NEAR never exceeds the NEAR being swapped plus a small
 //     storage allowance; storage_deposit only ever registers the user.
 // A route that fails any of this is skipped, and the NEAR swap panel
@@ -38,35 +47,35 @@ export const DEX_LABEL = {
   Wrap: "Wrap",
 };
 
+const RHEA = "v2.ref-finance.near";
+const RHEA_DCL = "dclv2.ref-labs.near";
+const INTEAR_DEX = "dex.intear.near";
+const AIDOLS = "aidols.near";
+const METAPOOL = "meta-pool.near";
+const LINEAR = "linear-protocol.near";
+const XRHEA = "xtoken.rhealab.near";
+const RNEAR = "lst.rhealab.near";
+
 // Every contract the aggregator's providers send transactions to or
 // transfer tokens into (src/providers/*.rs).
-export const VENUE_CONTRACTS = new Set([
-  "v2.ref-finance.near",
-  "dclv2.ref-labs.near",
-  "dex.intear.near",
-  "aidols.near",
-  "meta-pool.near",
-  "linear-protocol.near",
-  "xtoken.rhealab.near",
-  "lst.rhealab.near",
-  WRAP_NEAR,
-]);
+export const VENUE_CONTRACTS = new Set([RHEA, RHEA_DCL, INTEAR_DEX, AIDOLS, METAPOOL, LINEAR, XRHEA, RNEAR, WRAP_NEAR]);
 
-const ALLOWED_METHODS = new Set([
-  "ft_transfer_call",
-  "storage_deposit",
-  "near_deposit",
-  "near_withdraw",
-  "deposit_and_stake",
-  "deposit_near",
-  "execute_operations",
-  "liquid_unstake",
-  "register_assets",
-  "register_tokens",
-  "swap",
-  "unstake",
-  "withdraw",
-]);
+// Method → the only contracts it may be called on. ft_transfer_call and
+// storage_deposit are checked separately (they live on token contracts).
+// Not here on purpose: Rhea's `swap` / `withdraw` and Intear DEX's
+// `execute_operations` / `withdraw` — the aggregator only emits those for
+// balances already held inside a DEX, which this app never asks for, and
+// they could spend such balances.
+const METHOD_RECEIVERS = {
+  near_deposit: [WRAP_NEAR],
+  near_withdraw: [WRAP_NEAR],
+  deposit_and_stake: [METAPOOL, LINEAR, RNEAR],
+  deposit_near: [INTEAR_DEX],
+  register_assets: [INTEAR_DEX],
+  register_tokens: [RHEA_DCL],
+  liquid_unstake: [METAPOOL],
+  unstake: [XRHEA],
+};
 
 // Storage registrations across a route (output token, DEX accounts) —
 // far above what they really cost, far below anything worth stealing.
@@ -147,39 +156,166 @@ function isAidolsToken(id) {
   return typeof id === "string" && id.endsWith(".aidols.near");
 }
 
+function onlyKeys(obj, allowed, what) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) fail(`Unreadable ${what}.`);
+  for (const k of Object.keys(obj)) if (!allowed.includes(k)) fail(`The route's ${what} has an unexpected field (${k}).`);
+  return obj;
+}
+
+function parseMsg(msg, what) {
+  if (typeof msg !== "string") fail(`Unreadable ${what}.`);
+  try {
+    return JSON.parse(msg);
+  } catch {
+    fail(`Unreadable ${what}.`);
+  }
+}
+
+function isSelfOrUnset(value, accountId) {
+  return value === undefined || value === null || value === accountId;
+}
+
+// Intear DEX (Plach) operations — serde's externally tagged enum from
+// src/providers/intear_plach.rs. Only swaps, withdrawals back to the
+// user, and asset registration; returns the output minimum it enforces.
+function inspectIntearOperations(operations, { accountId, outAssets }) {
+  if (!Array.isArray(operations) || operations.length === 0) fail("Unreadable Intear DEX operations.");
+  let min = 0n;
+  for (const op of operations) {
+    const kind = op && typeof op === "object" ? Object.keys(op) : [];
+    if (kind.length !== 1) fail("Unreadable Intear DEX operation.");
+    const body = op[kind[0]];
+    if (kind[0] === "SwapSimple") {
+      onlyKeys(body, ["dex_id", "message", "asset_in", "asset_out", "amount", "constraint"], "Intear DEX swap");
+      const a = body.amount;
+      const exactIn = a && typeof a === "object" && a.Amount && typeof a.Amount === "object" && Object.keys(a.Amount).length === 1 && "ExactIn" in a.Amount;
+      if (a !== "OutputOfLastIn" && !exactIn) fail("The route swaps an amount it shouldn't.");
+    } else if (kind[0] === "Withdraw") {
+      onlyKeys(body, ["asset_id", "amount", "to", "rescue_address"], "Intear DEX withdrawal");
+      if (!isSelfOrUnset(body.to, accountId) || !isSelfOrUnset(body.rescue_address, accountId)) fail("The route withdraws to someone else.");
+      if (outAssets.includes(body.asset_id)) {
+        const amt = body.amount;
+        if (amt && typeof amt === "object" && amt.Full && typeof amt.Full === "object") min += amt.Full.at_least == null ? 0n : toBig(amt.Full.at_least, "minimum");
+        else if (amt && typeof amt === "object" && "Exact" in amt) min += toBig(amt.Exact, "minimum");
+      }
+    } else if (kind[0] === "RegisterAssets") {
+      onlyKeys(body, ["asset_ids", "for"], "Intear DEX registration");
+      if (body.for !== undefined && body.for !== null) fail("The route registers assets for someone else.");
+    } else {
+      fail(`The route uses an unexpected Intear DEX operation (${kind[0]}).`);
+    }
+  }
+  return min;
+}
+
+/**
+ * The swap instructions inside one ft_transfer_call, by venue. Returns
+ * the output minimum that venue will enforce (0n for staking venues,
+ * which have a fixed rate).
+ */
+function inspectVenueMsg(venue, msg, { accountId, tokenOut, routingOut, outAssets }) {
+  if (venue === RHEA) {
+    const m = onlyKeys(parseMsg(msg, "Rhea swap"), ["force", "actions", "skip_degen_price_sync", "skip_unwrap_near", "referral_id"], "Rhea swap");
+    if (m.force !== undefined && m.force !== 0) fail("Unexpected Rhea swap mode.");
+    if (m.skip_unwrap_near === false && tokenOut !== NATIVE_NEAR) fail("The route unwraps NEAR unexpectedly.");
+    if (!Array.isArray(m.actions) || m.actions.length === 0) fail("The Rhea swap has no steps.");
+    let min = 0n;
+    for (const a of m.actions) {
+      onlyKeys(a, ["pool_id", "token_in", "token_out", "amount_in", "min_amount_out"], "Rhea swap step");
+      if (a.token_out === routingOut) min += toBig(a.min_amount_out, "minimum");
+    }
+    return { min, isSwap: true };
+  }
+  if (venue === RHEA_DCL) {
+    const m = onlyKeys(parseMsg(msg, "Rhea DCL swap"), ["Swap"], "Rhea DCL swap");
+    const s = onlyKeys(m.Swap, ["pool_ids", "output_token", "min_output_amount", "skip_unwrap_near"], "Rhea DCL swap");
+    if (s.skip_unwrap_near === false && tokenOut !== NATIVE_NEAR) fail("The route unwraps NEAR unexpectedly.");
+    return { min: s.output_token === routingOut ? toBig(s.min_output_amount, "minimum") : 0n, isSwap: true };
+  }
+  if (venue === INTEAR_DEX) {
+    const m = onlyKeys(parseMsg(msg, "Intear DEX swap"), ["operations", "referrer"], "Intear DEX swap");
+    return { min: inspectIntearOperations(m.operations, { accountId, outAssets }), isSwap: true };
+  }
+  if (venue === AIDOLS) {
+    const m = onlyKeys(parseMsg(msg, "Aidols swap"), ["token", "min_swap_amount", "referral"], "Aidols swap");
+    return { min: toBig(m.min_swap_amount, "minimum"), isSwap: true };
+  }
+  if (venue === XRHEA) {
+    const m = onlyKeys(parseMsg(msg, "xRHEA stake"), ["Stake"], "xRHEA stake");
+    onlyKeys(m.Stake, [], "xRHEA stake");
+    return { min: 0n, isSwap: false };
+  }
+  fail(`The route sends tokens to ${venue} with an unexpected message.`);
+}
+
 /**
  * Checks converted transactions against what this swap may do.
  * `tokenIn` / `tokenOut` are UI ids (NATIVE_NEAR or a NEP-141 contract).
  */
-export function assertIntearRouteSafe(txs, { accountId, tokenIn, tokenOut, amountIn }) {
+export function assertIntearRouteSafe(txs, { accountId, tokenIn, tokenOut, amountIn, minOut }) {
   const routingIn = tokenIn === NATIVE_NEAR ? WRAP_NEAR : tokenIn;
   const routingOut = tokenOut === NATIVE_NEAR ? WRAP_NEAR : tokenOut;
+  // How the output token is named inside Intear DEX operations.
+  const outAssets = tokenOut === NATIVE_NEAR ? ["near", `nep141:${WRAP_NEAR}`] : [`nep141:${routingOut}`];
   const receivers = new Set([...VENUE_CONTRACTS, routingIn, routingOut]);
+  const ctx = { accountId, tokenOut, routingOut, outAssets };
   let movedIn = 0n;
   let attachedNear = 0n;
+  let onchainMin = 0n;
+  let hasSwap = false;
 
   for (const tx of txs) {
     if (!receivers.has(tx.receiverId) && !isAidolsToken(tx.receiverId)) fail(`The route calls an unexpected contract (${tx.receiverId}).`);
     for (const { type, params } of tx.actions) {
-      if (type !== "FunctionCall" || !ALLOWED_METHODS.has(params.methodName)) fail(`The route uses an unexpected method (${params.methodName}).`);
-      attachedNear += BigInt(params.deposit);
+      if (type !== "FunctionCall") fail("The route contains a non-call action.");
+      const method = params.methodName;
       const args = params.args || {};
-      if (params.methodName === "ft_transfer_call") {
-        if (!VENUE_CONTRACTS.has(args.receiver_id)) fail(`The route sends tokens to an unexpected account (${args.receiver_id}).`);
-        if (tx.receiverId === routingIn) movedIn += toBig(args.amount, "amount");
-      }
-      if (params.methodName === "storage_deposit" && args.account_id !== undefined && args.account_id !== accountId) {
-        fail("The route registers storage for someone else.");
-      }
-      if (params.methodName === "near_withdraw" && tokenOut !== NATIVE_NEAR) {
-        // unwrapping is only ever part of a swap that ends in NEAR
-        fail("The route unwraps NEAR unexpectedly.");
+      attachedNear += BigInt(params.deposit);
+      if (method === "ft_transfer_call") {
+        if (tx.receiverId !== routingIn) fail("The route moves a token other than the one you're paying with.");
+        onlyKeys(args, ["receiver_id", "amount", "msg", "memo"], "token transfer");
+        if (!VENUE_CONTRACTS.has(args.receiver_id) || args.receiver_id === WRAP_NEAR) fail(`The route sends tokens to an unexpected account (${args.receiver_id}).`);
+        movedIn += toBig(args.amount, "amount");
+        const { min, isSwap } = inspectVenueMsg(args.receiver_id, args.msg, ctx);
+        onchainMin += min;
+        hasSwap = hasSwap || isSwap;
+      } else if (method === "storage_deposit") {
+        if (!isSelfOrUnset(args.account_id, accountId)) fail("The route registers storage for someone else.");
+      } else if (METHOD_RECEIVERS[method]) {
+        if (!METHOD_RECEIVERS[method].includes(tx.receiverId)) fail(`The route calls ${method} on an unexpected contract (${tx.receiverId}).`);
+        if (method === "near_withdraw" && tokenOut !== NATIVE_NEAR) {
+          // unwrapping is only ever part of a swap that ends in NEAR
+          fail("The route unwraps NEAR unexpectedly.");
+        }
+        if (method === "deposit_and_stake") onlyKeys(args, [], "staking call");
+        if (method === "deposit_near") {
+          onlyKeys(args, ["operations"], "Intear DEX deposit");
+          const ops = onlyKeys(args.operations, ["operations", "referrer"], "Intear DEX deposit");
+          onchainMin += inspectIntearOperations(ops.operations, ctx);
+          hasSwap = true;
+        }
+        if (method === "liquid_unstake") {
+          if (routingIn !== METAPOOL) fail("The route unstakes a token you're not paying with.");
+          onlyKeys(args, ["st_near_to_burn", "min_expected_near"], "Meta Pool unstake");
+          movedIn += toBig(args.st_near_to_burn, "amount");
+          onchainMin += toBig(args.min_expected_near, "minimum");
+          hasSwap = true;
+        }
+        if (method === "unstake") {
+          if (routingIn !== XRHEA) fail("The route unstakes a token you're not paying with.");
+          onlyKeys(args, ["amount", "msg"], "xRHEA unstake");
+          movedIn += toBig(args.amount, "amount");
+        }
+      } else {
+        fail(`The route uses an unexpected method (${method}).`);
       }
     }
   }
   if (movedIn > amountIn) fail("The route would spend more than you entered.");
   const nearBudget = (tokenIn === NATIVE_NEAR ? amountIn : 0n) + MAX_STORAGE_NEAR;
   if (attachedNear > nearBudget) fail("The route attaches more NEAR than this swap needs.");
+  // What the exchanges will actually enforce must cover what we show.
+  if (hasSwap && minOut != null && onchainMin < minOut) fail("The route's on-chain minimum is lower than the minimum shown.");
 }
 
 /**
@@ -227,7 +363,7 @@ export function pickSafeRoute(routes, { accountId, tokenIn, tokenOut, amountIn }
       if (unwrapAfter) {
         txs.push({ receiverId: WRAP_NEAR, actions: [{ type: "FunctionCall", params: { methodName: "near_withdraw", args: { amount: worst.toString() }, gas: "10000000000000", deposit: "1" } }] });
       }
-      if (accountId) assertIntearRouteSafe(txs, { accountId, tokenIn, tokenOut, amountIn });
+      if (accountId) assertIntearRouteSafe(txs, { accountId, tokenIn, tokenOut, amountIn, minOut: worst });
       return { dexId: route.dex_id, label: DEX_LABEL[route.dex_id] ?? route.dex_id, amountOut: estimated, minOut: worst, txs, deadline: route.deadline ?? null };
     } catch {
       // try the next venue

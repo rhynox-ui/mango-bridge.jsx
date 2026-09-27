@@ -228,7 +228,9 @@ export default function NearSendPanel({ P, fromPicker, evmAddress }) {
       const response = await requestNearQuote(quoteRequest(false));
       const exp = expected();
       assertQuoteSafeToFund(response, exp);
-      setConfirm({ status: "ready", response, expected: exp, route, payAmount: amount });
+      // Everything the deposit needs is pinned here, so nothing typed or
+      // picked after the quote can change what gets sent.
+      setConfirm({ status: "ready", response, expected: exp, route, payAmount: amount, pay, destName: CHAIN_NAME[destChain] });
     } catch (e) {
       setConfirm({ status: "error", error: e?.message || "Couldn't get a quote." });
     }
@@ -236,6 +238,7 @@ export default function NearSendPanel({ P, fromPicker, evmAddress }) {
 
   async function sendDeposit() {
     const c = confirm;
+    const pay = c.pay;
     setConfirm({ ...c, status: "paying" });
     try {
       const value = BigInt(c.response.quote.amountIn);
@@ -251,10 +254,10 @@ export default function NearSendPanel({ P, fromPicker, evmAddress }) {
         send: async (depositAddress) => {
           const [depositReg, userWrapReg] = await Promise.all([
             registrationNeed(nearView, pay.contract, depositAddress),
-            payId === NATIVE_NEAR ? registrationNeed(nearView, WRAP_NEAR, accountId) : Promise.resolve({ needed: false, deposit: 0n }),
+            pay.id === NATIVE_NEAR ? registrationNeed(nearView, WRAP_NEAR, accountId) : Promise.resolve({ needed: false, deposit: 0n }),
           ]);
           const actions = [];
-          if (payId === NATIVE_NEAR) actions.push(call("near_deposit", {}, 10, value + (userWrapReg.needed ? userWrapReg.deposit : 0n)));
+          if (pay.id === NATIVE_NEAR) actions.push(call("near_deposit", {}, 10, value + (userWrapReg.needed ? userWrapReg.deposit : 0n)));
           if (depositReg.needed) actions.push(call("storage_deposit", { account_id: depositAddress, registration_only: true }, 10, depositReg.deposit));
           actions.push(call("ft_transfer", { receiver_id: depositAddress, amount: value.toString() }, 20, 1n));
           let outcomes;
@@ -376,12 +379,12 @@ export default function NearSendPanel({ P, fromPicker, evmAddress }) {
             {confirm.status === "quoting" && <div className="text-[13px]" style={{ color: P.textSecondary }}>Getting a signed quote…</div>}
             {(confirm.status === "ready" || confirm.status === "paying") && (
               <div className="flex flex-col gap-1.5 text-[12.5px]">
-                <div className="flex justify-between"><span style={{ color: P.textSecondary }}>You send</span><span className="font-mono" style={{ color: P.textPrimary }}>{confirm.payAmount} {pay.symbol}</span></div>
+                <div className="flex justify-between"><span style={{ color: P.textSecondary }}>You send</span><span className="font-mono" style={{ color: P.textPrimary }}>{confirm.payAmount} {confirm.pay.symbol}</span></div>
                 <div className="flex justify-between"><span style={{ color: P.textSecondary }}>You receive (est.)</span><span className="font-mono" style={{ color: P.textPrimary }}>{confirm.response.quote.amountOutFormatted} {confirm.route.destSymbol}</span></div>
                 <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Minimum</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmt(confirm.response.quote.minAmountOut, confirm.route.destDecimals)}</span></div>
-                <div className="flex justify-between"><span style={{ color: P.textSecondary }}>To</span><span className="font-mono" style={{ color: P.textPrimary }}>{short(to)} on {CHAIN_NAME[destChain]}</span></div>
+                <div className="flex justify-between"><span style={{ color: P.textSecondary }}>To</span><span className="font-mono" style={{ color: P.textPrimary }}>{short(confirm.expected.recipient)} on {confirm.destName}</span></div>
                 <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Quote valid until</span><span style={{ color: P.textPrimary }}>{new Date(confirm.response.quote.deadline).toLocaleTimeString()}</span></div>
-                <div className="text-[11px] mt-1" style={{ color: P.textMuted }}>Verified: signed by NEAR Intents. If it can't be completed, your {pay.symbol} is refunded to {short(accountId)}.</div>
+                <div className="text-[11px] mt-1" style={{ color: P.textMuted }}>Verified: signed by NEAR Intents. If it can't be completed, your {confirm.pay.symbol} is refunded to {short(accountId)}.</div>
               </div>
             )}
             {confirm.status === "error" && <div className="text-[12.5px]" style={{ color: "#D92D20" }}>{confirm.error}</div>}

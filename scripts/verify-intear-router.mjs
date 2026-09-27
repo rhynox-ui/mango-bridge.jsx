@@ -49,6 +49,17 @@ const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
 const fc = (method_name, args, deposit = "0", gas = 30_000_000_000_000) => ({ FunctionCall: { method_name, args: b64(args), gas, deposit } });
 const tx = (receiver_id, ...actions) => ({ NearTransaction: { receiver_id, actions } });
 
+// Rhea's swap message exactly as src/providers/rhea.rs builds it.
+const rheaMsg = (amountIn, min = "4950000", extra = {}) =>
+  JSON.stringify({
+    force: 0,
+    actions: [{ pool_id: 1234, token_in: WRAP_NEAR, token_out: MEME, amount_in: amountIn.toString(), min_amount_out: min }],
+    skip_degen_price_sync: true,
+    skip_unwrap_near: true,
+    referral_id: "dex-aggregator.intear.near",
+    ...extra,
+  });
+
 // NEAR → MEME on Rhea: register MEME for the user, wrap + ft_transfer_call.
 function rheaRoute(amountIn = 10n * E24, overrides = {}) {
   return {
@@ -62,7 +73,7 @@ function rheaRoute(amountIn = 10n * E24, overrides = {}) {
       tx(
         WRAP_NEAR,
         fc("near_deposit", {}, amountIn.toString()),
-        fc("ft_transfer_call", { receiver_id: "v2.ref-finance.near", amount: amountIn.toString(), msg: JSON.stringify({ force: 0, actions: [] }) }, "1"),
+        fc("ft_transfer_call", { receiver_id: "v2.ref-finance.near", amount: amountIn.toString(), msg: rheaMsg(amountIn) }, "1"),
       ),
     ],
     needs_unwrap: false,
@@ -103,6 +114,17 @@ const cases = {
   "registers storage for someone else": (r) => (r.execution_instructions[0].NearTransaction.actions[0] = fc("storage_deposit", { account_id: "attacker.near" }, "1")),
   "unwraps NEAR on a swap that doesn't end in NEAR": (r) => r.execution_instructions.push(tx(WRAP_NEAR, fc("near_withdraw", { amount: "1" }, "1"))),
   "non-JSON args": (r) => (r.execution_instructions[1].NearTransaction.actions[1] = { FunctionCall: { method_name: "ft_transfer_call", args: Buffer.from([0xff, 0x00]).toString("base64"), gas: 1, deposit: "1" } }),
+  "Rhea output redirected (swap_out_recipient)": (r) => (r.execution_instructions[1].NearTransaction.actions[1] = fc("ft_transfer_call", { receiver_id: "v2.ref-finance.near", amount: (10n * E24).toString(), msg: rheaMsg(10n * E24, "4950000", { swap_out_recipient: "attacker.near" }) }, "1")),
+  "Rhea client_echo": (r) => (r.execution_instructions[1].NearTransaction.actions[1] = fc("ft_transfer_call", { receiver_id: "v2.ref-finance.near", amount: (10n * E24).toString(), msg: rheaMsg(10n * E24, "4950000", { client_echo: "x" }) }, "1")),
+  "on-chain minimum zeroed (sandwichable)": (r) => (r.execution_instructions[1].NearTransaction.actions[1] = fc("ft_transfer_call", { receiver_id: "v2.ref-finance.near", amount: (10n * E24).toString(), msg: rheaMsg(10n * E24, "0") }, "1")),
+  "unwraps output when MEME was asked for": (r) => (r.execution_instructions[1].NearTransaction.actions[1] = fc("ft_transfer_call", { receiver_id: "v2.ref-finance.near", amount: (10n * E24).toString(), msg: rheaMsg(10n * E24, "4950000", { skip_unwrap_near: false }) }, "1")),
+  "empty msg (deposit into a DEX, no swap)": (r) => (r.execution_instructions[1].NearTransaction.actions[1] = fc("ft_transfer_call", { receiver_id: "v2.ref-finance.near", amount: (10n * E24).toString(), msg: "" }, "1")),
+  "moves the user's existing output tokens": (r) => r.execution_instructions.push(tx(MEME, fc("ft_transfer_call", { receiver_id: "v2.ref-finance.near", amount: "1", msg: rheaMsg(1n) }, "1"))),
+  "Rhea internal-balance swap": (r) => r.execution_instructions.push(tx("v2.ref-finance.near", fc("swap", { actions: [] }, "1"))),
+  "Rhea internal-balance withdraw": (r) => r.execution_instructions.push(tx("v2.ref-finance.near", fc("withdraw", { token_id: MEME, amount: "1" }, "1"))),
+  "Intear DEX execute_operations": (r) => r.execution_instructions.push(tx("dex.intear.near", fc("execute_operations", { operations: [], referrer: "x" }, "1"))),
+  "method on the wrong contract (near_deposit on a DEX)": (r) => (r.execution_instructions[1].NearTransaction.receiver_id = "v2.ref-finance.near"),
+  "liquid_unstake of a token not being paid": (r) => r.execution_instructions.push(tx("meta-pool.near", fc("liquid_unstake", { st_near_to_burn: "1", min_expected_near: "0" }))),
 };
 await check(`every tampering is refused (${Object.keys(cases).length} cases)`, () => {
   for (const [name, mutate] of Object.entries(cases)) {
@@ -123,7 +145,7 @@ await check("MEME → NEAR ending in wNEAR: the guaranteed minimum is unwrapped 
     estimated_amount: { amount_out: "2000000000000000000000000" },
     worst_case_amount: { amount_out: "1980000000000000000000000" },
     dex_id: "RheaDcl",
-    execution_instructions: [tx(MEME, fc("ft_transfer_call", { receiver_id: "dclv2.ref-labs.near", amount: "1000", msg: "{}" }, "1"))],
+    execution_instructions: [tx(MEME, fc("ft_transfer_call", { receiver_id: "dclv2.ref-labs.near", amount: "1000", msg: JSON.stringify({ Swap: { pool_ids: [`${MEME}|${WRAP_NEAR}|2000`], output_token: WRAP_NEAR, min_output_amount: "1980000000000000000000000", skip_unwrap_near: true } }) }, "1"))],
     token_output: `nep141:${WRAP_NEAR}`,
   };
   const picked = pickSafeRoute([route], { accountId: USER, tokenIn: MEME, tokenOut: NATIVE_NEAR, amountIn: 1000n });
@@ -140,6 +162,56 @@ await check("staking venues pass: NEAR → stNEAR via Meta Pool deposit_and_stak
     token_output: "nep141:meta-pool.near",
   };
   assert(pickSafeRoute([route], { accountId: USER, tokenIn: NATIVE_NEAR, tokenOut: "meta-pool.near", amountIn: 10n * E24 })?.label === "Meta Pool");
+});
+
+// Intear DEX (Plach) NEAR → MEME, as src/providers/intear_plach.rs builds it.
+function plachRoute(ops) {
+  return {
+    estimated_amount: { amount_out: "5000000" },
+    worst_case_amount: { amount_out: "4950000" },
+    dex_id: "Plach",
+    execution_instructions: [
+      tx("dex.intear.near", fc("storage_deposit", {}, "5000000000000000000000"), fc("register_assets", { asset_ids: ["near", `nep141:${MEME}`] }, "1")),
+      tx("dex.intear.near", fc("deposit_near", { operations: { operations: ops, referrer: "dex-aggregator.intear.near" } }, (10n * E24).toString())),
+    ],
+    token_output: `nep141:${MEME}`,
+  };
+}
+const plachSwap = { SwapSimple: { dex_id: "slimedragon.near/xyk", message: "AQAAAAAAAAA=", asset_in: "near", asset_out: `nep141:${MEME}`, amount: { Amount: { ExactIn: (10n * E24).toString() } }, constraint: "4950000" } };
+const plachWithdraw = (extra = {}) => ({ Withdraw: { asset_id: `nep141:${MEME}`, amount: { Full: { at_least: "4950000" } }, to: null, rescue_address: null, ...extra } });
+
+await check("Intear DEX: a genuine route passes; withdrawing to someone else or transferring out is refused", () => {
+  assert(pickSafeRoute([plachRoute([plachSwap, plachWithdraw()])], ctx)?.label === "Intear DEX", "genuine rejected");
+  assert(pickSafeRoute([plachRoute([plachSwap, plachWithdraw({ to: "attacker.near" })])], ctx) === null, "withdraw to attacker accepted");
+  assert(pickSafeRoute([plachRoute([plachSwap, plachWithdraw({ rescue_address: "attacker.near" })])], ctx) === null, "rescue to attacker accepted");
+  assert(pickSafeRoute([plachRoute([plachSwap, { TransferAsset: { to: "account:attacker.near", asset_id: `nep141:${MEME}`, amount: "1" } }])], ctx) === null, "TransferAsset accepted");
+  assert(pickSafeRoute([plachRoute([plachSwap, plachWithdraw({ amount: { Full: { at_least: "1" } } })])], ctx) === null, "low on-chain minimum accepted");
+  assert(pickSafeRoute([plachRoute([{ SwapSimple: { ...plachSwap.SwapSimple, amount: "EntireBalanceIn" } }, plachWithdraw()])], ctx) === null, "EntireBalanceIn accepted");
+});
+
+await check("Aidols and Meta Pool: genuine routes pass, a lowered minimum doesn't", () => {
+  const AID = "cat.aidols.near";
+  const aidols = (min) => ({
+    estimated_amount: { amount_out: "1000" },
+    worst_case_amount: { amount_out: "990" },
+    dex_id: "Aidols",
+    execution_instructions: [tx(WRAP_NEAR, fc("near_deposit", {}, (10n * E24).toString()), fc("ft_transfer_call", { receiver_id: "aidols.near", amount: (10n * E24).toString(), msg: JSON.stringify({ token: AID, min_swap_amount: min, referral: "dex-aggregator.intear.near" }) }, "1"))],
+    token_output: `nep141:${AID}`,
+  });
+  const actx = { accountId: USER, tokenIn: NATIVE_NEAR, tokenOut: AID, amountIn: 10n * E24 };
+  assert(pickSafeRoute([aidols("990")], actx)?.label === "Aidols", "genuine Aidols rejected");
+  assert(pickSafeRoute([aidols("1")], actx) === null, "low Aidols minimum accepted");
+  const unstake = (burn, min) => ({
+    estimated_amount: { amount_out: "2000" },
+    worst_case_amount: { amount_out: "1980" },
+    dex_id: "MetaPool",
+    execution_instructions: [tx("meta-pool.near", fc("liquid_unstake", { st_near_to_burn: burn, min_expected_near: min }, "0"))],
+    token_output: "near",
+  });
+  const mctx = { accountId: USER, tokenIn: "meta-pool.near", tokenOut: NATIVE_NEAR, amountIn: 1000n };
+  assert(pickSafeRoute([unstake("1000", "1980")], mctx)?.label === "Meta Pool", "genuine unstake rejected");
+  assert(pickSafeRoute([unstake("5000", "1980")], mctx) === null, "unstaking more than entered accepted");
+  assert(pickSafeRoute([unstake("1000", "0")], mctx) === null, "zero unstake minimum accepted");
 });
 
 await check("Mango's fee is a separate final transaction in the input token", () => {
