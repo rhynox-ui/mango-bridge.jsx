@@ -7,7 +7,10 @@
 //
 // Route: NEAR Intents 1Click, through Mango's proxy. The user sends the
 // origin asset from their connected EVM wallet to a one-time deposit
-// address and receives on their own NEAR address; they pay their own gas
+// address and receives on their own NEAR account — normally the one
+// their NEAR wallet reports when they connect it (HOT's near-connect:
+// HOT, Meteor, Intear, MyNearWallet, OKX, Nightly, NEAR Mobile…), with
+// typing an address kept as a fallback; they pay their own gas
 // and 1Click's own small fee, on top of Mango's 0.5%. Every safety rule
 // lives in nearIntents.js (signature check, request echo, fee match,
 // deadline margin, save-before-send, one payment per quote); this file
@@ -30,6 +33,7 @@ import {
   fundNearQuote,
   isFinalStatus,
   isUserNearAddress,
+  isNearIntentsAccountId,
   nearAccountExists,
   nearAppFees,
   requestNearQuote,
@@ -44,6 +48,45 @@ const SLIPPAGE_BPS = 100;
 const ERC20_TRANSFER_ABI = [
   { type: "function", name: "transfer", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
 ];
+
+// near-connect is loaded only when someone actually picks NEAR. Receiving
+// needs no signature, so only the account id is ever read from it; the
+// confirm screen still shows that account before anything is sent.
+const NEAR_WALLET_FLAG = "mango:near-wallet-connected";
+let connectorPromise = null;
+function getNearConnector() {
+  if (!connectorPromise) {
+    connectorPromise = import("@hot-labs/near-connect")
+      .then(({ NearConnector }) => new NearConnector({ network: "mainnet" }))
+      .catch((err) => {
+        connectorPromise = null;
+        throw err;
+      });
+  }
+  return connectorPromise;
+}
+
+async function firstAccountId(wallet) {
+  const accounts = await wallet.getAccounts({ network: "mainnet" });
+  const id = accounts?.[0]?.accountId;
+  return isNearIntentsAccountId(id) ? id : null;
+}
+
+function readFlag() {
+  try {
+    return localStorage.getItem(NEAR_WALLET_FLAG) === "1";
+  } catch {
+    return false;
+  }
+}
+function writeFlag(on) {
+  try {
+    if (on) localStorage.setItem(NEAR_WALLET_FLAG, "1");
+    else localStorage.removeItem(NEAR_WALLET_FLAG);
+  } catch {
+    // per-browser convenience only
+  }
+}
 
 let tokensPromise = null;
 function loadTokens() {
@@ -84,6 +127,9 @@ function short(value) {
 export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum, insufficient, originDecimals, evmAddress, connected, isFromSolana, originAmountUsd }) {
   const [destSymbol, setDestSymbol] = useState("USDC");
   const [nearAddress, setNearAddress] = useState("");
+  const [nearWallet, setNearWallet] = useState(null); // { accountId, name }
+  const [walletState, setWalletState] = useState({ status: "idle" });
+  const [manualEntry, setManualEntry] = useState(false);
   const [addressState, setAddressState] = useState({ status: "idle" });
   const [tokens, setTokens] = useState(null);
   const [tokensError, setTokensError] = useState(null);
@@ -94,7 +140,10 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
   const previewId = useRef(0);
 
   const blockchain = NEAR_ORIGIN_BLOCKCHAIN[from];
-  const trimmedAddress = nearAddress.trim();
+  const typedAddress = nearAddress.trim();
+  // Where the NEAR side is delivered: the connected wallet's account, or
+  // (fallback) the typed address. Every check below runs on this value.
+  const trimmedAddress = manualEntry ? typedAddress : nearWallet?.accountId ?? "";
   // Previews only need a valid recipient, not the user's — requote when
   // their address is confirmed, not on every keystroke.
   const previewRecipient = addressState.status === "ok" ? trimmedAddress : NEAR_FEE_ACCOUNT;
@@ -102,6 +151,54 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
   useEffect(() => {
     loadTokens().then(setTokens).catch(() => setTokensError("NEAR routes are unavailable right now — couldn't reach NEAR Intents. Try again shortly."));
   }, []);
+
+  useEffect(() => {
+    if (!readFlag()) return;
+    let cancelled = false;
+    getNearConnector()
+      .then(async (connector) => {
+        connector.on("wallet:signOut", () => {
+          setNearWallet(null);
+          writeFlag(false);
+        });
+        const { wallet } = await connector.getConnectedWallet();
+        const accountId = await firstAccountId(wallet);
+        if (!cancelled && accountId) setNearWallet({ accountId, name: wallet.manifest?.name });
+      })
+      .catch(() => writeFlag(false));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function connectNearWallet() {
+    setWalletState({ status: "connecting" });
+    try {
+      const connector = await getNearConnector();
+      const wallet = await connector.connect();
+      const accountId = await firstAccountId(wallet);
+      if (!accountId) throw new Error("That wallet didn't share a NEAR account.");
+      setNearWallet({ accountId, name: wallet.manifest?.name });
+      setManualEntry(false);
+      writeFlag(true);
+      setWalletState({ status: "idle" });
+    } catch (e) {
+      // Closing the picker is not an error worth showing.
+      const msg = e?.message || "";
+      setWalletState(/reject|cancel|clos/i.test(msg) ? { status: "idle" } : { status: "error", error: msg || "Couldn't connect a NEAR wallet." });
+    }
+  }
+
+  async function disconnectNearWallet() {
+    setNearWallet(null);
+    writeFlag(false);
+    try {
+      const connector = await getNearConnector();
+      await connector.disconnect();
+    } catch {
+      // already disconnected
+    }
+  }
 
   // Resume the most recent unfinished NEAR swap from this browser.
   useEffect(() => {
@@ -142,7 +239,7 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
   // Address: format first, then — for named accounts — that it exists.
   useEffect(() => {
     if (!trimmedAddress) return setAddressState({ status: "idle" });
-    if (!isUserNearAddress(trimmedAddress)) return setAddressState({ status: "invalid" });
+    if (manualEntry ? !isUserNearAddress(trimmedAddress) : !isNearIntentsAccountId(trimmedAddress)) return setAddressState({ status: "invalid" });
     let cancelled = false;
     setAddressState({ status: "checking" });
     const t = setTimeout(() => {
@@ -155,7 +252,7 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
       cancelled = true;
       clearTimeout(t);
     };
-  }, [trimmedAddress]);
+  }, [trimmedAddress, manualEntry]);
 
   // Preview (dry quote): no deposit address, nothing to pay.
   useEffect(() => {
@@ -219,7 +316,9 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
           : insufficient
             ? "Insufficient balance"
             : !trimmedAddress
-              ? "Enter your NEAR address"
+              ? manualEntry
+                ? "Enter your NEAR address"
+                : "Connect your NEAR wallet"
               : addressState.status === "invalid"
                 ? "That isn't a NEAR address"
                 : addressState.status === "missing"
@@ -346,6 +445,41 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
       {route?.error && <div className="text-[11.5px]" style={{ color: P.textMuted }}>{route.error}</div>}
       {preview.status === "error" && <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{preview.error}</div>}
 
+      {!manualEntry && (
+        <div>
+          <div className="text-[12px] font-medium mb-1.5" style={{ color: P.textSecondary }}>Receive to</div>
+          {nearWallet ? (
+            <div className="flex items-center justify-between rounded-xl px-3.5 py-2.5" style={box}>
+              <div className="min-w-0">
+                <div className="text-[13px] font-mono truncate" style={{ color: P.textPrimary }}>{nearWallet.accountId}</div>
+                <div className="text-[11px]" style={{ color: addressState.status === "missing" ? "#D92D20" : P.textMuted }}>
+                  {addressState.status === "missing"
+                    ? "This account isn't active on NEAR yet."
+                    : addressState.status === "unverified"
+                      ? "Couldn't reach NEAR to check this account. Try again in a moment."
+                      : `Connected${nearWallet.name ? ` with ${nearWallet.name}` : ""}`}
+                </div>
+              </div>
+              <button onClick={disconnectNearWallet} className="text-[12px] font-medium shrink-0 ml-3" style={{ color: P.textSecondary }}>Disconnect</button>
+            </div>
+          ) : (
+            <button
+              onClick={connectNearWallet}
+              disabled={walletState.status === "connecting"}
+              className="w-full py-3 rounded-xl text-[13.5px] font-semibold"
+              style={{ background: P.input, color: P.textPrimary, border: `1px solid ${P.panelBorder}` }}
+            >
+              {walletState.status === "connecting" ? "Opening NEAR wallets…" : "Connect NEAR wallet"}
+            </button>
+          )}
+          {walletState.status === "error" && <div className="text-[11px] mt-1" style={{ color: "#D92D20" }}>{walletState.error}</div>}
+          <button onClick={() => setManualEntry(true)} className="text-[11px] mt-1.5 underline" style={{ color: P.textMuted }}>
+            No NEAR wallet here? Enter an address instead
+          </button>
+        </div>
+      )}
+
+      {manualEntry && (
       <div>
         <div className="text-[12px] font-medium mb-1.5" style={{ color: P.textSecondary }}>Your NEAR address</div>
         <input
@@ -365,7 +499,11 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
           {addressState.status === "ok" && "NEAR account found."}
           {addressState.status === "idle" && `${destLabel} is delivered straight to this account.`}
         </div>
+        <button onClick={() => setManualEntry(false)} className="text-[11px] mt-1.5 underline" style={{ color: P.textMuted }}>
+          Connect a NEAR wallet instead
+        </button>
       </div>
+      )}
 
       {q && (
         <div className="rounded-xl px-3.5 py-3 flex flex-col gap-1.5 text-[12px]" style={box}>
