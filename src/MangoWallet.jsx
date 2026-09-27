@@ -148,13 +148,13 @@ const CHAIN_LABEL = {
   ethereum: "Ethereum", base: "Base", bnb: "BNB Chain", robinhood: "Robinhood Chain",
   stable: "Stable", solana: "Solana", arbitrum: "Arbitrum One", avalanche: "Avalanche",
   abstract: "Abstract", hyperevm: "HyperEVM", ink: "Ink", plasma: "Plasma",
-  unichain: "Unichain", xlayer: "X Layer",
+  unichain: "Unichain", xlayer: "X Layer", arc: "Arc",
   ...WALLET_ONLY_CHAIN_LABEL,
 };
 const NATIVE_SYMBOL_BY_CHAIN = {
   ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", stable: "USDT0", solana: "SOL",
   arbitrum: "ETH", avalanche: "AVAX", abstract: "ETH", hyperevm: "HYPE",
-  ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB",
+  ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB", arc: "USDC",
   ...WALLET_ONLY_NATIVE_SYMBOL,
 };
 const MIN_PASSWORD_LENGTH = 8;

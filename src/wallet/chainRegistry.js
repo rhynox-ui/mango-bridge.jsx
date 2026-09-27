@@ -42,6 +42,7 @@ export const RPC_FALLBACKS = {
   196: ["https://xlayerrpc.okx.com", "https://rpc.xlayer.tech"],
   4663: ["https://rpc.mainnet.chain.robinhood.com", "https://robinhood-rpc.publicnode.com"],
   988: ["https://rpc.stable.xyz"],
+  5042: ["https://rpc.mainnet.arc.io", "https://rpc.drpc.mainnet.arc.io", "https://rpc.blockdaemon.mainnet.arc.io", "https://rpc.quicknode.mainnet.arc.io"],
   // Fantom — see wagmi.js's own copy of this entry for the full reasoning
   // (Thirdweb-default override, added for walletChains.js's wallet-only
   // chain list, not live-checked from this sandbox).
@@ -86,6 +87,17 @@ export const stableMainnet = defineChain({
   testnet: false,
 });
 
+// Same definition as wagmi.js's own arcMainnet — see its comment.
+export const arcMainnet = defineChain({
+  id: 5042,
+  name: "Arc",
+  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+  rpcUrls: { default: { http: ["https://rpc.mainnet.arc.io"] } },
+  blockExplorers: { default: { name: "Arc Explorer", url: "https://explorer.arc.io" } },
+  contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
+  testnet: false,
+});
+
 export const CHAIN_KEY_TO_WAGMI_MAINNET = {
   ethereum: mainnet,
   base: base,
@@ -100,4 +112,5 @@ export const CHAIN_KEY_TO_WAGMI_MAINNET = {
   plasma: plasma,
   unichain: unichain,
   xlayer: xLayer,
+  arc: arcMainnet,
 };
