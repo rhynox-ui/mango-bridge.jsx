@@ -115,6 +115,7 @@ import NearIntentsSection from "./NearIntentsSection.jsx";
 import NearSwapPanel from "./NearSwapPanel.jsx";
 import NearSendPanel from "./NearSendPanel.jsx";
 import { useNearWallet, listNearWallets, connectNearWallet } from "./nearWallet.js";
+import { NEAR_ORIGIN_BLOCKCHAIN } from "./nearIntents.js";
 import { NATIVE_SYMBOL } from "./chainData.js";
 import { UNISWAP_V3_ADDRESSES } from "./uniswapV3.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
@@ -633,6 +634,11 @@ function FloatingMangoDecor({ P }) {
 // served by its own panel (NearIntentsSection.jsx), never by the Relay /
 // wagmi paths that every CHAINS key is assumed to support.
 const EXTRA_DESTINATIONS = { near: { name: "NEAR" } };
+
+// Token icons for the NEAR panels: NEAR's own mark, else the usual set.
+function NearTokenIcon({ symbol, size = 18 }) {
+  return symbol === "NEAR" ? <ChainBadge id="near" size={size} /> : <AssetIcon symbol={symbol} size={size} />;
+}
 
 function ChainDropdown({ value, exclude, onChange, P, chainOrder = CHAIN_ORDER }) {
   const [open, setOpen] = useState(false);
@@ -1236,7 +1242,16 @@ function AssetIcon({ symbol, size = 18, chainId, address, logoUrl }) {
 // pool — falls back to manual symbol entry (splDecimals/splSymbolInput
 // below) rather than blocking the add entirely: decimals already
 // confirmed it's a real mint, there's just no live name for it yet.
-function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true, discoveredLogos, openSignal, hideTrigger = false }) {
+// A NEAR token contract as people paste it: a named account with at
+// least one dot (rust-334.meme-cooking.near, token.v2.ref-finance.near)
+// or a 64-hex implicit account. Never matches an EVM or Solana address.
+const NEAR_TOKEN_ID = /^(([a-z\d]+[-_])*[a-z\d]+\.)+([a-z\d]+[-_])*[a-z\d]+$|^[0-9a-f]{64}$/;
+function nearTokenCandidate(text) {
+  const id = text.trim().toLowerCase();
+  return id.length >= 2 && id.length <= 64 && NEAR_TOKEN_ID.test(id) ? id : null;
+}
+
+function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLoading, onOpen, customToken, onCustomTokenSelect, allowCustomToken = true, discoveredLogos, openSignal, hideTrigger = false, onNearToken }) {
   const [open, setOpen] = useState(false);
   // Lets something OUTSIDE this component open the picker — the Swap
   // layout's own "Search" button, which is the mobile app's entry point
@@ -1566,7 +1581,19 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
                 </button>
               );
             })}
-            {trimmedQuery && !looksLikeAddress && matchingAssetCount === 0 && matchingCustomTokenCount === 0 && (
+            {onNearToken && !looksLikeAddress && nearTokenCandidate(trimmedQuery) && (
+              <button
+                onClick={() => { onNearToken(nearTokenCandidate(trimmedQuery)); setOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
+              >
+                <ChainBadge id="near" size={22} />
+                <div className="flex flex-col min-w-0">
+                  <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>Swap this NEAR token on NEAR</span>
+                  <span className="text-[11px] font-mono truncate" style={{ color: P.textMuted }}>{nearTokenCandidate(trimmedQuery)}</span>
+                </div>
+              </button>
+            )}
+            {trimmedQuery && !looksLikeAddress && matchingAssetCount === 0 && matchingCustomTokenCount === 0 && !(onNearToken && nearTokenCandidate(trimmedQuery)) && (
               <div className="px-3 py-3 text-[11.5px]" style={{ color: P.textMuted }}>
                 {supportsCustomTokens
                   ? `No matching token — paste a full ${isSolanaChain ? "mint" : "contract"} address to add a new one.`
@@ -4028,9 +4055,13 @@ export default function MangoBridge() {
   // "Swap on NEAR" — same idea for the Swap tab: its own panel
   // (NearSwapPanel.jsx), with from/to left on real CHAINS keys.
   const [nearSwap, setNearSwap] = useState(false);
+  // A NEAR token pasted into Swap's Search: opens Swap on NEAR with it.
+  const [nearSwapPreset, setNearSwapPreset] = useState(null); // { id, n }
   // "Send from NEAR" — the Bridge tab's "You send" picker set to NEAR:
   // its own panel (NearSendPanel.jsx), with from/to left on real keys.
   const [nearSend, setNearSend] = useState(false);
+  // Where Send from NEAR delivers when it's opened with the flip arrow.
+  const [nearSendDest, setNearSendDest] = useState("base");
   // Real gap, user-reported: this site never had a working slippage
   // control at all. Two earlier passes at this fix both had a real
   // discoverability problem — first the control lived in the read-only
@@ -5456,6 +5487,7 @@ export default function MangoBridge() {
                       <AssetDropdown
                         hideTrigger
                         openSignal={topSearchSignal}
+                        onNearToken={isMainnet() ? (id) => { setNearSwapPreset({ id, n: Date.now() }); setNearSwap(true); } : undefined}
                         assetIdx={toAssetIdx}
                         setAssetIdx={handleToAssetChange}
                         chainId={to}
@@ -5504,12 +5536,21 @@ export default function MangoBridge() {
                   way a two-column grid silently starts overflowing. */}
               <div className="min-w-0">
               {nearSwapOn ? (
-                <NearSwapPanel P={P} slippageBps={slippageBps} />
+                <NearSwapPanel P={P} slippageBps={slippageBps} presetToken={nearSwapPreset} />
               ) : nearSendOn ? (
                 <NearSendPanel
                   P={P}
                   evmAddress={address}
                   onConnectNear={openNearConnect}
+                  ChainPicker={ChainDropdown}
+                  TokenIcon={NearTokenIcon}
+                  initialDest={nearSendDest}
+                  onFlip={(dest) => {
+                    // Flip to the mirror route: send from that chain, receive on NEAR.
+                    setNearSend(false);
+                    handleFromChange(dest);
+                    setNearMode(true);
+                  }}
                   fromPicker={<ChainDropdown value="near" onChange={onBridgeFromPick} P={P} chainOrder={bridgeFromChainOrderWithNear} />}
                 />
               ) : (
@@ -5725,7 +5766,12 @@ export default function MangoBridge() {
 
               {/* Swap toggle */}
               <div className="flex justify-center -my-3 relative z-10">
-                <button onClick={nearOn ? undefined : swap} disabled={nearOn} className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm" style={{ background: P.ctaBg, opacity: nearOn ? 0.4 : 1 }}>
+                <button
+                  onClick={nearOn ? (NEAR_ORIGIN_BLOCKCHAIN[from] ? () => { setNearMode(false); setNearSendDest(from); setNearSend(true); } : undefined) : swap}
+                  disabled={nearOn && !NEAR_ORIGIN_BLOCKCHAIN[from]}
+                  className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm"
+                  style={{ background: P.ctaBg, opacity: nearOn && !NEAR_ORIGIN_BLOCKCHAIN[from] ? 0.4 : 1 }}
+                >
                   <ArrowUpDown size={15} color={P.ctaText} />
                 </button>
               </div>
