@@ -4106,7 +4106,12 @@ export default function MangoBridge() {
   // them (recipientAddress, canBridge, the two "needs a wallet" panels)
   // are untouched and still correct — with the checkbox unreachable,
   // sendToOther simply never becomes true, so those all take their
-  // normal same-wallet path. Flip this back to re-show the section.
+  // normal same-wallet path.
+  // Also the reason it stays off: sending SOL to another Solana address
+  // delivered wSOL that was never unwrapped to SOL for that recipient.
+  // Product decision: every route (Bridge, Swap, NEAR) delivers only to
+  // wallets the user has connected. Don't re-enable without fixing the
+  // wSOL unwrap for external recipients first.
   const ENABLE_SEND_TO_OTHER_ADDRESS = false;
 
   const { address, isConnected, chainId: connectedChainId, connector: evmConnector } = useAccount();
