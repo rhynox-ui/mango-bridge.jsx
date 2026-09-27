@@ -78,7 +78,7 @@ function call(methodName, args, gasTgas, deposit) {
   return { type: "FunctionCall", params: { methodName, args, gas: (BigInt(gasTgas) * TGAS).toString(), deposit: deposit.toString() } };
 }
 
-export default function NearSendPanel({ P, fromPicker, evmAddress }) {
+export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear }) {
   const wallet = useNearWallet();
   const accountId = wallet.account?.accountId;
   const store = useMemo(() => createLocalNearSwapStore(), []);
@@ -307,8 +307,8 @@ export default function NearSendPanel({ P, fromPicker, evmAddress }) {
             <button onClick={wallet.disconnect} className="shrink-0 ml-3" style={{ color: P.textMuted }}>Disconnect</button>
           </div>
         ) : (
-          <button onClick={wallet.connect} disabled={wallet.status === "connecting"} className="w-full mb-3 py-2.5 rounded-xl text-[13.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
-            {wallet.status === "connecting" ? "Opening NEAR wallets…" : "Connect NEAR wallet"}
+          <button onClick={() => (onConnectNear ? onConnectNear() : wallet.connect())} disabled={wallet.status === "connecting"} className="w-full mb-3 py-2.5 rounded-xl text-[13.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
+            {wallet.status === "connecting" ? "Opening NEAR wallet…" : "Connect NEAR wallet"}
           </button>
         )}
         {wallet.status === "error" && <div className="text-[11px] mb-2" style={{ color: "#D92D20" }}>{wallet.error}</div>}

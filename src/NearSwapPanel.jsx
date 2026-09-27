@@ -182,7 +182,7 @@ function NearChart({ P, tokenId }) {
   );
 }
 
-export default function NearSwapPanel({ P, slippageBps }) {
+export default function NearSwapPanel({ P, slippageBps, onConnectNear }) {
   const wallet = useNearWallet();
   const accountId = wallet.account?.accountId;
   const slippage = Number.isFinite(Number(slippageBps)) && slippageBps !== null ? Number(slippageBps) : 100;
@@ -396,8 +396,8 @@ export default function NearSwapPanel({ P, slippageBps }) {
             <button onClick={wallet.disconnect} className="text-[12px] font-medium shrink-0 ml-3" style={{ color: P.textSecondary }}>Disconnect</button>
           </>
         ) : (
-          <button onClick={wallet.connect} disabled={wallet.status === "connecting"} className="w-full py-2.5 rounded-xl text-[13.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
-            {wallet.status === "connecting" ? "Opening NEAR wallets…" : "Connect NEAR wallet"}
+          <button onClick={() => (onConnectNear ? onConnectNear() : wallet.connect())} disabled={wallet.status === "connecting"} className="w-full py-2.5 rounded-xl text-[13.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
+            {wallet.status === "connecting" ? "Opening NEAR wallet…" : "Connect NEAR wallet"}
           </button>
         )}
       </div>

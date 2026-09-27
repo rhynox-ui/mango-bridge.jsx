@@ -114,6 +114,7 @@ import SwapChartPanel from "./SwapChartPanel.jsx";
 import NearIntentsSection from "./NearIntentsSection.jsx";
 import NearSwapPanel from "./NearSwapPanel.jsx";
 import NearSendPanel from "./NearSendPanel.jsx";
+import { useNearWallet, listNearWallets, connectNearWallet } from "./nearWallet.js";
 import { NATIVE_SYMBOL } from "./chainData.js";
 import { UNISWAP_V3_ADDRESSES } from "./uniswapV3.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
@@ -3057,7 +3058,69 @@ function NetworkSelectorModal({ onClose, P, tab, launchpadNetwork, setLaunchpadN
 // src/appkit.js for the createAppKit() call this modal opens into.
 // OKX Wallet for Solana stays as its own explicitly-labeled option since
 // it's deliberately kept outside AppKit (see appkit.js for why).
-function WalletSelectorModal({ onClose, P, solanaRelevant, isFromSolana }) {
+// NEAR wallets, listed straight from near-connect's own wallet registry
+// (HOT, Meteor, Intear, MyNearWallet, OKX, Ledger, NEAR Mobile…) — Reown
+// AppKit has no NEAR support, so this is NEAR's section of the same
+// Connect Wallet window. Picking one closes this window first so the
+// wallet's own sign-in window is never hidden behind it.
+function NearWalletIcon({ P, src }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return <span className="w-6 h-6 rounded-md shrink-0" style={{ background: P.input }} />;
+  return <img src={src} alt="" className="w-6 h-6 rounded-md shrink-0" onError={() => setFailed(true)} />;
+}
+
+function NearWalletSection({ P, onClose }) {
+  const near = useNearWallet();
+  const [wallets, setWallets] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    listNearWallets()
+      .then((list) => !cancelled && setWallets(list))
+      .catch(() => !cancelled && setLoadError(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="mb-4">
+      <div className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: P.textMuted }}>NEAR</div>
+      {near.account ? (
+        <div className="flex items-center justify-between px-3.5 py-3 rounded-xl" style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}>
+          <div className="min-w-0">
+            <div className="text-[13px] font-mono truncate" style={{ color: P.textPrimary }}>{near.account.accountId}</div>
+            <div className="text-[11px]" style={{ color: P.textMuted }}>Connected{near.account.name ? ` with ${near.account.name}` : ""}</div>
+          </div>
+          <button onClick={near.disconnect} className="text-[12px] font-medium shrink-0 ml-3" style={{ color: P.textSecondary }}>Disconnect</button>
+        </div>
+      ) : loadError ? (
+        <button onClick={() => { onClose(); connectNearWallet(); }} className="w-full px-3.5 py-3 rounded-xl text-left text-[13.5px] font-semibold" style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}`, color: P.textPrimary }}>
+          Browse NEAR Wallets
+        </button>
+      ) : !wallets ? (
+        <div className="px-3.5 py-3 rounded-xl text-[12px]" style={{ background: P.pillBg, color: P.textMuted }}>Loading NEAR wallets…</div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          {wallets.map((w) => (
+            <button
+              key={w.id}
+              onClick={() => { onClose(); connectNearWallet(w.id); }}
+              className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-left min-w-0"
+              style={{ background: P.pillBg, border: `1px solid ${P.panelBorder}` }}
+            >
+              <NearWalletIcon P={P} src={w.icon} />
+              <span className="text-[12.5px] font-semibold truncate" style={{ color: P.textPrimary }}>{w.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {near.status === "error" && <div className="mt-2 text-[11px]" style={{ color: "#D92D20" }}>{near.error}</div>}
+    </div>
+  );
+}
+
+function WalletSelectorModal({ onClose, P, solanaRelevant, isFromSolana, nearRelevant, nearFirst }) {
   const solanaWallet = useSolanaWallet();
   const { open: openAppKit } = useAppKit();
   const [connectingOkx, setConnectingOkx] = useState(false);
@@ -3143,6 +3206,7 @@ function WalletSelectorModal({ onClose, P, solanaRelevant, isFromSolana }) {
           <button onClick={onClose}><X size={18} color={P.textMuted} /></button>
         </div>
 
+        {nearRelevant && nearFirst && <NearWalletSection P={P} onClose={onClose} />}
         {isFromSolana ? (
           <>
             {solanaSection}
@@ -3154,6 +3218,7 @@ function WalletSelectorModal({ onClose, P, solanaRelevant, isFromSolana }) {
             {solanaSection}
           </>
         )}
+        {nearRelevant && !nearFirst && <NearWalletSection P={P} onClose={onClose} />}
 
         {solanaWallet.error && (
           <div className="mt-3 rounded-lg p-3 text-[11.5px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
@@ -4031,6 +4096,13 @@ export default function MangoBridge() {
   const { walletProvider: appKitSolanaProvider } = useAppKitProvider("solana");
   const { disconnect: disconnectAppKit } = useAppKitDisconnect();
   const [showWalletSelector, setShowWalletSelector] = useState(false);
+  // The same Connect Wallet window, with its NEAR section (NEAR panels).
+  const [walletSelectorNear, setWalletSelectorNear] = useState(false);
+  const nearWalletShared = useNearWallet();
+  function openNearConnect() {
+    setWalletSelectorNear(true);
+    setShowWalletSelector(true);
+  }
 
   // Real, unified concept: which wallet is actually relevant depends on
   // which chain is selected as the SOURCE (the one being signed FROM).
@@ -4477,7 +4549,9 @@ export default function MangoBridge() {
     setAmount("");
   }
   function handleConnect() {
-    if (isFromSolana || CHAINS[to]?.isSolana) {
+    if (nearSwapOn || nearSendOn || nearOn) {
+      openNearConnect();
+    } else if (isFromSolana || CHAINS[to]?.isSolana) {
       setShowWalletSelector(true);
     } else {
       openAppKit({ view: "Connect", namespace: "eip155" });
@@ -4508,6 +4582,9 @@ export default function MangoBridge() {
   }
   const swapChainOrderWithNear = isMainnet() ? [...swapChainOrder, "near"] : swapChainOrder;
   const nearSendOn = nearSend && !isSwapTab;
+  // The NEAR wallet signs (Swap on NEAR, Send from NEAR): the header's
+  // Connect button and account pill are the NEAR wallet's.
+  const nearSigner = nearSwapOn || nearSendOn;
   function onBridgeFromPick(id) {
     if (id === "near") {
       setNearMode(false);
@@ -5234,7 +5311,18 @@ export default function MangoBridge() {
           <button onClick={() => setShowNetworkSelector(true)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
             <Globe size={13} color={P.textSecondary} />
           </button>
-          {connected ? (
+          {nearSigner ? (
+            nearWalletShared.account ? (
+              <button onClick={openNearConnect} className="flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-full text-[12px] font-semibold max-w-[150px]" style={{ background: P.ctaBg, color: P.ctaText }}>
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: P.ctaText }} />
+                <span className="truncate">{nearWalletShared.account.accountId.length > 14 ? `${nearWalletShared.account.accountId.slice(0, 6)}…${nearWalletShared.account.accountId.slice(-5)}` : nearWalletShared.account.accountId}</span>
+              </button>
+            ) : (
+              <button onClick={openNearConnect} disabled={nearWalletShared.status === "connecting"} className="px-3.5 py-1.5 rounded-full text-[12px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText, opacity: nearWalletShared.status === "connecting" ? 0.6 : 1 }}>
+                {nearWalletShared.status === "connecting" ? "Connecting…" : "Connect"}
+              </button>
+            )
+          ) : connected ? (
             <button
               onClick={() => {
                 if (!isFromSolana) { disconnect(); return; }
@@ -5405,11 +5493,12 @@ export default function MangoBridge() {
                   way a two-column grid silently starts overflowing. */}
               <div className="min-w-0">
               {nearSwapOn ? (
-                <NearSwapPanel P={P} slippageBps={slippageBps} />
+                <NearSwapPanel P={P} slippageBps={slippageBps} onConnectNear={openNearConnect} />
               ) : nearSendOn ? (
                 <NearSendPanel
                   P={P}
                   evmAddress={address}
+                  onConnectNear={openNearConnect}
                   fromPicker={<ChainDropdown value="near" onChange={onBridgeFromPick} P={P} chainOrder={bridgeFromChainOrderWithNear} />}
                 />
               ) : (
@@ -5675,6 +5764,7 @@ export default function MangoBridge() {
                     connected={isFromSolana ? false : isConnected}
                     isFromSolana={isFromSolana}
                     originAmountUsd={knownPrice ? amtNum * fromAsset.price : null}
+                    onConnectNear={openNearConnect}
                   />
                 ) : (
                 <>
@@ -6089,10 +6179,12 @@ export default function MangoBridge() {
       {showAdminReferrals && <AdminReferralsPage onClose={() => setShowAdminReferrals(false)} />}
       {showWalletSelector && (
         <WalletSelectorModal
-          onClose={() => setShowWalletSelector(false)}
+          onClose={() => { setShowWalletSelector(false); setWalletSelectorNear(false); }}
           P={P}
-          solanaRelevant={isFromSolana || !!CHAINS[to]?.isSolana}
-          isFromSolana={isFromSolana}
+          solanaRelevant={!nearSigner && (isFromSolana || !!CHAINS[to]?.isSolana)}
+          isFromSolana={isFromSolana && !nearSigner}
+          nearRelevant={walletSelectorNear || nearSigner || nearOn}
+          nearFirst={nearSigner}
         />
       )}
       {showNetworkSelector && (
