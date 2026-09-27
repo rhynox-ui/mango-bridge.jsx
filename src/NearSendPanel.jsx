@@ -16,7 +16,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { parseUnits, formatUnits, isAddress } from "viem";
-import { ArrowUpDown, Check, ChevronDown } from "lucide-react";
+import NearTokenPicker from "./NearTokenPicker.jsx";
+import { BridgeCard, AmountBox, MaxButton, FlipArrow, FeeRow, DetailsPanel, DetailRow, CtaButton, FootNote } from "./swapUi.jsx";
 import { NATIVE_SYMBOL, TOKEN_ADDRESSES } from "./chainData.js";
 import { nearView, nearAvailableBalance } from "./nearRpc.js";
 import { useNearWallet } from "./nearWallet.js";
@@ -79,49 +80,21 @@ function call(methodName, args, gasTgas, deposit) {
   return { type: "FunctionCall", params: { methodName, args, gas: (BigInt(gasTgas) * TGAS).toString(), deposit: deposit.toString() } };
 }
 
-// A small token picker styled like the Bridge's own token pill.
-function TokenSelect({ P, TokenIcon, options, value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    function onDoc(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, []);
-  const current = options.find((o) => o.id === value) ?? options[0];
-  const Icon = TokenIcon ?? (() => null);
-  return (
-    <div className="relative shrink-0" ref={ref}>
-      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 pl-2 pr-2.5 py-1.5 rounded-full" style={{ background: P.pillBg }}>
-        <Icon symbol={current.symbol} size={18} />
-        <span className="text-[14px] font-semibold" style={{ color: P.textPrimary }}>{current.symbol}</span>
-        <ChevronDown size={14} color={P.textMuted} />
-      </button>
-      {open && (
-        <div className="absolute right-0 z-50 mt-2 w-44 rounded-xl shadow-2xl py-1" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-          {options.map((o) => (
-            <button key={o.id} onClick={() => { onChange(o.id); setOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
-              <Icon symbol={o.symbol} size={18} />
-              <span className="text-[13px]" style={{ color: P.textPrimary }}>{o.symbol}</span>
-              {o.id === value && <Check size={13} color={P.ctaBg} className="ml-auto" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+// What you can pay with, as NEAR token ids, for the shared NEAR picker.
+const PAY_TOKENS = PAY_OPTIONS.map((p) => p.id);
+const PAY_METAS = Object.fromEntries(PAY_OPTIONS.map((p) => [p.id, { symbol: p.symbol }]));
 
-export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear, ChainPicker, TokenIcon, initialDest, onFlip }) {
+// ChainPicker (the Bridge's own network dropdown) and renderReceivePicker
+// (the Bridge's own token dropdown) come from App.jsx, so this panel
+// uses the same controls as every other Bridge route.
+export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear, ChainPicker, TokenIcon, renderReceivePicker, chainName = (k) => CHAIN_NAME[k] ?? k, initialDest, onFlip }) {
   const wallet = useNearWallet();
   const accountId = wallet.account?.accountId;
   const store = useMemo(() => createLocalNearSwapStore(), []);
   const [payId, setPayId] = useState(NATIVE_NEAR);
   const [amount, setAmount] = useState("");
   const [destChain, setDestChain] = useState(DEST_CHAINS.includes(initialDest) ? initialDest : "base");
-  const [destKind, setDestKind] = useState("USDC"); // "USDC" or "native"
+  const [destSymbol, setDestSymbol] = useState("USDC");
   const [tokens, setTokens] = useState(null);
   const [tokensError, setTokensError] = useState(null);
   const [balance, setBalance] = useState(null);
@@ -157,13 +130,13 @@ export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear
     if (!origin) return { error: `NEAR Intents doesn't list ${pay.symbol} on NEAR right now.` };
     if (origin.decimals !== pay.decimals) return { error: `${pay.symbol} decimals don't match NEAR Intents' listing, so this route is disabled for safety.` };
     const bc = NEAR_ORIGIN_BLOCKCHAIN[destChain];
-    const dest =
-      destKind === "USDC"
-        ? findOneClickAssetId(tokens, bc, TOKEN_ADDRESSES.USDC?.[destChain] ?? "")
-        : findOneClickAssetId(tokens, bc, null, NATIVE_SYMBOL[destChain]);
-    if (!dest) return { error: `NEAR Intents doesn't list ${destKind === "USDC" ? "USDC" : NATIVE_SYMBOL[destChain]} on ${CHAIN_NAME[destChain]} right now.` };
+    // The chain's own coin, or the token's verified contract on that chain.
+    const isNative = destSymbol === NATIVE_SYMBOL[destChain];
+    const contract = TOKEN_ADDRESSES[destSymbol]?.[destChain];
+    const dest = isNative ? findOneClickAssetId(tokens, bc, null, NATIVE_SYMBOL[destChain]) : contract ? findOneClickAssetId(tokens, bc, contract) : null;
+    if (!dest) return { error: `NEAR Intents doesn't support ${destSymbol} on ${chainName(destChain)} — pick another token.` };
     return { originAsset: origin.assetId, destinationAsset: dest.assetId, destDecimals: dest.decimals, destSymbol: dest.symbol, price: Number(origin.price) || 0 };
-  }, [tokens, pay, destChain, destKind]);
+  }, [tokens, pay, destChain, destSymbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const amountRaw = useMemo(() => {
     if (!amount || !/^\d*\.?\d*$/.test(amount)) return null;
@@ -265,7 +238,7 @@ export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear
       assertQuoteSafeToFund(response, exp);
       // Everything the deposit needs is pinned here, so nothing typed or
       // picked after the quote can change what gets sent.
-      setConfirm({ status: "ready", response, expected: exp, route, payAmount: amount, pay, destName: CHAIN_NAME[destChain] });
+      setConfirm({ status: "ready", response, expected: exp, route, payAmount: amount, pay, destName: chainName(destChain) });
     } catch (e) {
       setConfirm({ status: "error", error: e?.message || "Couldn't get a quote." });
     }
@@ -320,83 +293,69 @@ export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear
   }
 
   const box = { background: P.input, border: `1px solid ${P.panelBorder}` };
-  const card = { background: P.panel, border: `1px solid ${P.panelBorder}` };
   const q = preview.status === "ok" ? preview.quote : null;
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Same layout as the Bridge form: network picker, amount with MAX
-          and a token picker, the flip arrow, then what arrives where. The
+    <div>
+      {/* The Bridge form's own pieces (swapUi.jsx + App's pickers): the
           NEAR wallet connects from the header's Connect button. */}
-      <div className="rounded-2xl p-4 shadow-sm" style={card}>
-        <div className="flex items-center justify-between mb-2.5">
-          <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>You send</span>
-          <span className="text-[11.5px]" style={{ color: P.textMuted }}>{accountId && balance != null ? `Balance: ${fmt(balance, pay.decimals)} ${pay.symbol}` : ""}</span>
-        </div>
+      <BridgeCard P={P} label="You send" right={accountId && balance != null ? `Balance: ${fmt(balance, pay.decimals)} ${pay.symbol}` : ""}>
         <div className="flex items-center justify-between mb-3">{fromPicker}</div>
-        <div className="flex items-center justify-between rounded-xl px-3.5 py-3 gap-2" style={{ ...box, borderColor: insufficient ? "#D92D20" : P.panelBorder }}>
-          <input value={amount} onChange={(e) => /^\d*\.?\d*$/.test(e.target.value) && setAmount(e.target.value)} placeholder="0" inputMode="decimal" className="min-w-0 flex-1 bg-transparent outline-none font-display text-[24px] font-semibold" style={{ color: P.textPrimary }} />
-          <button
-            onClick={() => spendable != null && setAmount(formatUnits(spendable, pay.decimals))}
-            disabled={spendable == null}
-            className="text-[10.5px] font-bold px-2 py-1 rounded-md shrink-0"
-            style={{ background: spendable == null ? P.pillBg : `${P.ctaBg}1A`, color: spendable == null ? P.textMuted : P.ctaBg, opacity: spendable == null ? 0.6 : 1 }}
-          >
-            MAX
-          </button>
-          <TokenSelect P={P} TokenIcon={TokenIcon} options={PAY_OPTIONS} value={payId} onChange={setPayId} />
-        </div>
+        <AmountBox P={P} danger={insufficient}>
+          <input
+            value={amount}
+            onChange={(e) => /^\d*\.?\d*$/.test(e.target.value) && setAmount(e.target.value)}
+            placeholder="0"
+            inputMode="decimal"
+            className="font-display bg-transparent text-[24px] font-semibold w-full"
+            style={{ color: P.textPrimary }}
+          />
+          <MaxButton P={P} disabled={spendable == null} onClick={() => spendable != null && setAmount(formatUnits(spendable, pay.decimals))} />
+          <NearTokenPicker P={P} value={payId} metas={PAY_METAS} tokens={PAY_TOKENS} onPick={setPayId} TokenIcon={TokenIcon} />
+        </AmountBox>
         {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>{blocker}</div>}
         {wallet.status === "error" && <div className="text-[11px] mt-1.5" style={{ color: "#D92D20" }}>{wallet.error}</div>}
-      </div>
+      </BridgeCard>
 
-      <div className="flex justify-center -my-5 relative z-10">
-        <button onClick={onFlip ? () => onFlip(destChain) : undefined} disabled={!onFlip} title="Receive on NEAR instead" className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm" style={{ background: P.ctaBg, opacity: onFlip ? 1 : 0.4 }}>
-          <ArrowUpDown size={15} color={P.ctaText} />
-        </button>
-      </div>
+      <FlipArrow P={P} onClick={() => onFlip?.(destChain)} disabled={!onFlip} title="Receive on NEAR instead" />
 
-      <div className="rounded-2xl p-4 shadow-sm" style={card}>
-        <div className="flex items-center justify-between mb-2.5">
-          <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>You receive</span>
-        </div>
+      <BridgeCard P={P} label="You receive" className="rounded-2xl p-4 mt-3 shadow-sm">
         <div className="flex items-center justify-between mb-3">
-          {ChainPicker ? (
-            <ChainPicker value={destChain} onChange={setDestChain} P={P} chainOrder={DEST_CHAINS} />
-          ) : (
-            <span className="text-[12.5px] font-medium" style={{ color: P.textPrimary }}>{CHAIN_NAME[destChain]}</span>
-          )}
+          {ChainPicker && <ChainPicker value={destChain} onChange={(k) => { setDestChain(k); setDestSymbol("USDC"); }} P={P} chainOrder={DEST_CHAINS} />}
         </div>
-        <div className="flex items-center justify-between rounded-xl px-3.5 py-3 gap-2" style={box}>
-          <span className="font-display text-[24px] font-semibold truncate" style={{ color: q ? P.textPrimary : P.textMuted }}>{q ? q.amountOutFormatted : preview.status === "loading" ? "…" : "0"}</span>
-          <TokenSelect
-            P={P}
-            TokenIcon={TokenIcon}
-            options={[{ id: "USDC", symbol: "USDC" }, { id: "native", symbol: NATIVE_SYMBOL[destChain] }]}
-            value={destKind}
-            onChange={setDestKind}
-          />
+        <AmountBox P={P}>
+          <span className="font-display text-[24px] font-semibold" style={{ color: q ? P.textPrimary : P.textMuted }}>{q ? q.amountOutFormatted : preview.status === "loading" ? "…" : "0"}</span>
+          {renderReceivePicker?.(destSymbol, setDestSymbol, destChain)}
+        </AmountBox>
+        {/* Delivered only to the connected EVM wallet — no typed addresses. */}
+        <div className="text-[11.5px] mt-1.5" style={{ color: P.textMuted }}>
+          {evmAddress ? `Arrives at your connected wallet ${evmAddress.slice(0, 6)}…${evmAddress.slice(-4)} on ${chainName(destChain)}.` : `Connect an EVM wallet (top right) to receive on ${chainName(destChain)}.`}
         </div>
-      </div>
+      </BridgeCard>
 
-      {/* Delivered only to the connected EVM wallet — no typed addresses. */}
-      <div className="text-[11.5px] -mt-1" style={{ color: P.textMuted }}>
-        {evmAddress ? `Arrives at your connected wallet ${evmAddress.slice(0, 6)}…${evmAddress.slice(-4)} on ${CHAIN_NAME[destChain]}.` : `Connect an EVM wallet (top right) to receive on ${CHAIN_NAME[destChain]}.`}
-      </div>
-
-      {tokensError && <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{tokensError}</div>}
-      {route?.error && <div className="text-[11.5px]" style={{ color: P.textMuted }}>{route.error}</div>}
-      {preview.status === "error" && <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{preview.error}</div>}
-      {q && route && (
-        <div className="rounded-xl px-3.5 py-3 flex flex-col gap-1.5 text-[12px]" style={box}>
-          <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Minimum received</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmt(q.minAmountOut, route.destDecimals)} {route.destSymbol}</span></div>
-          <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Fees</span><span style={{ color: P.textPrimary }}>Mango 0.5% + NEAR Intents fee + gas</span></div>
-          {q.timeEstimate ? <div className="flex justify-between"><span style={{ color: P.textSecondary }}>ETA</span><span style={{ color: P.textPrimary }}>~{Math.max(1, Math.round(q.timeEstimate / 60))} min after deposit</span></div> : null}
-        </div>
+      <FeeRow
+        P={P}
+        feeLabel="Fee 0.5%"
+        right={q?.timeEstimate ? `ETA: ~${Math.max(1, Math.round(q.timeEstimate / 60))} min` : "ETA: —"}
+        open={detailsOpen}
+        onToggle={() => setDetailsOpen((o) => !o)}
+      />
+      {detailsOpen && (
+        <DetailsPanel P={P}>
+          <DetailRow P={P} label="Route" mono={false}>NEAR → {chainName(destChain)} via NEAR Intents</DetailRow>
+          <DetailRow P={P} label="Minimum received">{q && route?.destDecimals != null ? `${fmt(q.minAmountOut, route.destDecimals)} ${route.destSymbol}` : "—"}</DetailRow>
+          <DetailRow P={P} label="Protocol fee (0.5%)">{amountRaw ? `${fmt((amountRaw * 50n) / 10000n, pay.decimals)} ${pay.symbol}` : "—"}</DetailRow>
+          <DetailRow P={P} label="NEAR Intents fee" mono={false}>Included in the quote</DetailRow>
+        </DetailsPanel>
       )}
 
+      {tokensError && <div className="text-[11.5px] mt-2" style={{ color: "#D92D20" }}>{tokensError}</div>}
+      {route?.error && <div className="text-[11.5px] mt-2" style={{ color: P.textMuted }}>{route.error}</div>}
+      {preview.status === "error" && <div className="text-[11.5px] mt-2" style={{ color: "#D92D20" }}>{preview.error}</div>}
+
       {activeSwap && (
-        <div className="rounded-xl px-3.5 py-3 text-[12px] flex flex-col gap-1" style={{ ...box, borderColor: activeSwap.status === "SUCCESS" ? "#00D67D" : ["FAILED", "SEND_FAILED"].includes(activeSwap.status) ? "#D92D20" : P.panelBorder }}>
+        <div className="mt-3 rounded-xl px-3.5 py-3 text-[12px] flex flex-col gap-1" style={{ ...box, borderColor: activeSwap.status === "SUCCESS" ? "#00D67D" : ["FAILED", "SEND_FAILED"].includes(activeSwap.status) ? "#D92D20" : P.panelBorder }}>
           <div className="font-medium" style={{ color: P.textPrimary }}>{activeSwap.payAmount} {activeSwap.fromSymbol} from NEAR → {short(activeSwap.recipient)}</div>
           <div style={{ color: P.textSecondary }}>{STATUS_TEXT[activeSwap.status] ?? activeSwap.status}</div>
           {activeSwap.amountOutFormatted && activeSwap.status === "SUCCESS" && <div style={{ color: P.textSecondary }}>Received {activeSwap.amountOutFormatted}</div>}
@@ -405,15 +364,13 @@ export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear
         </div>
       )}
 
-      {!accountId && (
-        <div className="text-center text-[12px]" style={{ color: P.textMuted }}>Connect your NEAR wallet with the Connect button at the top.</div>
-      )}
+      {!accountId && <FootNote P={P}>Connect your NEAR wallet with the Connect button at the top.</FootNote>}
       {accountId && (
-        <button disabled={!!blocker} onClick={openConfirm} className="w-full py-3.5 rounded-full font-display font-semibold text-[15px]" style={{ background: blocker ? P.ctaDisabledBg : P.ctaBg, color: blocker ? P.ctaDisabledText : P.ctaText, cursor: blocker ? "not-allowed" : "pointer" }}>
+        <CtaButton P={P} disabled={!!blocker} onClick={openConfirm}>
           {blocker ?? "Send from NEAR"}
-        </button>
+        </CtaButton>
       )}
-      <div className="text-center text-[11.5px]" style={{ color: P.textMuted }}>Powered by NEAR Intents. You pay NEAR gas and NEAR Intents' own fee; refunds go back to your NEAR wallet.</div>
+      <FootNote P={P}>Powered by NEAR Intents. You pay NEAR gas and NEAR Intents' own fee; refunds go back to your NEAR wallet.</FootNote>
 
       {confirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)" }}>

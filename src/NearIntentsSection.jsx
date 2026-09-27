@@ -22,6 +22,8 @@ import { writeContract, sendTransaction, switchChain, getAccount } from "wagmi/a
 import { config } from "./wagmi.js";
 // One shared NEAR wallet connection for the whole site (nearWallet.js).
 import { useNearWallet } from "./nearWallet.js";
+import NearTokenPicker from "./NearTokenPicker.jsx";
+import { AmountBox } from "./swapUi.jsx";
 import { MAINNET_CHAIN_IDS, NATIVE_SYMBOL, TOKEN_ADDRESSES } from "./chainData.js";
 import {
   NEAR_DESTINATION_ASSETS,
@@ -90,7 +92,7 @@ function short(value) {
   return typeof value === "string" && value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
 }
 
-export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum, insufficient, originDecimals, evmAddress, connected, isFromSolana, originAmountUsd, onConnectNear }) {
+export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum, insufficient, originDecimals, evmAddress, connected, isFromSolana, originAmountUsd, onConnectNear, TokenIcon }) {
   const [destSymbol, setDestSymbol] = useState("USDC");
   const sharedNear = useNearWallet();
   // Only an account id that 1Click can deliver to counts as connected here.
@@ -343,25 +345,20 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex gap-2">
-        {NEAR_DESTINATION_ASSETS.map((a) => (
-          <button
-            key={a.symbol}
-            onClick={() => setDestSymbol(a.symbol)}
-            className="px-3 py-1.5 rounded-full text-[12.5px] font-medium"
-            style={{ background: destSymbol === a.symbol ? P.ctaBg : P.input, color: destSymbol === a.symbol ? P.ctaText : P.textPrimary, border: `1px solid ${P.panelBorder}` }}
-          >
-            {a.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={box}>
+      {/* Same amount row and token picker as every other route. */}
+      <AmountBox P={P}>
         <span className="font-display text-[24px] font-semibold" style={{ color: q ? P.textPrimary : P.textMuted }}>
           {q ? q.amountOutFormatted : amtNum > 0 && preview.status === "loading" ? "…" : "0"}
         </span>
-        <span className="text-[13px] font-medium" style={{ color: P.textSecondary }}>{destSymbol} on NEAR</span>
-      </div>
+        <NearTokenPicker
+          P={P}
+          value={NEAR_DESTINATION_ASSETS.find((a) => a.symbol === destSymbol)?.contract}
+          tokens={NEAR_DESTINATION_ASSETS.map((a) => a.contract)}
+          metas={Object.fromEntries(NEAR_DESTINATION_ASSETS.map((a) => [a.contract, { symbol: a.symbol }]))}
+          onPick={(contract) => setDestSymbol(NEAR_DESTINATION_ASSETS.find((a) => a.contract === contract)?.symbol ?? "USDC")}
+          TokenIcon={TokenIcon}
+        />
+      </AmountBox>
       {tokensError && <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{tokensError}</div>}
       {route?.error && <div className="text-[11.5px]" style={{ color: P.textMuted }}>{route.error}</div>}
       {preview.status === "error" && <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{preview.error}</div>}
