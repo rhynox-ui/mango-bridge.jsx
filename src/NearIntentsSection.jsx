@@ -20,6 +20,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { parseUnits, formatUnits } from "viem";
 import { writeContract, sendTransaction, switchChain, getAccount } from "wagmi/actions";
 import { config } from "./wagmi.js";
+// One shared near-connect instance for the whole site (nearWallet.js).
+import { getNearConnector } from "./nearWallet.js";
 import { MAINNET_CHAIN_IDS, NATIVE_SYMBOL, TOKEN_ADDRESSES } from "./chainData.js";
 import {
   NEAR_DESTINATION_ASSETS,
@@ -53,19 +55,6 @@ const ERC20_TRANSFER_ABI = [
 // needs no signature, so only the account id is ever read from it; the
 // confirm screen still shows that account before anything is sent.
 const NEAR_WALLET_FLAG = "mango:near-wallet-connected";
-let connectorPromise = null;
-function getNearConnector() {
-  if (!connectorPromise) {
-    connectorPromise = import("@hot-labs/near-connect")
-      .then(({ NearConnector }) => new NearConnector({ network: "mainnet" }))
-      .catch((err) => {
-        connectorPromise = null;
-        throw err;
-      });
-  }
-  return connectorPromise;
-}
-
 async function firstAccountId(wallet) {
   const accounts = await wallet.getAccounts({ network: "mainnet" });
   const id = accounts?.[0]?.accountId;

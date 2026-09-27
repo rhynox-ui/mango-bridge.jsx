@@ -112,6 +112,7 @@ import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SY
 import { ARC_USDC, ARC_GAS_RESERVE_USDC } from "./chainData.js";
 import SwapChartPanel from "./SwapChartPanel.jsx";
 import NearIntentsSection from "./NearIntentsSection.jsx";
+import NearSwapPanel from "./NearSwapPanel.jsx";
 import { NATIVE_SYMBOL } from "./chainData.js";
 import { UNISWAP_V3_ADDRESSES } from "./uniswapV3.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
@@ -3947,6 +3948,9 @@ export default function MangoBridge() {
   // "Receive on NEAR" — kept separate from `to`, which always stays a
   // real CHAINS key so every existing Relay/wagmi path keeps working.
   const [nearMode, setNearMode] = useState(false);
+  // "Swap on NEAR" — same idea for the Swap tab: its own panel
+  // (NearSwapPanel.jsx), with from/to left on real CHAINS keys.
+  const [nearSwap, setNearSwap] = useState(false);
   // Real gap, user-reported: this site never had a working slippage
   // control at all. Two earlier passes at this fix both had a real
   // discoverability problem — first the control lived in the read-only
@@ -4492,6 +4496,13 @@ export default function MangoBridge() {
   // between the two tabs — everything else below is shared.
   const isSwapTab = tab === "swap";
   const nearOn = nearMode && !isSwapTab;
+  const nearSwapOn = nearSwap && isSwapTab;
+  function onSwapChainPick(id) {
+    if (id === "near") return setNearSwap(true);
+    setNearSwap(false);
+    handleSwapChainChange(id);
+  }
+  const swapChainOrderWithNear = isMainnet() ? [...swapChainOrder, "near"] : swapChainOrder;
 
   // Real bug fix, user-reported: the top Search button used to fire the
   // exact same open state as the You-receive field's own dropdown (one
@@ -5298,13 +5309,13 @@ export default function MangoBridge() {
                   Hoisting the chain-pill row with it keeps the stacked
                   mobile order byte-identical: chain row, chart, Buy/Sell.
                   On desktop those two simply become the left column. */}
-              <div className={isSwapTab ? "lg:grid lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-6 lg:items-start" : ""}>
+              <div className={isSwapTab && !nearSwapOn ? "lg:grid lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-6 lg:items-start" : ""}>
               {isSwapTab && (
                 <div className="lg:sticky lg:top-8">
                   <div className="flex items-center gap-1.5 mb-1">
                     <div className="flex-1 flex items-center gap-1.5 rounded-full px-2.5 py-1" style={{ background: P.pillBg }}>
                       <span className="text-[10.5px] mr-px" style={{ color: P.textMuted }}>Swap on</span>
-                      <ChainDropdown value={from} onChange={handleSwapChainChange} P={P} chainOrder={swapChainOrder} />
+                      <ChainDropdown value={nearSwapOn ? "near" : from} onChange={onSwapChainPick} P={P} chainOrder={swapChainOrderWithNear} />
                     </div>
                     {/* Real bug fix, user-reported: this used to fire
                         toAssetPickerSignal — the exact same open state as
@@ -5319,6 +5330,7 @@ export default function MangoBridge() {
                         token" concept in same-chain Swap), but opening
                         one can never open, close, or otherwise touch the
                         other's state. */}
+                    {!nearSwapOn && (
                     <div className="relative shrink-0">
                       <button
                         onClick={() => setTopSearchSignal((n) => n + 1)}
@@ -5341,6 +5353,7 @@ export default function MangoBridge() {
                         discoveredLogos={discoveredAssetLogos}
                       />
                     </div>
+                    )}
                     <button
                       onClick={() => setSettingsOpen(true)}
                       className="w-[26px] h-[26px] rounded-[13px] flex items-center justify-center shrink-0"
@@ -5360,6 +5373,7 @@ export default function MangoBridge() {
                       an earlier merge left a second copy of this above
                       the "Swap on" row, which shipped two identical
                       charts to the live site. */}
+                  {!nearSwapOn && (
                   <SwapChartPanel
                     P={P}
                     chainKey={from}
@@ -5368,6 +5382,7 @@ export default function MangoBridge() {
                     nativeSymbol={NATIVE_SYMBOL[from]}
                     tokenAddressFor={swapChartTokenAddress}
                   />
+                  )}
                 </div>
               )}
 
@@ -5375,6 +5390,10 @@ export default function MangoBridge() {
                   number cannot blow the grid track out — the classic
                   way a two-column grid silently starts overflowing. */}
               <div className="min-w-0">
+              {nearSwapOn ? (
+                <NearSwapPanel P={P} slippageBps={slippageBps} />
+              ) : (
+              <>
 
               {/* SWAP LAYOUT — a direct translation of mango-mobile's
                   own DexScreen.tsx: the same rows in the same order
@@ -5539,7 +5558,7 @@ export default function MangoBridge() {
                     panel above the form. */}
                 <div className="flex items-center justify-between mb-3">
                   {isSwapTab ? (
-                    <ChainDropdown value={from} onChange={handleSwapChainChange} P={P} chainOrder={swapChainOrder} />
+                    <ChainDropdown value={nearSwapOn ? "near" : from} onChange={onSwapChainPick} P={P} chainOrder={swapChainOrderWithNear} />
                   ) : (
                     <ChainDropdown value={from} exclude={to} onChange={handleFromChange} P={P} chainOrder={bridgeFromChainOrder} />
                   )}
@@ -5882,6 +5901,8 @@ export default function MangoBridge() {
               <div className="text-center mt-4 text-[11.5px]" style={{ color: P.textMuted }}>
                 Powered by Relay Protocol. Only verified routes are enabled. Estimated arrival time and fees are shown before you confirm.
               </div>
+              )}
+              </>
               )}
               </div>{/* /form column */}
               </div>{/* /desktop grid */}
