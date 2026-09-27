@@ -109,6 +109,7 @@ import { executeSolanaSourcedTransfer } from "./relaySdkSolanaExecution.js";
 import { fetchRelayChains } from "./relayChains.js";
 import { fetchOkxSupportedChainIds, CONFIRMED_FALLBACK_ONLY_CHAIN_IDS } from "./fallbackChains.js";
 import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL, WALLET_ONLY_EVM_CHAINS } from "./wallet/walletChains.js";
+import { ARC_USDC, ARC_GAS_RESERVE_USDC } from "./chainData.js";
 import SwapChartPanel from "./SwapChartPanel.jsx";
 import NearIntentsSection from "./NearIntentsSection.jsx";
 import { NATIVE_SYMBOL } from "./chainData.js";
@@ -159,6 +160,10 @@ const CHAINS_MAINNET = {
   plasma: { id: "plasma", name: "Plasma", short: "XPL", color: "#0FDD8D", mark: "◆", baseSeconds: 20, baseFee: 0.02, explorer: "https://plasmascan.to/tx/" },
   unichain: { id: "unichain", name: "Unichain", short: "UNI", color: "#FF007A", mark: "◆", baseSeconds: 30, baseFee: 0.03, explorer: "https://uniscan.xyz/tx/" },
   xlayer: { id: "xlayer", name: "X Layer", short: "OKB", color: "#00D2B5", mark: "◆", baseSeconds: 30, baseFee: 0.03, explorer: "https://www.oklink.com/xlayer/tx/" },
+  // Arc — USDC is the native gas asset (see chainData.js ARC_USDC). No
+  // CCTP mainnet entry yet (cctp.js), so every Arc route goes through
+  // Relay. ~500ms blocks with one-confirmation finality.
+  arc: { id: "arc", name: "Arc", short: "USDC", color: "#182680", mark: "◆", baseSeconds: 10, baseFee: 0.01, explorer: "https://explorer.arc.io/tx/" },
 };
 
 // Wallet-only chains — the same 25-chain list Mango Wallet's own dashboard
@@ -206,7 +211,7 @@ const CHAINS = new Proxy({}, {
   ownKeys() { return Reflect.ownKeys(getChains()); },
   getOwnPropertyDescriptor(_, key) { return Reflect.getOwnPropertyDescriptor(getChains(), key); },
 });
-const CHAIN_ORDER = ["ethereum", "base", "bnb", "robinhood", "stable", "solana", "arbitrum", "avalanche", "abstract", "hyperevm", "ink", "plasma", "unichain", "xlayer"];
+const CHAIN_ORDER = ["ethereum", "base", "bnb", "robinhood", "stable", "solana", "arbitrum", "avalanche", "abstract", "hyperevm", "ink", "plasma", "unichain", "xlayer", "arc"];
 
 // Buy/Sell pill colours, taken from mango-mobile's own palette.js
 // (GAIN and DANGER) rather than picked to look similar — this app's
@@ -237,7 +242,7 @@ function isValidDestinationAddress(address, isSolanaChain) {
 const NATIVE_SYMBOL_BY_CHAIN = {
   ethereum: "ETH", base: "ETH", bnb: "BNB", robinhood: "ETH", stable: "USDT0", solana: "SOL",
   arbitrum: "ETH", avalanche: "AVAX", abstract: "ETH", hyperevm: "HYPE",
-  ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB",
+  ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB", arc: "USDC",
   ...WALLET_ONLY_NATIVE_SYMBOL,
 };
 
@@ -527,6 +532,7 @@ const DEFAULT_BALANCES = {
   plasma: { XPL: 0 },
   unichain: { ETH: 0 },
   xlayer: { OKB: 0 },
+  arc: { USDC: 0 },
   // Same reason again, for walletChains.js's 25 wallet-only chains — built
   // programmatically from WALLET_ONLY_NATIVE_SYMBOL rather than hand-typed,
   // so there's no risk of missing one and reintroducing the exact crash
@@ -4112,6 +4118,10 @@ export default function MangoBridge() {
 
   const { data: liveBalance, isLoading: balanceLoading } = useBalance({
     address,
+    // Arc's native USDC is read through its ERC-20 view (6 decimals), so
+    // the balance is in the same units execution parses amounts with and
+    // MAX's exact base-unit path below can run.
+    token: from === "arc" ? ARC_USDC : undefined,
     chainId: fromWagmiChain.id,
     query: { enabled: connected && !CHAINS[from]?.isSolana },
   });
@@ -4314,6 +4324,7 @@ export default function MangoBridge() {
 
   const { data: liveBalanceTo, isLoading: balanceLoadingTo } = useBalance({
     address,
+    token: to === "arc" ? ARC_USDC : undefined,
     chainId: toWagmiChain.id,
     query: { enabled: connected && isNativeAssetTo && !CHAINS[to]?.isSolana },
   });
@@ -4890,7 +4901,9 @@ export default function MangoBridge() {
   // room to spare — the same conservative minimum-reserve convention
   // Phantom/Solflare themselves use, not a guessed number.
   const GAS_RESERVE = { ETH: 0.0004, BNB: 0.001, USDT0: 0.5, SOL: 0.002 };
-  const gasReserve = GAS_RESERVE[fromAsset.symbol] ?? 0;
+  // Keyed by symbol, so Arc needs its own case: USDC is a token
+  // everywhere else (no reserve), but on Arc it is also the gas.
+  const gasReserve = from === "arc" && isNativeAsset ? ARC_GAS_RESERVE_USDC : (GAS_RESERVE[fromAsset.symbol] ?? 0);
   const spendableBalance = availableBalance !== null ? Math.max(availableBalance - gasReserve, 0) : null;
   // The same spendable figure as above, kept EXACTLY, in base units —
   // see setMax's own comment for the real bug the Number version caused.

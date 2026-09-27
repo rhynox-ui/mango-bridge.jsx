@@ -26,11 +26,13 @@ const CCTP_CHAINS_TESTNET = {
   arc: { domain: 26, usdc: "0x3600000000000000000000000000000000000000", chainId: 5042002, tokenMessenger: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA", messageTransmitter: "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275" },
 };
 
-// Arc is deliberately NOT included here — as of this build, Arc's own
-// official site still describes it as "currently in public testnet," ahead
-// of mainnet launch. There is no real Arc mainnet CCTP domain or contract
-// address to point at yet. Add it once Circle actually flips that switch —
-// not before, and not by guessing.
+// Arc is deliberately NOT included here. Arc mainnet is live (chain 5042,
+// CCTP domain 26), but its mainnet TokenMessengerV2/MessageTransmitterV2
+// addresses have not been verified from a reachable source yet, and Arc
+// testnet already proved they can differ from the shared CREATE2 ones
+// above. Arc routes through Relay (getTransferKind's fallback) until
+// those addresses are confirmed from Circle's own contract reference —
+// not guessed.
 //
 // Avalanche, Arbitrum, and Unichain added after real verification: domain
 // IDs and native-USDC addresses came from @wormhole-foundation/sdk-base's
