@@ -122,8 +122,6 @@ export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear
   const [amount, setAmount] = useState("");
   const [destChain, setDestChain] = useState(DEST_CHAINS.includes(initialDest) ? initialDest : "base");
   const [destKind, setDestKind] = useState("USDC"); // "USDC" or "native"
-  const [recipient, setRecipient] = useState("");
-  const [sendToOther, setSendToOther] = useState(false);
   const [tokens, setTokens] = useState(null);
   const [tokensError, setTokensError] = useState(null);
   const [balance, setBalance] = useState(null);
@@ -133,7 +131,7 @@ export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear
   const previewId = useRef(0);
 
   const pay = PAY_OPTIONS.find((p) => p.id === payId);
-  const to = sendToOther ? recipient.trim() : evmAddress || "";
+  const to = evmAddress || "";
   const recipientValid = isAddress(to);
 
   useEffect(() => {
@@ -245,9 +243,7 @@ export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear
               ? "Not enough NEAR (0.25 NEAR is kept for fees)"
               : `Insufficient ${pay.symbol} balance`
             : !recipientValid
-              ? sendToOther
-                ? "Enter the address to receive at"
-                : "Connect an EVM wallet to receive"
+              ? "Connect an EVM wallet to receive"
               : preview.status === "error"
                 ? "No route for this amount"
                 : preview.status !== "ok"
@@ -383,19 +379,10 @@ export default function NearSendPanel({ P, fromPicker, evmAddress, onConnectNear
         </div>
       </div>
 
-      {/* Delivered to the connected EVM wallet, like the Bridge; a
-          different address only if the user asks for one. */}
-      {sendToOther ? (
-        <div>
-          <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="0x… address to receive at" spellCheck={false} autoFocus className="w-full rounded-xl px-3.5 py-2.5 text-[13px] font-mono outline-none" style={{ ...box, color: P.textPrimary, borderColor: recipient.trim() && !isAddress(recipient.trim()) ? "#D92D20" : P.panelBorder }} />
-          <div className="flex justify-between text-[11px] mt-1">
-            <span style={{ color: recipient.trim() && !isAddress(recipient.trim()) ? "#D92D20" : P.textMuted }}>{recipient.trim() && !isAddress(recipient.trim()) ? "That isn't an EVM address." : `Receives on ${CHAIN_NAME[destChain]}.`}</span>
-            <button onClick={() => { setSendToOther(false); setRecipient(""); }} style={{ color: P.textMuted }} className="underline">Use my wallet</button>
-          </div>
-        </div>
-      ) : (
-        <button onClick={() => setSendToOther(true)} className="self-start text-[11.5px] underline" style={{ color: P.textMuted }}>Send to a different address</button>
-      )}
+      {/* Delivered only to the connected EVM wallet — no typed addresses. */}
+      <div className="text-[11.5px] -mt-1" style={{ color: P.textMuted }}>
+        {evmAddress ? `Arrives at your connected wallet ${evmAddress.slice(0, 6)}…${evmAddress.slice(-4)} on ${CHAIN_NAME[destChain]}.` : `Connect an EVM wallet (top right) to receive on ${CHAIN_NAME[destChain]}.`}
+      </div>
 
       {tokensError && <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{tokensError}</div>}
       {route?.error && <div className="text-[11.5px]" style={{ color: P.textMuted }}>{route.error}</div>}

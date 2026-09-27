@@ -34,7 +34,6 @@ import {
   findOneClickAssetId,
   fundNearQuote,
   isFinalStatus,
-  isUserNearAddress,
   isNearIntentsAccountId,
   nearAccountExists,
   nearAppFees,
@@ -93,11 +92,9 @@ function short(value) {
 
 export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum, insufficient, originDecimals, evmAddress, connected, isFromSolana, originAmountUsd, onConnectNear }) {
   const [destSymbol, setDestSymbol] = useState("USDC");
-  const [nearAddress, setNearAddress] = useState("");
   const sharedNear = useNearWallet();
   // Only an account id that 1Click can deliver to counts as connected here.
   const nearWallet = sharedNear.account && isNearIntentsAccountId(sharedNear.account.accountId) ? sharedNear.account : null; // { accountId, name }
-  const [manualEntry, setManualEntry] = useState(false);
   const [addressState, setAddressState] = useState({ status: "idle" });
   const [tokens, setTokens] = useState(null);
   const [tokensError, setTokensError] = useState(null);
@@ -108,10 +105,10 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
   const previewId = useRef(0);
 
   const blockchain = NEAR_ORIGIN_BLOCKCHAIN[from];
-  const typedAddress = nearAddress.trim();
-  // Where the NEAR side is delivered: the connected wallet's account, or
-  // (fallback) the typed address. Every check below runs on this value.
-  const trimmedAddress = manualEntry ? typedAddress : nearWallet?.accountId ?? "";
+  // Where the NEAR side is delivered: only ever the connected NEAR
+  // wallet's own account — no typed addresses. Every check below runs on
+  // this value.
+  const trimmedAddress = nearWallet?.accountId ?? "";
   // Previews only need a valid recipient, not the user's — requote when
   // their address is confirmed, not on every keystroke.
   const previewRecipient = addressState.status === "ok" ? trimmedAddress : NEAR_FEE_ACCOUNT;
@@ -119,11 +116,6 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
   useEffect(() => {
     loadTokens().then(setTokens).catch(() => setTokensError("NEAR routes are unavailable right now — couldn't reach NEAR Intents. Try again shortly."));
   }, []);
-
-  // A freshly connected wallet replaces a typed address.
-  useEffect(() => {
-    if (nearWallet) setManualEntry(false);
-  }, [nearWallet?.accountId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function connectNearWallet() {
     if (onConnectNear) onConnectNear();
@@ -170,7 +162,7 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
   // Address: format first, then — for named accounts — that it exists.
   useEffect(() => {
     if (!trimmedAddress) return setAddressState({ status: "idle" });
-    if (manualEntry ? !isUserNearAddress(trimmedAddress) : !isNearIntentsAccountId(trimmedAddress)) return setAddressState({ status: "invalid" });
+    if (!isNearIntentsAccountId(trimmedAddress)) return setAddressState({ status: "invalid" });
     let cancelled = false;
     setAddressState({ status: "checking" });
     const t = setTimeout(() => {
@@ -183,7 +175,7 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
       cancelled = true;
       clearTimeout(t);
     };
-  }, [trimmedAddress, manualEntry]);
+  }, [trimmedAddress]);
 
   // Preview (dry quote): no deposit address, nothing to pay.
   useEffect(() => {
@@ -247,9 +239,7 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
           : insufficient
             ? "Insufficient balance"
             : !trimmedAddress
-              ? manualEntry
-                ? "Enter your NEAR address"
-                : "Connect your NEAR wallet"
+              ? "Connect your NEAR wallet"
               : addressState.status === "invalid"
                 ? "That isn't a NEAR address"
                 : addressState.status === "missing"
@@ -376,8 +366,7 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
       {route?.error && <div className="text-[11.5px]" style={{ color: P.textMuted }}>{route.error}</div>}
       {preview.status === "error" && <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{preview.error}</div>}
 
-      {!manualEntry && (
-        <div>
+      <div>
           <div className="text-[12px] font-medium mb-1.5" style={{ color: P.textSecondary }}>Receive to</div>
           {nearWallet ? (
             <div className="flex items-center justify-between rounded-xl px-3.5 py-2.5" style={box}>
@@ -404,37 +393,7 @@ export default function NearIntentsSection({ P, from, fromAsset, amount, amtNum,
             </button>
           )}
           {sharedNear.status === "error" && <div className="text-[11px] mt-1" style={{ color: "#D92D20" }}>{sharedNear.error}</div>}
-          <button onClick={() => setManualEntry(true)} className="text-[11px] mt-1.5 underline" style={{ color: P.textMuted }}>
-            No NEAR wallet here? Enter an address instead
-          </button>
-        </div>
-      )}
-
-      {manualEntry && (
-      <div>
-        <div className="text-[12px] font-medium mb-1.5" style={{ color: P.textSecondary }}>Your NEAR address</div>
-        <input
-          value={nearAddress}
-          onChange={(e) => setNearAddress(e.target.value)}
-          placeholder="yourname.near"
-          spellCheck={false}
-          autoCapitalize="none"
-          autoCorrect="off"
-          className="w-full rounded-xl px-3.5 py-2.5 text-[13px] font-mono outline-none"
-          style={{ ...box, color: P.textPrimary, borderColor: ["invalid", "missing"].includes(addressState.status) ? "#D92D20" : P.panelBorder }}
-        />
-        <div className="text-[11px] mt-1" style={{ color: ["invalid", "missing"].includes(addressState.status) ? "#D92D20" : P.textMuted }}>
-          {addressState.status === "invalid" && (trimmedAddress.startsWith("0x") ? "That looks like an EVM address. Enter your NEAR account (e.g. name.near)." : "That isn't a valid NEAR account.")}
-          {addressState.status === "missing" && "No NEAR account with that name exists. Check it for typos."}
-          {addressState.status === "unverified" && "Couldn't reach NEAR to check this account. Try again in a moment."}
-          {addressState.status === "ok" && "NEAR account found."}
-          {addressState.status === "idle" && `${destLabel} is delivered straight to this account.`}
-        </div>
-        <button onClick={() => setManualEntry(false)} className="text-[11px] mt-1.5 underline" style={{ color: P.textMuted }}>
-          Connect a NEAR wallet instead
-        </button>
       </div>
-      )}
 
       {q && (
         <div className="rounded-xl px-3.5 py-3 flex flex-col gap-1.5 text-[12px]" style={box}>
