@@ -17,7 +17,7 @@
 import {
   NetworkEthereum, NetworkBase, NetworkBinanceSmartChain,
   NetworkArbitrumOne, NetworkAvalanche, NetworkAbstract, NetworkHyperEvm, NetworkInk, NetworkPlasma, NetworkUnichain, NetworkXLayer, NetworkArc,
-  NetworkStable, NetworkRobinhood,
+  NetworkStable, NetworkRobinhood, NetworkNearProtocol,
   // Wallet-only chains (walletChains.js's own 25-chain list, now also
   // offered as Bridge routes — see App.jsx) — the exact same icon exports
   // already verified working in MangoWallet.jsx's own WALLET_ONLY_ICON map
@@ -58,6 +58,9 @@ const CHAIN_COLOR = {
   // Arc's own icon blue (@web3icons NetworkArc, metadata: Circle's Arc,
   // native USDC) — not the Arc browser.
   arc: "#182680",
+  // NEAR is a Bridge destination only (NearIntentsSection.jsx), not a
+  // CHAINS entry; its badge still needs a color here.
+  near: "#00EC97",
   polygon: "#8247E5", optimism: "#FF0420", zksync: "#8C8DFC", linea: "#61DFFF", scroll: "#FFEEDA",
   gnosis: "#04795B", monad: "#836EF9", sonic: "#FE9A4D", mantle: "#000000", blast: "#FCFC03",
   berachain: "#814625", worldchain: "#191919", sei: "#9E1F19", celo: "#FCFF52", fantom: "#1969FF",
@@ -76,7 +79,7 @@ const CHAIN_COLOR = {
 
 const SELF_CONTAINED_BADGE_CHAINS = [
   "ethereum", "base", "bnb", "solana", "stable", "robinhood",
-  "arbitrum", "avalanche", "abstract", "hyperevm", "ink", "plasma", "unichain", "xlayer", "arc",
+  "arbitrum", "avalanche", "abstract", "hyperevm", "ink", "plasma", "unichain", "xlayer", "arc", "near",
   "polygon", "optimism", "zksync", "linea", "scroll", "gnosis",
   "monad", "sonic", "mantle", "blast", "berachain", "worldchain", "sei",
   "celo", "fantom", "moonbeam", "cronos", "metis", "mode", "zora", "manta", "taiko", "polygonzkevm", "fraxtal",
@@ -147,6 +150,7 @@ function ChainIcon({ id, size }) {
   if (id === "unichain") return <NetworkUnichain variant="branded" size={s} />;
   if (id === "xlayer") return <NetworkXLayer variant="branded" size={s} />;
   if (id === "arc") return <NetworkArc variant="branded" size={s} />;
+  if (id === "near") return <NetworkNearProtocol variant="branded" size={s} />;
   const WalletOnlyIcon = WALLET_ONLY_ICON[id];
   if (WalletOnlyIcon) return <WalletOnlyIcon variant="branded" size={s} />;
   const sHand = size * 0.56;

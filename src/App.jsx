@@ -111,6 +111,7 @@ import { fetchOkxSupportedChainIds, CONFIRMED_FALLBACK_ONLY_CHAIN_IDS } from "./
 import { WALLET_ONLY_CHAIN_ORDER, WALLET_ONLY_CHAIN_LABEL, WALLET_ONLY_NATIVE_SYMBOL, WALLET_ONLY_EVM_CHAINS } from "./wallet/walletChains.js";
 import { ARC_USDC, ARC_GAS_RESERVE_USDC } from "./chainData.js";
 import SwapChartPanel from "./SwapChartPanel.jsx";
+import NearIntentsSection from "./NearIntentsSection.jsx";
 import { NATIVE_SYMBOL } from "./chainData.js";
 import { UNISWAP_V3_ADDRESSES } from "./uniswapV3.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
@@ -625,10 +626,15 @@ function FloatingMangoDecor({ P }) {
   );
 }
 
+// Destinations the Bridge can reach that aren't CHAINS entries — NEAR is
+// served by its own panel (NearIntentsSection.jsx), never by the Relay /
+// wagmi paths that every CHAINS key is assumed to support.
+const EXTRA_DESTINATIONS = { near: { name: "NEAR" } };
+
 function ChainDropdown({ value, exclude, onChange, P, chainOrder = CHAIN_ORDER }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  const c = CHAINS[value];
+  const c = CHAINS[value] ?? EXTRA_DESTINATIONS[value];
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
     document.addEventListener("mousedown", onDoc);
@@ -661,7 +667,7 @@ function ChainDropdown({ value, exclude, onChange, P, chainOrder = CHAIN_ORDER }
         // screen without this.
         <div className="absolute left-0 z-50 mt-2 w-44 max-h-80 overflow-y-auto rounded-xl shadow-2xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           {chainOrder.filter((id) => id !== exclude).map((id) => {
-            const cc = CHAINS[id];
+            const cc = CHAINS[id] ?? EXTRA_DESTINATIONS[id];
             return (
               <button key={id} onClick={() => { onChange(id); setOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-left" style={{ background: "transparent" }}>
                 <ChainBadge id={id} size={18} />
@@ -3938,6 +3944,9 @@ export default function MangoBridge() {
   );
   const [showNetworkSelector, setShowNetworkSelector] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // "Receive on NEAR" — kept separate from `to`, which always stays a
+  // real CHAINS key so every existing Relay/wagmi path keeps working.
+  const [nearMode, setNearMode] = useState(false);
   // Real gap, user-reported: this site never had a working slippage
   // control at all. Two earlier passes at this fix both had a real
   // discoverability problem — first the control lived in the read-only
@@ -4482,6 +4491,7 @@ export default function MangoBridge() {
   // (same-chain-irrelevant) "send to another address" section differ
   // between the two tabs — everything else below is shared.
   const isSwapTab = tab === "swap";
+  const nearOn = nearMode && !isSwapTab;
 
   // Real bug fix, user-reported: the top Search button used to fire the
   // exact same open state as the You-receive field's own dropdown (one
@@ -5576,7 +5586,7 @@ export default function MangoBridge() {
 
               {/* Swap toggle */}
               <div className="flex justify-center -my-3 relative z-10">
-                <button onClick={swap} className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm" style={{ background: P.ctaBg }}>
+                <button onClick={nearOn ? undefined : swap} disabled={nearOn} className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm" style={{ background: P.ctaBg, opacity: nearOn ? 0.4 : 1 }}>
                   <ArrowUpDown size={15} color={P.ctaText} />
                 </button>
               </div>
@@ -5600,24 +5610,52 @@ export default function MangoBridge() {
                     two different chains. */}
                 {!isSwapTab && (
                   <div className="flex items-center justify-between mb-3">
-                    <ChainDropdown value={to} exclude={from} onChange={handleToChange} P={P} chainOrder={bridgeToChainOrder} />
+                    <ChainDropdown
+                      value={nearOn ? "near" : to}
+                      exclude={from}
+                      onChange={(id) => {
+                        if (id === "near") return setNearMode(true);
+                        setNearMode(false);
+                        handleToChange(id);
+                      }}
+                      P={P}
+                      chainOrder={isMainnet() ? [...bridgeToChainOrder, "near"] : bridgeToChainOrder}
+                    />
                   </div>
                 )}
-                <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
-                  <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 && received !== null ? P.textPrimary : P.textMuted }}>
-                    {amtNum > 0 ? (received !== null ? fmt(received, 4) : "—") : "0"}
-                  </span>
-                  <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken={isSwapTab} discoveredLogos={discoveredAssetLogos} />
-                </div>
-                {amtNum > 0 && received === null && (
-                  <div className="text-[11.5px] mt-1.5" style={{ color: P.textMuted }}>
-                    No price estimate yet for {fromAsset.custom ? fromAsset.symbol : toAsset.symbol} — the real amount is set by Relay's live quote.
+                {nearOn ? (
+                  <NearIntentsSection
+                    P={P}
+                    from={from}
+                    fromAsset={fromAsset}
+                    amount={amount}
+                    amtNum={amtNum}
+                    insufficient={insufficient}
+                    originDecimals={onchainDecimalsForAsset(fromAsset, from)}
+                    evmAddress={address}
+                    connected={isFromSolana ? false : isConnected}
+                    isFromSolana={isFromSolana}
+                    originAmountUsd={knownPrice ? amtNum * fromAsset.price : null}
+                  />
+                ) : (
+                <>
+                  <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
+                    <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 && received !== null ? P.textPrimary : P.textMuted }}>
+                      {amtNum > 0 ? (received !== null ? fmt(received, 4) : "—") : "0"}
+                    </span>
+                    <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken={isSwapTab} discoveredLogos={discoveredAssetLogos} />
                   </div>
-                )}
-                {receivedRoundsToZero && (
-                  <div className="text-[11.5px] mt-1.5" style={{ color: "#F0B84D" }}>
-                    This amount would return next to nothing at the current rate — try a larger amount, or this token/pair may not have a working route yet.
-                  </div>
+                  {amtNum > 0 && received === null && (
+                    <div className="text-[11.5px] mt-1.5" style={{ color: P.textMuted }}>
+                      No price estimate yet for {fromAsset.custom ? fromAsset.symbol : toAsset.symbol} — the real amount is set by Relay's live quote.
+                    </div>
+                  )}
+                  {receivedRoundsToZero && (
+                    <div className="text-[11.5px] mt-1.5" style={{ color: "#F0B84D" }}>
+                      This amount would return next to nothing at the current rate — try a larger amount, or this token/pair may not have a working route yet.
+                    </div>
+                  )}
+                </>
                 )}
               </div>
 
@@ -5625,6 +5663,8 @@ export default function MangoBridge() {
               )}
 
               {/* ETA / details collapsible */}
+              {!nearOn && (
+              <>
               <button onClick={() => setDetailsOpen((o) => !o)} className="w-full flex items-center justify-between mt-3 px-4 py-2.5 rounded-xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                 <span className="text-[12.5px] font-medium flex items-center gap-1.5" style={{ color: P.ctaBg }}>
                   <span className="w-1.5 h-1.5 rounded-full" style={{ background: P.ctaBg }} /> Fee {formatFeePct(DEV_FEE_PCT)}%
@@ -5651,6 +5691,8 @@ export default function MangoBridge() {
                   <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Protocol fee ({formatFeePct(DEV_FEE_PCT)}%)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmt(devFeeAmount, fromAsset.decimals)} {fromAsset.symbol}</span></div>
                 </div>
               )}
+              </>
+              )}
 
               {/* Real, contextual second-wallet prompt — only appears at
                   all when Solana is genuinely involved on either side of
@@ -5667,7 +5709,7 @@ export default function MangoBridge() {
                   always needs a connected wallet regardless of
                   sendToOther — that's what SIGNS the outgoing
                   transaction, not just who the destination is. */}
-              {((isFromSolana && !activeSolanaAddress) || needsSolanaAddressForSolanaDest) && (
+              {!nearOn && ((isFromSolana && !activeSolanaAddress) || needsSolanaAddressForSolanaDest) && (
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <div className="text-[12.5px] font-medium mb-1" style={{ color: P.textPrimary }}>Solana wallet needed</div>
                   <div className="text-[11px] mb-2.5" style={{ color: P.textMuted }}>
@@ -5710,7 +5752,7 @@ export default function MangoBridge() {
                   appears once Solana is genuinely connected and EVM is
                   the one remaining gap, matching what the comment
                   above already claimed it did. */}
-              {isFromSolana && activeSolanaAddress && !CHAINS[to]?.isSolana && !sendToOther && !address && (
+              {!nearOn && isFromSolana && activeSolanaAddress && !CHAINS[to]?.isSolana && !sendToOther && !address && (
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <div className="text-[12.5px] font-medium mb-1" style={{ color: P.textPrimary }}>EVM wallet needed</div>
                   <div className="text-[11px] mb-2.5" style={{ color: P.textMuted }}>
@@ -5730,7 +5772,7 @@ export default function MangoBridge() {
                   lands back in the connected wallet, same reasoning
                   mobile's own DexScreen.tsx gives for not offering this
                   section at all on its swap screen. */}
-              {ENABLE_SEND_TO_OTHER_ADDRESS && !isSwapTab && (
+              {ENABLE_SEND_TO_OTHER_ADDRESS && !isSwapTab && !nearOn && (
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <label className="flex items-center gap-2.5 cursor-pointer">
                     <input type="checkbox" checked={sendToOther} onChange={(e) => setSendToOther(e.target.checked)} className="w-4 h-4 rounded" style={{ accentColor: P.ctaBg }} />
@@ -5813,7 +5855,7 @@ export default function MangoBridge() {
                   state the label used to explain on this tab now
                   explains itself in swapPillHint instead, so nothing
                   is lost — see its comment. */}
-              {connected && !isSwapTab && (
+              {connected && !isSwapTab && !nearOn && (
                 <button
                   disabled={!canBridge || routeUnavailable}
                   onClick={() => setShowModal(true)}
@@ -5827,7 +5869,7 @@ export default function MangoBridge() {
                   {onWrongNetwork ? "Switch network to continue" : !chainAssetPairValid ? (isSwapTab ? "Choose different assets" : "Choose different chains") : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
                 </button>
               )}
-              {routeUnavailable && (
+              {routeUnavailable && !nearOn && (
                 <div className="text-center mt-2 text-[11.5px]" style={{ color: "#D92D20" }}>
                   No available route for this trade right now — {fromAsset.symbol} on {CHAINS[from].name} to {toAsset.symbol} on {CHAINS[to].name} isn't supported yet.
                   {routeCheck.message && (
@@ -5836,9 +5878,11 @@ export default function MangoBridge() {
                 </div>
               )}
 
+              {!nearOn && (
               <div className="text-center mt-4 text-[11.5px]" style={{ color: P.textMuted }}>
                 Powered by Relay Protocol. Only verified routes are enabled. Estimated arrival time and fees are shown before you confirm.
               </div>
+              )}
               </div>{/* /form column */}
               </div>{/* /desktop grid */}
             </>
