@@ -1,10 +1,14 @@
 // src/NearSwapPanel.jsx
 //
-// The Swap tab when "Swap on NEAR" is picked: swaps any NEAR token on
-// Rhea (formerly Ref Finance) from the user's own NEAR wallet — NEAR,
-// USDC, USDT, or any token pasted by contract id (meme-cooking launches
-// included). Routing, fee and transaction building live in rheaSwap.js;
-// this file is UI, balances and the wallet call.
+// The Swap tab when "Swap on NEAR" is picked: swaps any NEAR token from
+// the user's own NEAR wallet — NEAR, USDC, USDT, or any token pasted by
+// contract id (meme-cooking launches included).
+//
+// Routing: best price across every NEAR DEX through Intear's aggregator
+// (intearRouter.js — Rhea, Rhea DCL, Intear DEX, Aidols, Meta Pool,
+// LiNEAR, rNEAR, xRHEA), with every returned transaction checked before
+// signing. If the aggregator is unreachable or no route passes the
+// checks, it falls back to this app's own Rhea engine (rheaSwap.js).
 //
 // Before anything is signed the route is re-quoted against fresh pool
 // state and the minimum received is recomputed from that; the exchange
@@ -16,6 +20,7 @@ import { parseUnits, formatUnits } from "viem";
 import { nearView, nearAvailableBalance } from "./nearRpc.js";
 import { useNearWallet } from "./nearWallet.js";
 import { resolveDexScreenerPair, dexScreenerEmbedUrl } from "./dexScreenerChart.js";
+import { fetchIntearRoutes, pickSafeRoute, feeTransaction } from "./intearRouter.js";
 import {
   NATIVE_NEAR,
   NEAR_GAS_RESERVE,
@@ -252,18 +257,26 @@ export default function NearSwapPanel({ P, slippageBps }) {
     setQuote({ status: "loading" });
     const t = setTimeout(async () => {
       try {
-        const pools = await fetchAllPools(nearView);
         const { swapAmount } = splitFee(amountRaw);
+        try {
+          const routes = await fetchIntearRoutes({ tokenIn: payToken, tokenOut: receiveToken, amountIn: swapAmount, slippageBps: slippage, accountId });
+          const picked = pickSafeRoute(routes, { accountId, tokenIn: payToken, tokenOut: receiveToken, amountIn: swapAmount });
+          if (id !== quoteId.current) return;
+          if (picked) return setQuote({ status: "ok", source: "intear", label: picked.label, amountOut: picked.amountOut, minOut: picked.minOut, swapAmount, impact: null });
+        } catch {
+          // aggregator unreachable — fall back to the Rhea engine
+        }
+        const pools = await fetchAllPools(nearView);
         const best = await bestRoute(nearView, pools, routingId(payToken), routingId(receiveToken), swapAmount);
         if (id !== quoteId.current) return;
         if (!best) return setQuote({ status: "none" });
-        setQuote({ status: "ok", ...best, swapAmount, impact: priceImpactBps(best.route, swapAmount, best.amountOut) });
+        setQuote({ status: "ok", source: "rhea", label: "Rhea", ...best, minOut: minOutFor(best.amountOut, slippage), swapAmount, impact: priceImpactBps(best.route, swapAmount, best.amountOut) });
       } catch (e) {
         if (id === quoteId.current) setQuote({ status: "error", error: /fetch|network|timeout/i.test(e?.message || "") ? "Couldn't reach NEAR to get a price — try again shortly." : e?.message || "Couldn't get a price." });
       }
     }, 500);
     return () => clearTimeout(t);
-  }, [amountRaw, payToken, receiveToken]);
+  }, [amountRaw, payToken, receiveToken, accountId, slippage]);
 
   function setMax() {
     if (spendable == null || !payMeta) return;
@@ -276,7 +289,7 @@ export default function NearSwapPanel({ P, slippageBps }) {
     setAmount("");
   }
 
-  const routeText = quote.status === "ok" ? [quote.route[0].tokenIn, ...quote.route.map((h) => h.tokenOut)].map((t, i, arr) => (i === 0 ? payMeta?.symbol : i === arr.length - 1 ? receiveMeta?.symbol : HUB_SYMBOL[t] ?? short(t))).join(" → ") : null;
+  const routeText = quote.status === "ok" && quote.source === "intear" ? `${payMeta?.symbol} → ${receiveMeta?.symbol} via ${quote.label}` : quote.status === "ok" ? [quote.route[0].tokenIn, ...quote.route.map((h) => h.tokenOut)].map((t, i, arr) => (i === 0 ? payMeta?.symbol : i === arr.length - 1 ? receiveMeta?.symbol : HUB_SYMBOL[t] ?? short(t))).join(" → ") : null;
 
   const blocker = !accountId
     ? null
@@ -300,6 +313,26 @@ export default function NearSwapPanel({ P, slippageBps }) {
 
   async function openConfirm() {
     setConfirm({ status: "checking" });
+    if (quote.source === "intear") {
+      try {
+        // A fresh route for this exact account (includes its storage
+        // registrations), re-checked, plus Mango's fee as the last step.
+        const { swapAmount, fee } = splitFee(amountRaw);
+        const routes = await fetchIntearRoutes({ tokenIn: payToken, tokenOut: receiveToken, amountIn: swapAmount, slippageBps: slippage, accountId });
+        const picked = pickSafeRoute(routes, { accountId, tokenIn: payToken, tokenOut: receiveToken, amountIn: swapAmount });
+        if (!picked) throw new Error("No safe route right now — try again.");
+        const feeRegistration = payToken === NATIVE_NEAR ? null : await registrationNeed(nearView, payToken, NEAR_SWAP_FEE_ACCOUNT);
+        const feeTx = feeTransaction({ tokenIn: payToken, fee, feeAccount: NEAR_SWAP_FEE_ACCOUNT, feeRegistration });
+        const txs = feeTx ? [...picked.txs, feeTx] : picked.txs;
+        const storageCost =
+          picked.txs.flatMap((t) => t.actions).filter((a) => a.params?.methodName === "storage_deposit").reduce((sum, a) => sum + BigInt(a.params.deposit), 0n) +
+          (feeRegistration?.needed ? feeRegistration.deposit : 0n);
+        setConfirm({ status: "ready", txs, label: picked.label, amountOut: picked.amountOut, minOut: picked.minOut, storageCost, fee, impact: null });
+      } catch (e) {
+        setConfirm({ status: "error", error: e?.message || "Couldn't prepare this swap." });
+      }
+      return;
+    }
     try {
       // Fresh pool state for this exact route, then a fresh minimum.
       const fresh = await refreshPools(nearView, quote.route.map((h) => h.pool.id));
@@ -409,7 +442,7 @@ export default function NearSwapPanel({ P, slippageBps }) {
       {quote.status === "ok" && receiveMeta && (
         <div className="rounded-xl px-3.5 py-3 flex flex-col gap-1.5 text-[12px]" style={box}>
           <div className="flex justify-between gap-3"><span style={{ color: P.textSecondary }}>Route</span><span className="text-right" style={{ color: P.textPrimary }}>{routeText}</span></div>
-          <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Minimum received ({slippage / 100}% slippage)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(minOutFor(quote.amountOut, slippage), receiveMeta.decimals)}</span></div>
+          <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Minimum received ({slippage / 100}% slippage)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(quote.minOut, receiveMeta.decimals)}</span></div>
           <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Mango fee (0.5%)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(splitFee(amountRaw).fee, payMeta.decimals)} {payMeta.symbol}</span></div>
           {quote.impact != null && (
             <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Price impact</span><span className="font-mono" style={{ color: quote.impact > 1500 ? "#D92D20" : quote.impact > 500 ? "#F0B84D" : P.textPrimary }}>{(quote.impact / 100).toFixed(2)}%</span></div>
@@ -445,7 +478,7 @@ export default function NearSwapPanel({ P, slippageBps }) {
       )}
 
       <div className="text-center text-[11.5px]" style={{ color: P.textMuted }}>
-        Swaps on Rhea (Ref Finance), signed in your own NEAR wallet. You pay NEAR gas; first-time token registration costs a small NEAR deposit.
+        Best price across NEAR DEXes (Rhea, Rhea DCL, Intear DEX, Aidols, Meta Pool, LiNEAR and more), signed in your own NEAR wallet. You pay NEAR gas; first-time token registration costs a small NEAR deposit.
       </div>
 
       {confirm && (
@@ -458,6 +491,7 @@ export default function NearSwapPanel({ P, slippageBps }) {
                 <div className="flex justify-between"><span style={{ color: P.textSecondary }}>You pay</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(amountRaw, payMeta.decimals)} {payMeta.symbol}</span></div>
                 <div className="flex justify-between"><span style={{ color: P.textSecondary }}>You receive (est.)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(confirm.amountOut, receiveMeta.decimals)} {receiveMeta.symbol}</span></div>
                 <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Minimum</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(confirm.minOut, receiveMeta.decimals)} {receiveMeta.symbol}</span></div>
+                {confirm.label && <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Via</span><span style={{ color: P.textPrimary }}>{confirm.label}</span></div>}
                 <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Mango fee</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(confirm.fee, payMeta.decimals)} {payMeta.symbol}</span></div>
                 {confirm.storageCost > 0n && (
                   <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Token registration</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(confirm.storageCost, 24)} NEAR</span></div>

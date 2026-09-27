@@ -113,6 +113,7 @@ import { ARC_USDC, ARC_GAS_RESERVE_USDC } from "./chainData.js";
 import SwapChartPanel from "./SwapChartPanel.jsx";
 import NearIntentsSection from "./NearIntentsSection.jsx";
 import NearSwapPanel from "./NearSwapPanel.jsx";
+import NearSendPanel from "./NearSendPanel.jsx";
 import { NATIVE_SYMBOL } from "./chainData.js";
 import { UNISWAP_V3_ADDRESSES } from "./uniswapV3.js";
 import { isMainnet, getWagmiChain } from "./networkMode.js";
@@ -3951,6 +3952,9 @@ export default function MangoBridge() {
   // "Swap on NEAR" — same idea for the Swap tab: its own panel
   // (NearSwapPanel.jsx), with from/to left on real CHAINS keys.
   const [nearSwap, setNearSwap] = useState(false);
+  // "Send from NEAR" — the Bridge tab's "You send" picker set to NEAR:
+  // its own panel (NearSendPanel.jsx), with from/to left on real keys.
+  const [nearSend, setNearSend] = useState(false);
   // Real gap, user-reported: this site never had a working slippage
   // control at all. Two earlier passes at this fix both had a real
   // discoverability problem — first the control lived in the read-only
@@ -4503,6 +4507,16 @@ export default function MangoBridge() {
     handleSwapChainChange(id);
   }
   const swapChainOrderWithNear = isMainnet() ? [...swapChainOrder, "near"] : swapChainOrder;
+  const nearSendOn = nearSend && !isSwapTab;
+  function onBridgeFromPick(id) {
+    if (id === "near") {
+      setNearMode(false);
+      return setNearSend(true);
+    }
+    setNearSend(false);
+    handleFromChange(id);
+  }
+  const bridgeFromChainOrderWithNear = isMainnet() ? [...bridgeFromChainOrder, "near"] : bridgeFromChainOrder;
 
   // Real bug fix, user-reported: the top Search button used to fire the
   // exact same open state as the You-receive field's own dropdown (one
@@ -5392,6 +5406,12 @@ export default function MangoBridge() {
               <div className="min-w-0">
               {nearSwapOn ? (
                 <NearSwapPanel P={P} slippageBps={slippageBps} />
+              ) : nearSendOn ? (
+                <NearSendPanel
+                  P={P}
+                  evmAddress={address}
+                  fromPicker={<ChainDropdown value="near" onChange={onBridgeFromPick} P={P} chainOrder={bridgeFromChainOrderWithNear} />}
+                />
               ) : (
               <>
 
@@ -5560,7 +5580,7 @@ export default function MangoBridge() {
                   {isSwapTab ? (
                     <ChainDropdown value={nearSwapOn ? "near" : from} onChange={onSwapChainPick} P={P} chainOrder={swapChainOrderWithNear} />
                   ) : (
-                    <ChainDropdown value={from} exclude={to} onChange={handleFromChange} P={P} chainOrder={bridgeFromChainOrder} />
+                    <ChainDropdown value={from} exclude={to} onChange={onBridgeFromPick} P={P} chainOrder={bridgeFromChainOrderWithNear} />
                   )}
                 </div>
                 <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${insufficient ? "#D92D20" : P.panelBorder}` }}>
