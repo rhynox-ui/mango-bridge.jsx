@@ -182,7 +182,7 @@ function NearChart({ P, tokenId }) {
   );
 }
 
-export default function NearSwapPanel({ P, slippageBps, onConnectNear }) {
+export default function NearSwapPanel({ P, slippageBps }) {
   const wallet = useNearWallet();
   const accountId = wallet.account?.accountId;
   const slippage = Number.isFinite(Number(slippageBps)) && slippageBps !== null ? Number(slippageBps) : 100;
@@ -386,22 +386,10 @@ export default function NearSwapPanel({ P, slippageBps, onConnectNear }) {
     <div className="flex flex-col gap-3">
       <NearChart P={P} tokenId={chartToken} />
 
-      <div className="rounded-2xl p-3.5 flex items-center justify-between" style={card}>
-        {wallet.account ? (
-          <>
-            <div className="min-w-0">
-              <div className="text-[11px]" style={{ color: P.textMuted }}>NEAR wallet{wallet.account.name ? ` · ${wallet.account.name}` : ""}</div>
-              <div className="text-[13px] font-mono truncate" style={{ color: P.textPrimary }}>{wallet.account.accountId}</div>
-            </div>
-            <button onClick={wallet.disconnect} className="text-[12px] font-medium shrink-0 ml-3" style={{ color: P.textSecondary }}>Disconnect</button>
-          </>
-        ) : (
-          <button onClick={() => (onConnectNear ? onConnectNear() : wallet.connect())} disabled={wallet.status === "connecting"} className="w-full py-2.5 rounded-xl text-[13.5px] font-semibold" style={{ background: P.ctaBg, color: P.ctaText }}>
-            {wallet.status === "connecting" ? "Opening NEAR wallet…" : "Connect NEAR wallet"}
-          </button>
-        )}
-      </div>
-      {wallet.status === "error" && <div className="text-[11px] -mt-2" style={{ color: "#D92D20" }}>{wallet.error}</div>}
+      {/* No wallet card here: on Swap the header's Connect button is the
+          one place to connect (NEAR wallets only when swapping on NEAR),
+          and its account pill shows the connected NEAR account. */}
+      {wallet.status === "error" && <div className="text-[11px]" style={{ color: "#D92D20" }}>{wallet.error}</div>}
 
       <div className="rounded-2xl p-4" style={card}>
         <div className="flex items-center justify-between mb-2">
@@ -462,6 +450,9 @@ export default function NearSwapPanel({ P, slippageBps, onConnectNear }) {
       )}
       {quote.status === "error" && <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{quote.error}</div>}
 
+      {!accountId && (
+        <div className="text-center text-[12px]" style={{ color: P.textMuted }}>Connect your NEAR wallet with the Connect button at the top.</div>
+      )}
       {accountId && (
         <button
           disabled={!!blocker}

@@ -3120,7 +3120,10 @@ function NearWalletSection({ P, onClose }) {
   );
 }
 
-function WalletSelectorModal({ onClose, P, solanaRelevant, isFromSolana, nearRelevant, nearFirst }) {
+// `only` ("near" | "solana"): the Swap tab trades on ONE chain, so its
+// Connect shows only that chain's wallets. The Bridge moves between two
+// chains and keeps showing each side's wallets.
+function WalletSelectorModal({ onClose, P, solanaRelevant, isFromSolana, nearRelevant, nearFirst, only }) {
   const solanaWallet = useSolanaWallet();
   const { open: openAppKit } = useAppKit();
   const [connectingOkx, setConnectingOkx] = useState(false);
@@ -3206,6 +3209,12 @@ function WalletSelectorModal({ onClose, P, solanaRelevant, isFromSolana, nearRel
           <button onClick={onClose}><X size={18} color={P.textMuted} /></button>
         </div>
 
+        {only === "near" ? (
+          <NearWalletSection P={P} onClose={onClose} />
+        ) : only === "solana" ? (
+          solanaSection
+        ) : (
+        <>
         {nearRelevant && nearFirst && <NearWalletSection P={P} onClose={onClose} />}
         {isFromSolana ? (
           <>
@@ -3219,6 +3228,8 @@ function WalletSelectorModal({ onClose, P, solanaRelevant, isFromSolana, nearRel
           </>
         )}
         {nearRelevant && !nearFirst && <NearWalletSection P={P} onClose={onClose} />}
+        </>
+        )}
 
         {solanaWallet.error && (
           <div className="mt-3 rounded-lg p-3 text-[11.5px]" style={{ background: "#D92D2015", border: "1px solid #D92D2040", color: "#D92D20" }}>
@@ -5493,7 +5504,7 @@ export default function MangoBridge() {
                   way a two-column grid silently starts overflowing. */}
               <div className="min-w-0">
               {nearSwapOn ? (
-                <NearSwapPanel P={P} slippageBps={slippageBps} onConnectNear={openNearConnect} />
+                <NearSwapPanel P={P} slippageBps={slippageBps} />
               ) : nearSendOn ? (
                 <NearSendPanel
                   P={P}
@@ -5838,7 +5849,7 @@ export default function MangoBridge() {
                   always needs a connected wallet regardless of
                   sendToOther — that's what SIGNS the outgoing
                   transaction, not just who the destination is. */}
-              {!nearOn && ((isFromSolana && !activeSolanaAddress) || needsSolanaAddressForSolanaDest) && (
+              {!nearOn && !isSwapTab && ((isFromSolana && !activeSolanaAddress) || needsSolanaAddressForSolanaDest) && (
                 <div className="mt-3 rounded-xl p-3.5" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
                   <div className="text-[12.5px] font-medium mb-1" style={{ color: P.textPrimary }}>Solana wallet needed</div>
                   <div className="text-[11px] mb-2.5" style={{ color: P.textMuted }}>
@@ -6185,6 +6196,7 @@ export default function MangoBridge() {
           isFromSolana={isFromSolana && !nearSigner}
           nearRelevant={walletSelectorNear || nearSigner || nearOn}
           nearFirst={nearSigner}
+          only={isSwapTab ? (nearSwapOn ? "near" : isFromSolana ? "solana" : null) : null}
         />
       )}
       {showNetworkSelector && (
