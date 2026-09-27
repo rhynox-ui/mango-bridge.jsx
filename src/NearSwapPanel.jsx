@@ -17,6 +17,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { parseUnits, formatUnits } from "viem";
+import { ChevronDown } from "lucide-react";
 import { nearView, nearAvailableBalance } from "./nearRpc.js";
 import { useNearWallet } from "./nearWallet.js";
 import { resolveDexScreenerPair, dexScreenerEmbedUrl } from "./dexScreenerChart.js";
@@ -86,8 +87,24 @@ async function fetchBalance(tokenId, accountId) {
   return typeof b === "string" ? b : "0";
 }
 
-function TokenPicker({ P, value, metas, tokens, onPick, onAdd, exclude }) {
+// A token's icon: its own ft_metadata icon, else the site's icon for
+// known symbols (NEAR, USDC, USDT), else a plain dot.
+function TokenGlyph({ meta, symbol, TokenIcon, size = 18, P }) {
+  if (meta?.icon) return <img src={meta.icon} alt="" className="rounded-full shrink-0" style={{ width: size, height: size }} />;
+  if (TokenIcon && ["NEAR", "USDC", "USDT", "wNEAR"].includes(symbol)) return <TokenIcon symbol={symbol === "wNEAR" ? "NEAR" : symbol} size={size} />;
+  return <span className="rounded-full shrink-0" style={{ width: size, height: size, background: P.input }} />;
+}
+
+function TokenPicker({ P, value, metas, tokens, onPick, onAdd, exclude, TokenIcon, openSignal }) {
   const [open, setOpen] = useState(false);
+  const [focusPaste, setFocusPaste] = useState(false);
+  // The header's Search button opens this picker at its paste box.
+  useEffect(() => {
+    if (openSignal) {
+      setOpen(true);
+      setFocusPaste(true);
+    }
+  }, [openSignal]);
   const [text, setText] = useState("");
   const [state, setState] = useState({ status: "idle" });
   const ref = useRef(null);
@@ -116,16 +133,18 @@ function TokenPicker({ P, value, metas, tokens, onPick, onAdd, exclude }) {
 
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[14px] font-semibold" style={{ background: P.pillBg, color: P.textPrimary }}>
-        {meta?.icon && <img src={meta.icon} alt="" className="w-5 h-5 rounded-full" />}
-        {labelFor(value, meta)} <span style={{ color: P.textMuted }}>▾</span>
+      <button onClick={() => { setFocusPaste(false); setOpen((o) => !o); }} className="flex items-center gap-1.5 pl-2 pr-2.5 py-1.5 rounded-full shrink-0" style={{ background: P.pillBg }}>
+        <TokenGlyph meta={meta} symbol={labelFor(value, meta)} TokenIcon={TokenIcon} P={P} />
+        <span className="text-[14px] font-semibold max-w-[88px] truncate" style={{ color: P.textPrimary }}>{labelFor(value, meta)}</span>
+        <ChevronDown size={14} color={P.textMuted} />
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-72 rounded-xl shadow-2xl p-2" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+        // Fixed and centred, so it fits whichever card it opens from.
+        <div className="fixed left-1/2 top-24 -translate-x-1/2 z-50 rounded-xl shadow-2xl p-2" style={{ width: "min(20rem, calc(100vw - 2rem))", background: P.panel, border: `1px solid ${P.panelBorder}` }}>
           <div className="max-h-56 overflow-y-auto">
             {tokens.filter((t) => t !== exclude).map((t) => (
               <button key={t} onClick={() => { onPick(t); setOpen(false); }} className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left" style={{ background: t === value ? P.input : "transparent" }}>
-                {metas[t]?.icon ? <img src={metas[t].icon} alt="" className="w-5 h-5 rounded-full" /> : <span className="w-5 h-5 rounded-full" style={{ background: P.input }} />}
+                <TokenGlyph meta={metas[t]} symbol={labelFor(t, metas[t])} TokenIcon={TokenIcon} size={20} P={P} />
                 <span className="text-[13px] font-medium" style={{ color: P.textPrimary }}>{labelFor(t, metas[t])}</span>
                 <span className="text-[11px] font-mono truncate ml-auto" style={{ color: P.textMuted }}>{t === NATIVE_NEAR ? "native" : short(t)}</span>
               </button>
@@ -137,6 +156,7 @@ function TokenPicker({ P, value, metas, tokens, onPick, onAdd, exclude }) {
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && isTokenId(text.trim().toLowerCase()) && add()}
               placeholder="Paste token contract, e.g. token.near"
+              autoFocus={focusPaste}
               spellCheck={false}
               autoCapitalize="none"
               className="w-full rounded-lg px-2.5 py-2 text-[12px] font-mono outline-none"
@@ -182,7 +202,12 @@ function NearChart({ P, tokenId }) {
   );
 }
 
-export default function NearSwapPanel({ P, slippageBps, presetToken }) {
+const SWAP_GAIN = "#00D67D";
+const SWAP_DANGER = "#D92D20";
+// Tokens that count as "money" for the Buy / Sell pills.
+const BASE_TOKENS = [NATIVE_NEAR, WRAP_NEAR, USDC_NEAR, USDT_NEAR];
+
+export default function NearSwapPanel({ P, slippageBps, presetToken, searchSignal, TokenIcon }) {
   const wallet = useNearWallet();
   const accountId = wallet.account?.accountId;
   const slippage = Number.isFinite(Number(slippageBps)) && slippageBps !== null ? Number(slippageBps) : 100;
@@ -199,6 +224,8 @@ export default function NearSwapPanel({ P, slippageBps, presetToken }) {
   const [result, setResult] = useState(null);
   const [balanceTick, setBalanceTick] = useState(0);
   const quoteId = useRef(0);
+  const [selectedPercent, setSelectedPercent] = useState(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   // Token metadata for everything in the list.
   useEffect(() => {
@@ -302,15 +329,17 @@ export default function NearSwapPanel({ P, slippageBps, presetToken }) {
     return () => clearTimeout(t);
   }, [amountRaw, payToken, receiveToken, accountId, slippage]);
 
-  function setMax() {
+  function setPercent(pct) {
     if (spendable == null || !payMeta) return;
-    setAmount(formatUnits(spendable, payMeta.decimals));
+    setAmount(formatUnits(pct === 100 ? spendable : (spendable * BigInt(pct)) / 100n, payMeta.decimals));
+    setSelectedPercent(pct);
   }
 
   function flip() {
     setPayToken(receiveToken);
     setReceiveToken(payToken);
     setAmount("");
+    setSelectedPercent(null);
   }
 
   const routeText = quote.status === "ok" && quote.source === "intear" ? `${payMeta?.symbol} → ${receiveMeta?.symbol} via ${quote.label}` : quote.status === "ok" ? [quote.route[0].tokenIn, ...quote.route.map((h) => h.tokenOut)].map((t, i, arr) => (i === 0 ? payMeta?.symbol : i === arr.length - 1 ? receiveMeta?.symbol : HUB_SYMBOL[t] ?? short(t))).join(" → ") : null;
@@ -334,6 +363,10 @@ export default function NearSwapPanel({ P, slippageBps, presetToken }) {
                 : quote.status !== "ok"
                   ? "Getting a price…"
                   : null;
+
+  const isBuySide = payToken === NATIVE_NEAR || (BASE_TOKENS.includes(payToken) && !BASE_TOKENS.includes(receiveToken));
+  const ready = !!accountId && !blocker;
+  const hint = !accountId ? "Connect your wallet to trade" : blocker && !insufficient ? blocker : null;
 
   async function openConfirm() {
     setConfirm({ status: "checking" });
@@ -415,56 +448,107 @@ export default function NearSwapPanel({ P, slippageBps, presetToken }) {
           and its account pill shows the connected NEAR account. */}
       {wallet.status === "error" && <div className="text-[11px]" style={{ color: "#D92D20" }}>{wallet.error}</div>}
 
-      <div className="rounded-2xl p-4" style={card}>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>You pay</span>
-          {accountId && payBalance != null && (
-            <button onClick={setMax} className="text-[11.5px]" style={{ color: P.textMuted }}>
-              Balance: {fmtAmount(payBalance, payMeta?.decimals ?? 24)} · <span style={{ color: P.ctaBg }}>MAX</span>
-            </button>
-          )}
+      {/* Same rows as Swap on any other chain: Buy / Sell, hint,
+          quick percent, then You pay / You receive side by side and the
+          fee row. The active pill submits; the other one flips. */}
+      <div className="flex gap-2">
+        {[
+          { side: "buy", label: "Buy", arrow: "↗", color: SWAP_GAIN, active: isBuySide },
+          { side: "sell", label: "Sell", arrow: "↘", color: SWAP_DANGER, active: !isBuySide },
+        ].map((b) => (
+          <button
+            key={b.side}
+            onClick={() => (b.active ? ready && openConfirm() : flip())}
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-full"
+            style={{
+              background: b.active ? b.color : P.panel,
+              border: `1px solid ${b.color}`,
+              opacity: b.active && !ready ? 0.4 : 1,
+              cursor: b.active && !ready ? "not-allowed" : "pointer",
+            }}
+          >
+            <span className="text-[14px] font-extrabold" style={{ color: b.active ? "#fff" : b.color }}>{b.arrow}</span>
+            <span className="text-[13.5px] font-bold" style={{ color: b.active ? "#fff" : b.color }}>{b.label}</span>
+          </button>
+        ))}
+      </div>
+      {hint && <div className="text-[11px] text-center -mt-1.5" style={{ color: P.textMuted }}>{hint}</div>}
+
+      <div className="flex gap-1.5">
+        {[25, 50, 75, 100].map((pct) => (
+          <button
+            key={pct}
+            onClick={() => setPercent(pct)}
+            disabled={spendable == null}
+            className="flex-1 rounded-full py-[7px] text-[11px] font-semibold"
+            style={{ background: selectedPercent === pct ? P.ctaBg : P.pillBg, color: selectedPercent === pct ? P.ctaText : P.textSecondary, opacity: spendable == null ? 0.5 : 1 }}
+          >
+            {pct === 100 ? "MAX" : `${pct}%`}
+          </button>
+        ))}
+        <div
+          className="flex-1 rounded-full py-[7px] text-[11px] font-semibold text-center"
+          style={{ background: selectedPercent === null && amountRaw ? P.ctaBg : P.pillBg, color: selectedPercent === null && amountRaw ? P.ctaText : P.textSecondary }}
+        >
+          Custom
         </div>
-        <div className="flex items-center justify-between rounded-xl px-3.5 py-3 gap-2" style={box}>
-          <input
-            value={amount}
-            onChange={(e) => /^\d*\.?\d*$/.test(e.target.value) && setAmount(e.target.value)}
-            placeholder="0"
-            inputMode="decimal"
-            className="min-w-0 flex-1 bg-transparent outline-none font-display text-[24px] font-semibold"
-            style={{ color: P.textPrimary }}
-          />
-          <TokenPicker P={P} value={payToken} metas={metas} tokens={tokens} onPick={setPayToken} onAdd={addToken} exclude={receiveToken} />
-        </div>
-        {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>{blocker}</div>}
       </div>
 
-      <div className="flex justify-center -my-4 relative z-10">
-        <button onClick={flip} className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm text-[15px]" style={{ background: P.ctaBg, color: P.ctaText }} aria-label="Swap direction">⇅</button>
-      </div>
-
-      <div className="rounded-2xl p-4" style={card}>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>You receive</span>
-          {accountId && balances[receiveToken] != null && receiveMeta && (
-            <span className="text-[11.5px]" style={{ color: P.textMuted }}>Balance: {fmtAmount(balances[receiveToken], receiveMeta.decimals)}</span>
-          )}
+      <div className="flex gap-2">
+        <div className="flex-1 min-w-0 rounded-[14px] p-3" style={{ background: P.panel, border: `1px solid ${insufficient ? "#D92D20" : P.panelBorder}` }}>
+          <div className="text-[10px] font-bold uppercase mb-2" style={{ color: P.textMuted, letterSpacing: "0.6px" }}>You pay</div>
+          <div className="flex items-center justify-between gap-1.5">
+            <TokenPicker P={P} value={payToken} metas={metas} tokens={tokens} onPick={setPayToken} onAdd={addToken} exclude={receiveToken} TokenIcon={TokenIcon} />
+            <input
+              value={amount}
+              onChange={(e) => {
+                if (!/^\d*\.?\d*$/.test(e.target.value)) return;
+                setAmount(e.target.value);
+                setSelectedPercent(null);
+              }}
+              placeholder="0"
+              inputMode="decimal"
+              className="font-display bg-transparent outline-none text-[19px] font-semibold w-full text-right min-w-0"
+              style={{ color: P.textPrimary }}
+            />
+          </div>
+          <div className="flex justify-end mt-1 text-[10px]" style={{ color: P.textMuted }}>
+            <span className="truncate">{accountId && spendable != null && payMeta ? `${fmtAmount(spendable, payMeta.decimals, 4)} avail.` : ""}</span>
+          </div>
         </div>
-        <div className="flex items-center justify-between rounded-xl px-3.5 py-3 gap-2" style={box}>
-          <span className="font-display text-[24px] font-semibold truncate" style={{ color: quote.status === "ok" ? P.textPrimary : P.textMuted }}>
-            {quote.status === "ok" && receiveMeta ? fmtAmount(quote.amountOut, receiveMeta.decimals) : quote.status === "loading" ? "…" : "0"}
-          </span>
-          <TokenPicker P={P} value={receiveToken} metas={metas} tokens={tokens} onPick={setReceiveToken} onAdd={addToken} exclude={payToken} />
+        <div className="flex-1 min-w-0 rounded-[14px] p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
+          <div className="text-[10px] font-bold uppercase mb-2" style={{ color: P.textMuted, letterSpacing: "0.6px" }}>You receive</div>
+          <div className="flex items-center justify-between gap-1.5">
+            <TokenPicker P={P} value={receiveToken} metas={metas} tokens={tokens} onPick={setReceiveToken} onAdd={addToken} exclude={payToken} TokenIcon={TokenIcon} openSignal={searchSignal} />
+            <span className="font-display text-[19px] font-semibold truncate" style={{ color: quote.status === "ok" ? P.textPrimary : P.textMuted }}>
+              {quote.status === "ok" && receiveMeta ? fmtAmount(quote.amountOut, receiveMeta.decimals, 4) : quote.status === "loading" ? "…" : "—"}
+            </span>
+          </div>
+          <div className="flex justify-end mt-1 text-[10px]" style={{ color: P.textMuted }}>
+            <span className="truncate">{accountId && balances[receiveToken] != null && receiveMeta ? `${fmtAmount(balances[receiveToken], receiveMeta.decimals, 4)} held` : ""}</span>
+          </div>
         </div>
       </div>
+      {insufficient && <div className="text-[11.5px] -mt-1.5" style={{ color: "#D92D20" }}>{blocker}</div>}
 
-      {quote.status === "ok" && receiveMeta && (
-        <div className="rounded-xl px-3.5 py-3 flex flex-col gap-1.5 text-[12px]" style={box}>
-          <div className="flex justify-between gap-3"><span style={{ color: P.textSecondary }}>Route</span><span className="text-right" style={{ color: P.textPrimary }}>{routeText}</span></div>
-          <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Minimum received ({slippage / 100}% slippage)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(quote.minOut, receiveMeta.decimals)}</span></div>
-          <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Mango fee (0.5%)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmtAmount(splitFee(amountRaw).fee, payMeta.decimals)} {payMeta.symbol}</span></div>
-          {quote.impact != null && (
+      <button onClick={() => setDetailsOpen((o) => !o)} className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl" style={card}>
+        <span className="text-[12.5px] font-medium flex items-center gap-1.5" style={{ color: P.ctaBg }}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: P.ctaBg }} /> Fee 0.5%
+        </span>
+        <span className="flex items-center gap-1.5 text-[12.5px]" style={{ color: P.textSecondary }}>
+          {quote.status === "ok" ? `via ${quote.label}` : "ETA: ~5s"}
+          <ChevronDown size={13} color={P.textMuted} style={{ transform: detailsOpen ? "rotate(180deg)" : "none" }} />
+        </span>
+      </button>
+      {detailsOpen && (
+        <div className="-mt-1 px-4 py-3 rounded-xl flex flex-col gap-2 text-[12.5px]" style={box}>
+          <div className="flex justify-between gap-3"><span style={{ color: P.textSecondary }}>Route</span><span className="text-right" style={{ color: P.textPrimary }}>{routeText ?? "—"}</span></div>
+          <div className="flex justify-between gap-3"><span style={{ color: P.textSecondary }}>Minimum received ({slippage / 100}% slippage)</span><span className="font-mono" style={{ color: P.textPrimary }}>{quote.status === "ok" && receiveMeta ? fmtAmount(quote.minOut, receiveMeta.decimals) : "—"}</span></div>
+          <div className="flex justify-between gap-3"><span style={{ color: P.textSecondary }}>Mango fee (0.5%)</span><span className="font-mono" style={{ color: P.textPrimary }}>{amountRaw && payMeta ? `${fmtAmount(splitFee(amountRaw).fee, payMeta.decimals)} ${payMeta.symbol}` : "—"}</span></div>
+          {quote.status === "ok" && quote.impact != null && (
             <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Price impact</span><span className="font-mono" style={{ color: quote.impact > 1500 ? "#D92D20" : quote.impact > 500 ? "#F0B84D" : P.textPrimary }}>{(quote.impact / 100).toFixed(2)}%</span></div>
           )}
+          <div className="flex justify-between"><span style={{ color: P.textSecondary }}>Gas</span><span style={{ color: P.textPrimary }}>NEAR gas, paid in NEAR</span></div>
         </div>
       )}
       {quote.status === "ok" && quote.impact > 500 && (
@@ -473,20 +557,6 @@ export default function NearSwapPanel({ P, slippageBps, presetToken }) {
         </div>
       )}
       {quote.status === "error" && <div className="text-[11.5px]" style={{ color: "#D92D20" }}>{quote.error}</div>}
-
-      {!accountId && (
-        <div className="text-center text-[12px]" style={{ color: P.textMuted }}>Connect your NEAR wallet with the Connect button at the top.</div>
-      )}
-      {accountId && (
-        <button
-          disabled={!!blocker}
-          onClick={openConfirm}
-          className="w-full py-3.5 rounded-full font-display font-semibold text-[15px]"
-          style={{ background: blocker ? P.ctaDisabledBg : P.ctaBg, color: blocker ? P.ctaDisabledText : P.ctaText, cursor: blocker ? "not-allowed" : "pointer" }}
-        >
-          {blocker ?? "Swap"}
-        </button>
-      )}
 
       {result && (
         <div className="rounded-xl px-3.5 py-3 text-[12px] flex flex-col gap-1" style={{ ...box, borderColor: result.ok ? "#00D67D" : result.neutral ? P.panelBorder : "#D92D20" }}>
