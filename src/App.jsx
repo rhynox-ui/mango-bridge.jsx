@@ -114,6 +114,7 @@ import SwapChartPanel from "./SwapChartPanel.jsx";
 import NearIntentsSection from "./NearIntentsSection.jsx";
 import NearSwapPanel from "./NearSwapPanel.jsx";
 import NearSendPanel from "./NearSendPanel.jsx";
+import { BuySellRow, PillHint, PercentRow, SwapSideCard, FeeRow, DetailsPanel, DetailRow, TokenPill, MaxButton, FlipArrow, BridgeCard, AmountBox, CtaButton, FootNote } from "./swapUi.jsx";
 import { useNearWallet, listNearWallets, connectNearWallet } from "./nearWallet.js";
 import { NEAR_ORIGIN_BLOCKCHAIN } from "./nearIntents.js";
 import { NATIVE_SYMBOL } from "./chainData.js";
@@ -222,8 +223,6 @@ const CHAIN_ORDER = ["ethereum", "base", "bnb", "robinhood", "stable", "solana",
 // palette has no gain/danger entry, and the Swap layout is a port, so
 // the two apps' pills should be the same colour rather than nearly.
 // DANGER is already the literal this file uses for every error state.
-const SWAP_GAIN = "#00D67D";
-const SWAP_DANGER = "#D92D20";
 
 // Real, network-aware address validation. EVM uses viem's own isAddress
 // (proper format + checksum validation, not a hand-rolled regex). Solana
@@ -1522,11 +1521,7 @@ function AssetDropdown({ assetIdx, setAssetIdx, chainId, P, balances, balancesLo
           so that button's dropdown is never the same open state as the
           You-receive field's own trigger below. */}
       {!hideTrigger && (
-        <button onClick={handleToggle} className="flex items-center gap-1.5 pl-2 pr-2.5 py-1.5 rounded-full" style={{ background: P.pillBg }}>
-          <AssetIcon symbol={asset.symbol} size={18} chainId={chainId} address={asset.address} logoUrl={discoveredLogos?.[asset.symbol]} />
-          <span className="text-[14px] font-semibold" style={{ color: P.textPrimary }}>{asset.symbol}</span>
-          <ChevronDown size={14} color={P.textMuted} />
-        </button>
+        <TokenPill P={P} onClick={handleToggle} symbol={asset.symbol} icon={<AssetIcon symbol={asset.symbol} size={18} chainId={chainId} address={asset.address} logoUrl={discoveredLogos?.[asset.symbol]} />} />
       )}
       {open && (
         <div
@@ -5551,6 +5546,17 @@ export default function MangoBridge() {
                   onConnectNear={openNearConnect}
                   ChainPicker={ChainDropdown}
                   TokenIcon={NearTokenIcon}
+                  chainName={(k) => CHAINS[k]?.name ?? k}
+                  renderReceivePicker={(symbol, onChange, chainKey) => (
+                    <AssetDropdown
+                      assetIdx={Math.max(0, ASSETS.findIndex((a) => a.symbol === symbol))}
+                      setAssetIdx={(i) => onChange(ASSETS[i].symbol)}
+                      chainId={chainKey}
+                      P={P}
+                      allowCustomToken={false}
+                      discoveredLogos={discoveredAssetLogos}
+                    />
+                  )}
                   initialDest={nearSendDest}
                   onFlip={(dest) => {
                     // Flip to the mirror route: send from that chain, receive on NEAR.
@@ -5588,42 +5594,13 @@ export default function MangoBridge() {
                       mobile has no equivalent for (wrong network,
                       route checking, address validation), and removing
                       it would lose them. */}
-                  <div className="flex gap-2 mt-2 mb-2">
-                    <button
-                      onClick={() => (!isSwapBuySide ? swap() : swapPillReady && setShowModal(true))}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-full"
-                      style={{
-                        background: isSwapBuySide ? SWAP_GAIN : P.panel,
-                        border: `1px solid ${SWAP_GAIN}`,
-                        opacity: isSwapBuySide && !swapPillReady ? 0.4 : 1,
-                        cursor: isSwapBuySide && !swapPillReady ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      <span className="text-[14px] font-extrabold" style={{ color: isSwapBuySide ? "#fff" : SWAP_GAIN }}>↗</span>
-                      <span className="text-[13.5px] font-bold" style={{ color: isSwapBuySide ? "#fff" : SWAP_GAIN }}>Buy</span>
-                    </button>
-                    <button
-                      onClick={() => (isSwapBuySide ? swap() : swapPillReady && setShowModal(true))}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-full"
-                      style={{
-                        background: !isSwapBuySide ? SWAP_DANGER : P.panel,
-                        border: `1px solid ${SWAP_DANGER}`,
-                        opacity: !isSwapBuySide && !swapPillReady ? 0.4 : 1,
-                        cursor: !isSwapBuySide && !swapPillReady ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      <span className="text-[14px] font-extrabold" style={{ color: !isSwapBuySide ? "#fff" : SWAP_DANGER }}>↘</span>
-                      <span className="text-[13.5px] font-bold" style={{ color: !isSwapBuySide ? "#fff" : SWAP_DANGER }}>Sell</span>
-                    </button>
-                  </div>
+                  <BuySellRow P={P} isBuySide={isSwapBuySide} ready={swapPillReady} onSubmit={() => setShowModal(true)} onFlip={swap} />
 
                   {/* Only rendered while the active pill genuinely
                       can't submit — costs no height once it can, and
                       is exactly when a silent pill would read as
                       broken. Same rule as mobile's pillHint. */}
-                  {swapPillHint !== null && (
-                    <div className="text-[11px] text-center -mt-1 mb-1.5" style={{ color: P.textMuted }}>{swapPillHint}</div>
-                  )}
+                  <PillHint P={P} text={swapPillHint} />
 
                   {/* 25/50/75 set the amount straight off the balance;
                       MAX routes through setMax so a native asset keeps
@@ -5637,36 +5614,10 @@ export default function MangoBridge() {
                       lights up only once the amount no longer matches
                       any preset (selectedPercent cleared by hand-typing,
                       see the input's own onChange). */}
-                  <div className="flex gap-1.5 mb-2">
-                    {[25, 50, 75, 100].map((pct) => (
-                      <button
-                        key={pct}
-                        onClick={() => setPercent(pct)}
-                        disabled={availableBalance === null}
-                        className="flex-1 rounded-full py-[7px] text-[11px] font-semibold"
-                        style={{
-                          background: selectedPercent === pct ? P.ctaBg : P.pillBg,
-                          color: selectedPercent === pct ? P.ctaText : P.textSecondary,
-                          opacity: availableBalance === null ? 0.5 : 1,
-                        }}
-                      >
-                        {pct === 100 ? "MAX" : `${pct}%`}
-                      </button>
-                    ))}
-                    <div
-                      className="flex-1 rounded-full py-[7px] text-[11px] font-semibold text-center"
-                      style={{
-                        background: selectedPercent === null && amtNum > 0 ? P.ctaBg : P.pillBg,
-                        color: selectedPercent === null && amtNum > 0 ? P.ctaText : P.textSecondary,
-                      }}
-                    >
-                      Custom
-                    </div>
-                  </div>
+                  <PercentRow P={P} selectedPercent={selectedPercent} disabled={availableBalance === null} onPick={setPercent} customActive={selectedPercent === null && amtNum > 0} />
 
                   <div className="flex gap-2">
-                    <div className="flex-1 rounded-[14px] p-3" style={{ background: P.panel, border: `1px solid ${insufficient ? "#D92D20" : P.panelBorder}` }}>
-                      <div className="text-[10px] font-bold uppercase mb-2" style={{ color: P.textMuted, letterSpacing: "0.6px" }}>You pay</div>
+                    <SwapSideCard P={P} label="You pay" danger={insufficient}>
                       <div className="flex items-center justify-between gap-1.5">
                         <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} allowCustomToken discoveredLogos={discoveredAssetLogos} />
                         <input
@@ -5686,9 +5637,8 @@ export default function MangoBridge() {
                           {usingLiveBalance && (liveBalanceLoading ? "…" : availableBalance !== null ? `${fmt(availableBalance, fromAsset.decimals)} avail.` : "")}
                         </span>
                       </div>
-                    </div>
-                    <div className="flex-1 rounded-[14px] p-3" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-                      <div className="text-[10px] font-bold uppercase mb-2" style={{ color: P.textMuted, letterSpacing: "0.6px" }}>You receive</div>
+                    </SwapSideCard>
+                    <SwapSideCard P={P} label="You receive">
                       <div className="flex items-center justify-between gap-1.5">
                         <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken discoveredLogos={discoveredAssetLogos} />
                         <span className="font-display text-[19px] font-semibold truncate" style={{ color: amtNum > 0 && received !== null ? P.textPrimary : P.textMuted }}>
@@ -5700,7 +5650,7 @@ export default function MangoBridge() {
                           {usingLiveBalanceTo && (liveBalanceLoadingTo ? "…" : "")}
                         </span>
                       </div>
-                    </div>
+                    </SwapSideCard>
                   </div>
                   {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>Insufficient balance on {CHAINS[from].name}</div>}
                   {receivedRoundsToZero && (
@@ -5712,13 +5662,7 @@ export default function MangoBridge() {
               ) : (
                 <>
               {/* You send */}
-              <div className="rounded-2xl p-4 shadow-sm" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>You send</span>
-                  <span className="text-[11.5px]" style={{ color: P.textMuted }}>
-                    {usingLiveBalance && (liveBalanceLoading ? "Loading balance…" : `Balance: ${fmt(availableBalance, fromAsset.decimals)} ${fromAsset.symbol}`)}
-                  </span>
-                </div>
+              <BridgeCard P={P} label="You send" right={usingLiveBalance && (liveBalanceLoading ? "Loading balance…" : `Balance: ${fmt(availableBalance, fromAsset.decimals)} ${fromAsset.symbol}`)}>
                 {/* Swap tab's chain picker lives right here, in the exact
                     same slot Bridge's own "from" picker already uses —
                     one chain for both legs (handleSwapChainChange sets
@@ -5731,7 +5675,7 @@ export default function MangoBridge() {
                     <ChainDropdown value={from} exclude={to} onChange={onBridgeFromPick} P={P} chainOrder={bridgeFromChainOrderWithNear} />
                   )}
                 </div>
-                <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${insufficient ? "#D92D20" : P.panelBorder}` }}>
+                <AmountBox P={P} danger={insufficient}>
                   <input
                     type="number"
                     min="0"
@@ -5742,9 +5686,9 @@ export default function MangoBridge() {
                     className="font-display bg-transparent text-[24px] font-semibold w-full"
                     style={{ color: P.textPrimary }}
                   />
-                  <button onClick={setMax} disabled={availableBalance === null} className="text-[10.5px] font-bold px-2 py-1 rounded-md mr-2 shrink-0" style={{ background: availableBalance === null ? P.pillBg : `${P.ctaBg}1A`, color: availableBalance === null ? P.textMuted : P.ctaBg, opacity: availableBalance === null ? 0.6 : 1 }}>MAX</button>
+                  <MaxButton P={P} disabled={availableBalance === null} onClick={setMax} />
                   <AssetDropdown assetIdx={fromAssetIdx} setAssetIdx={handleFromAssetChange} chainId={from} P={P} balances={fromChainBalances} balancesLoading={balancesLoading} onOpen={refreshFromChainBalances} customToken={fromCustomToken} onCustomTokenSelect={handleFromCustomTokenSelect} allowCustomToken={isSwapTab} discoveredLogos={discoveredAssetLogos} />
-                </div>
+                </AmountBox>
                 {/* Ported from the mobile Swap screen's own percent row.
                     Swap-only: it's a trading affordance ("put a quarter
                     of my stack in"), and Bridge already has MAX in the
@@ -5769,28 +5713,17 @@ export default function MangoBridge() {
                   </div>
                 )}
                 {insufficient && <div className="text-[11.5px] mt-1.5" style={{ color: "#D92D20" }}>Insufficient balance on {CHAINS[from].name}</div>}
-              </div>
+              </BridgeCard>
 
               {/* Swap toggle */}
-              <div className="flex justify-center -my-3 relative z-10">
-                <button
-                  onClick={nearOn ? (NEAR_ORIGIN_BLOCKCHAIN[from] ? () => { setNearMode(false); setNearSendDest(from); setNearSend(true); } : undefined) : swap}
-                  disabled={nearOn && !NEAR_ORIGIN_BLOCKCHAIN[from]}
-                  className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm"
-                  style={{ background: P.ctaBg, opacity: nearOn && !NEAR_ORIGIN_BLOCKCHAIN[from] ? 0.4 : 1 }}
-                >
-                  <ArrowUpDown size={15} color={P.ctaText} />
-                </button>
-              </div>
+              <FlipArrow
+                P={P}
+                onClick={nearOn ? () => { setNearMode(false); setNearSendDest(from); setNearSend(true); } : swap}
+                disabled={nearOn && !NEAR_ORIGIN_BLOCKCHAIN[from]}
+              />
 
               {/* You receive */}
-              <div className="rounded-2xl p-4 mt-3 shadow-sm" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-[12.5px] font-medium" style={{ color: P.textSecondary }}>You receive</span>
-                  <span className="text-[11.5px]" style={{ color: P.textMuted }}>
-                    {usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(isCustomToSolanaToken ? (liveCustomSolanaBalanceTo ?? 0) : isNativeAssetToSolana ? (liveSolNativeBalanceTo ?? 0) : Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}
-                  </span>
-                </div>
+              <BridgeCard P={P} label="You receive" className="rounded-2xl p-4 mt-3 shadow-sm" right={usingLiveBalanceTo && (liveBalanceLoadingTo ? "Loading balance…" : `Balance: ${fmt(isCustomToSolanaToken ? (liveCustomSolanaBalanceTo ?? 0) : isNativeAssetToSolana ? (liveSolNativeBalanceTo ?? 0) : Number(liveBalanceValueTo?.formatted ?? 0), toAsset.decimals)} ${toAsset.symbol}`)}>
                 {/* Real swap widgets (Uniswap, Jupiter, 1inch, PancakeSwap)
                     all use ONE network selector for the whole swap, not
                     one per side — a same-chain swap only ever has one
@@ -5829,15 +5762,16 @@ export default function MangoBridge() {
                     isFromSolana={isFromSolana}
                     originAmountUsd={knownPrice ? amtNum * fromAsset.price : null}
                     onConnectNear={openNearConnect}
+                    TokenIcon={NearTokenIcon}
                   />
                 ) : (
                 <>
-                  <div className="flex items-center justify-between rounded-xl px-3.5 py-3" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
+                  <AmountBox P={P}>
                     <span className="font-display text-[24px] font-semibold" style={{ color: amtNum > 0 && received !== null ? P.textPrimary : P.textMuted }}>
                       {amtNum > 0 ? (received !== null ? fmt(received, 4) : "—") : "0"}
                     </span>
                     <AssetDropdown assetIdx={toAssetIdx} setAssetIdx={handleToAssetChange} chainId={to} P={P} customToken={toCustomToken} onCustomTokenSelect={handleToCustomTokenSelect} allowCustomToken={isSwapTab} discoveredLogos={discoveredAssetLogos} />
-                  </div>
+                  </AmountBox>
                   {amtNum > 0 && received === null && (
                     <div className="text-[11.5px] mt-1.5" style={{ color: P.textMuted }}>
                       No price estimate yet for {fromAsset.custom ? fromAsset.symbol : toAsset.symbol} — the real amount is set by Relay's live quote.
@@ -5850,7 +5784,7 @@ export default function MangoBridge() {
                   )}
                 </>
                 )}
-              </div>
+              </BridgeCard>
 
                 </>
               )}
@@ -5858,31 +5792,23 @@ export default function MangoBridge() {
               {/* ETA / details collapsible */}
               {!nearOn && (
               <>
-              <button onClick={() => setDetailsOpen((o) => !o)} className="w-full flex items-center justify-between mt-3 px-4 py-2.5 rounded-xl" style={{ background: P.panel, border: `1px solid ${P.panelBorder}` }}>
-                <span className="text-[12.5px] font-medium flex items-center gap-1.5" style={{ color: P.ctaBg }}>
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: P.ctaBg }} /> Fee {formatFeePct(DEV_FEE_PCT)}%
-                </span>
-                <span className="flex items-center gap-1.5 text-[12.5px]" style={{ color: P.textSecondary }}>
-                  ETA: {etaLabel}
-                  <ChevronDown size={13} color={P.textMuted} style={{ transform: detailsOpen ? "rotate(180deg)" : "none" }} />
-                </span>
-              </button>
+              <FeeRow P={P} feeLabel={<>Fee {formatFeePct(DEV_FEE_PCT)}%</>} right={<>ETA: {etaLabel}</>} open={detailsOpen} onToggle={() => setDetailsOpen((o) => !o)} />
               {detailsOpen && (
-                <div className="mt-2 px-4 py-3 rounded-xl flex flex-col gap-2" style={{ background: P.input, border: `1px solid ${P.panelBorder}` }}>
+                <DetailsPanel P={P}>
                   {isSwapTab ? (
                     <>
-                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Route</span><span style={{ color: P.textPrimary }}>{fromAsset.symbol} → {toAsset.symbol} on {CHAINS[from].name}</span></div>
-                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[from].baseFee, 2)}</span></div>
+                      <DetailRow P={P} label="Route" mono={false}>{fromAsset.symbol} → {toAsset.symbol} on {CHAINS[from].name}</DetailRow>
+                      <DetailRow P={P} label="Gas">${fmt(CHAINS[from].baseFee, 2)}</DetailRow>
                     </>
                   ) : (
                     <>
-                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Route</span><span style={{ color: P.textPrimary }}>{CHAINS[from].name} → {CHAINS[to].name}</span></div>
-                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Source gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[from].baseFee, 2)}</span></div>
-                      <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Destination gas</span><span className="font-mono" style={{ color: P.textPrimary }}>${fmt(CHAINS[to].baseFee, 2)}</span></div>
+                      <DetailRow P={P} label="Route" mono={false}>{CHAINS[from].name} → {CHAINS[to].name}</DetailRow>
+                      <DetailRow P={P} label="Source gas">${fmt(CHAINS[from].baseFee, 2)}</DetailRow>
+                      <DetailRow P={P} label="Destination gas">${fmt(CHAINS[to].baseFee, 2)}</DetailRow>
                     </>
                   )}
-                  <div className="flex items-center justify-between text-[12.5px]"><span style={{ color: P.textSecondary }}>Protocol fee ({formatFeePct(DEV_FEE_PCT)}%)</span><span className="font-mono" style={{ color: P.textPrimary }}>{fmt(devFeeAmount, fromAsset.decimals)} {fromAsset.symbol}</span></div>
-                </div>
+                  <DetailRow P={P} label={`Protocol fee (${formatFeePct(DEV_FEE_PCT)}%)`}>{fmt(devFeeAmount, fromAsset.decimals)} {fromAsset.symbol}</DetailRow>
+                </DetailsPanel>
               )}
               </>
               )}
@@ -6049,18 +5975,9 @@ export default function MangoBridge() {
                   explains itself in swapPillHint instead, so nothing
                   is lost — see its comment. */}
               {connected && !isSwapTab && !nearOn && (
-                <button
-                  disabled={!canBridge || routeUnavailable}
-                  onClick={() => setShowModal(true)}
-                  className="w-full mt-4 py-3.5 rounded-full font-display font-semibold text-[15px]"
-                  style={{
-                    background: !canBridge || routeUnavailable ? P.ctaDisabledBg : P.ctaBg,
-                    color: !canBridge || routeUnavailable ? P.ctaDisabledText : P.ctaText,
-                    cursor: canBridge && !routeUnavailable ? "pointer" : "not-allowed",
-                  }}
-                >
+                <CtaButton P={P} disabled={!canBridge || routeUnavailable} onClick={() => setShowModal(true)}>
                   {onWrongNetwork ? "Switch network to continue" : !chainAssetPairValid ? (isSwapTab ? "Choose different assets" : "Choose different chains") : amtNum <= 0 ? "Enter an amount" : insufficient ? "Insufficient balance" : needsEvmAddressForSolanaSource ? "Connect an EVM wallet to receive on this chain" : needsSolanaAddressForSolanaDest ? "Connect a Solana wallet to receive on this chain" : sendToOther && !destAddress.trim() ? "Enter destination address" : sendToOther && !isValidDestinationAddress(destAddress, CHAINS[to]?.isSolana) ? `Invalid ${CHAINS[to].name} address` : routeUnavailable ? "No route available for this trade" : routeChecking ? "Checking route…" : ["op-withdraw", "arb-withdraw"].includes(kind) ? "Start withdrawal" : isCrossAsset ? "Swap assets" : "Bridge assets"}
-                </button>
+                </CtaButton>
               )}
               {routeUnavailable && !nearOn && (
                 <div className="text-center mt-2 text-[11.5px]" style={{ color: "#D92D20" }}>
@@ -6072,9 +5989,9 @@ export default function MangoBridge() {
               )}
 
               {!nearOn && (
-              <div className="text-center mt-4 text-[11.5px]" style={{ color: P.textMuted }}>
+              <FootNote P={P}>
                 Powered by Relay Protocol. Only verified routes are enabled. Estimated arrival time and fees are shown before you confirm.
-              </div>
+              </FootNote>
               )}
               </>
               )}
