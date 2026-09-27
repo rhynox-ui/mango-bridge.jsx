@@ -10,6 +10,17 @@
 
 const NATIVE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000";
 
+// Arc pays gas in USDC. The native balance (eth_getBalance, 18 decimals)
+// and the ERC-20 at this address (6 decimals) are the same funds. Arc is
+// registered with USDC as its NATIVE asset only, deliberately NOT in
+// TOKEN_ADDRESSES.USDC below: listing it in both places would make the
+// wallet dashboard and asset dropdown count the same dollars twice.
+export const ARC_USDC = "0x3600000000000000000000000000000000000000";
+// Held back from MAX on Arc, since gas comes out of the same USDC. At
+// Arc's pinned ~20 gwei base fee an approve + swap costs well under a
+// cent; 5 cents leaves room for a spike and a follow-up transaction.
+export const ARC_GAS_RESERVE_USDC = 0.05;
+
 export const MAINNET_CHAIN_IDS = {
   ethereum: 1,
   base: 8453,
@@ -25,6 +36,7 @@ export const MAINNET_CHAIN_IDS = {
   plasma: 9745,
   unichain: 130,
   xlayer: 196,
+  arc: 5042,
 };
 
 export const NATIVE_SYMBOL = {
@@ -33,6 +45,7 @@ export const NATIVE_SYMBOL = {
   solana: "SOL",
   arbitrum: "ETH", avalanche: "AVAX", abstract: "ETH", hyperevm: "HYPE",
   ink: "ETH", plasma: "XPL", unichain: "ETH", xlayer: "OKB",
+  arc: "USDC",
 };
 
 export const TOKEN_ADDRESSES = {
@@ -91,6 +104,9 @@ const NATIVE_PLACEHOLDER_BY_CHAIN = {
   plasma: NATIVE_TOKEN_ADDRESS,
   unichain: NATIVE_TOKEN_ADDRESS,
   xlayer: NATIVE_TOKEN_ADDRESS,
+  // Never the 0x0 sentinel on Arc: that denominates USDC in 18 decimals,
+  // while every amount built here uses USDC's 6 (assetDecimalsForChain).
+  arc: ARC_USDC,
 };
 
 export function currencyAddress(chainKey, assetSymbol) {

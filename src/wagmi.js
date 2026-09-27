@@ -79,6 +79,9 @@ export const RPC_FALLBACKS = {
   // supports Robinhood Chain mainnet/testnet (own announcement + API docs)
   // — same verified-key pattern as every other Alchemy tier in this file.
   4663: ["https://rpc.mainnet.chain.robinhood.com", "https://robinhood-rpc.publicnode.com", alchemyUrl("robinhood-mainnet")],
+  // Arc — Circle's own four public mainnet endpoints, as listed in
+  // viem's official `arc` chain definition (viem 2.56.9+).
+  5042: ["https://rpc.mainnet.arc.io", "https://rpc.drpc.mainnet.arc.io", "https://rpc.blockdaemon.mainnet.arc.io", "https://rpc.quicknode.mainnet.arc.io"],
   988: ["https://rpc.stable.xyz", alchemyUrl("stable-mainnet")], // Stable — official (the only one Stable's own docs list) + Alchemy (verified real endpoint)
   // Fantom — not a Bridge chain, but wagmi/chains' own default RPC for it
   // IS Thirdweb-operated (250.rpc.thirdweb.com), same violation this list
@@ -180,6 +183,23 @@ export const stableMainnet = defineChain({
   testnet: false,
 });
 
+// Arc — Circle's USDC-gas L1 (mainnet 2026-09-16). Defined here rather
+// than imported: the installed viem ships Arc with an empty RPC list.
+// nativeCurrency is USDC at 18 decimals, which is what eth_getBalance
+// returns; the ERC-20 view of the same funds (chainData.js ARC_USDC)
+// uses 6.
+export const arcMainnet = defineChain({
+  id: 5042,
+  name: "Arc",
+  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+  rpcUrls: { default: { http: ["https://rpc.mainnet.arc.io"] } },
+  blockExplorers: {
+    default: { name: "Arc Explorer", url: "https://explorer.arc.io" },
+  },
+  contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
+  testnet: false,
+});
+
 // ---------------------------------------------------------------------------
 // Two complete, separate chain maps — deliberately not a single map with an
 // "if mainnet" branch buried inside. Keeping testnet and mainnet definitions
@@ -215,6 +235,7 @@ export const CHAIN_KEY_TO_WAGMI_MAINNET = {
   plasma: plasma,
   unichain: unichain,
   xlayer: xLayer,
+  arc: arcMainnet,
 };
 
 // Wallet-only chains (walletChains.js — the same 25 chains Mango Wallet's
@@ -227,7 +248,7 @@ export const CHAIN_KEY_TO_WAGMI_MAINNET = {
 export const ALL_CHAINS = [
   sepolia, baseSepolia, bscTestnet, robinhoodTestnet,
   mainnet, base, bsc, robinhoodMainnet, stableMainnet,
-  arbitrum, avalanche, abstract, hyperEvm, ink, plasma, unichain, xLayer,
+  arbitrum, avalanche, abstract, hyperEvm, ink, plasma, unichain, xLayer, arcMainnet,
   ...Object.values(WALLET_ONLY_EVM_CHAINS),
 ];
 
