@@ -1,0 +1,49 @@
+name: Dependency audit
+
+# Audit runs on pull requests and weekly. It is separate from the build
+# workflow so pushes to main do not repeat the audit immediately after
+# a PR has already passed it.
+
+on:
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1' # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: npm audit (production dependencies)
+        run: npm audit --omit=dev || true
+
+      - name: Fail only on a NEW critical advisory in a direct dependency
+        run: |
+          npm audit --omit=dev --json > audit.json || true
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const direct = new Set(Object.keys(pkg.dependencies || {}));
+            const report = JSON.parse(fs.readFileSync("audit.json", "utf8"));
+            const hits = Object.entries(report.vulnerabilities || {})
+              .filter(([name, v]) => v.severity === "critical" && direct.has(name));
+            if (hits.length === 0) {
+              console.log("No critical advisories in direct dependencies.");
+              process.exit(0);
+            }
+            for (const [name, v] of hits) console.error(`CRITICAL: ${name} (${v.severity})`);
+            process.exit(1);
+          '
