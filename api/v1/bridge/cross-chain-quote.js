@@ -76,7 +76,7 @@ export default async function handler(request, response) {
     feeRecipient: DEV_FEE_WALLET,
   });
 
-  if (recipient) params.set("recipient", String(recipient));
+  if (recipient) params.set("destinationAddress", String(recipient));
   if (safeSlippage !== null) params.set("slippageBps", String(safeSlippage));
 
   const apiKey = process.env.ZEROX_API_KEY;
